@@ -1,0 +1,80 @@
+# Example YAML configuration for sparkwheel
+# This demonstrates all the key features
+
+# Simple values
+learning_rate: 0.001
+batch_size: 32
+num_epochs: 100
+
+# Expression using values above
+total_iterations: "$@num_epochs * 1000"
+
+# Model configuration with full module paths
+model:
+  _target_: torch.nn.Sequential
+  # Note: using _args_ to pass positional arguments (list of layers)
+  # Alternatively, you can use named parameters
+
+# Optimizer referencing model parameters
+optimizer:
+  _target_: torch.optim.Adam
+  params: "$@model.parameters()"
+  lr: "@learning_rate"  # Reference to learning_rate above
+  weight_decay: 0.0001
+
+# Loss function
+criterion:
+  _target_: torch.nn.CrossEntropyLoss
+
+# DataLoader configuration
+train_dataloader:
+  _target_: torch.utils.data.DataLoader
+  batch_size: "@batch_size"
+  shuffle: true
+  num_workers: 4
+  dataset:
+    _target_: torchvision.datasets.CIFAR10
+    root: ./data
+    train: true
+    download: true
+
+# Validation dataloader (copy train config and modify)
+val_dataloader:
+  _target_: torch.utils.data.DataLoader
+  batch_size: "@batch_size"
+  shuffle: false
+  num_workers: 4
+  dataset:
+    _target_: torchvision.datasets.CIFAR10
+    root: ./data
+    train: false
+    download: false
+
+# Test dataloader using macro to copy validation config
+test_dataloader: "%val_dataloader"
+
+# Trainer configuration
+trainer:
+  _target_: pytorch_lightning.Trainer
+  max_epochs: "@num_epochs"
+  accelerator: auto
+  devices: 1
+  logger: false
+
+# Conditional component (disabled by default)
+use_scheduler: false
+scheduler:
+  _target_: torch.optim.lr_scheduler.StepLR
+  _disabled_: "$not @use_scheduler"
+  optimizer: "@optimizer"
+  step_size: 30
+  gamma: 0.1
+
+# Import statements (if needed)
+_requires_:
+  - "$import os"
+  - "$import torch"
+
+# Computed paths
+project_root: "$os.getcwd()"
+checkpoint_dir: "$@project_root + '/checkpoints'"
