@@ -275,8 +275,10 @@ class TestConfigExpression:
 
     def test_evaluate_error_handling(self):
         """Test evaluate error handling."""
+        from sparkwheel.exceptions import EvaluationError
+
         expr = ConfigExpression("$undefined_variable", id="test")
-        with pytest.raises(RuntimeError, match="Failed to evaluate"):
+        with pytest.raises(EvaluationError, match="Failed to evaluate"):
             expr.evaluate()
 
     def test_parse_import_string_from_import(self):

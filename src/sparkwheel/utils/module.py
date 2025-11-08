@@ -8,6 +8,7 @@ from importlib import import_module
 from pydoc import locate
 from typing import Any
 
+from sparkwheel.exceptions import InstantiationError, ModuleNotFoundError as SparkwheelModuleNotFoundError
 from sparkwheel.utils.enums import CompInitMode
 
 __all__ = [
@@ -221,7 +222,7 @@ def instantiate(__path: str, __mode: str, **kwargs: Any) -> Any:
     """
     component = locate(__path) if isinstance(__path, str) else __path
     if component is None:
-        raise ModuleNotFoundError(f"Cannot locate class or function path: '{__path}'.")
+        raise SparkwheelModuleNotFoundError(f"Cannot locate class or function path: '{__path}'.")
     m = look_up_option(__mode, CompInitMode)
     try:
         if kwargs.pop("_debug_", False) or run_debug:
@@ -246,10 +247,13 @@ def instantiate(__path: str, __mode: str, **kwargs: Any) -> Any:
             )
             return pdb.runcall(component, **kwargs)
     except Exception as e:
-        raise RuntimeError(
-            f"Failed to instantiate component '{__path}' with keywords: {','.join(kwargs.keys())}"
-            f"\n set '_mode_={CompInitMode.DEBUG}' to enter the debugging mode."
-        ) from e
+        # Preserve the original exception type and message for better debugging
+        error_msg = (
+            f"Failed to instantiate component '{__path}' with keywords: {','.join(kwargs.keys())}\n"
+            f"  Original error ({type(e).__name__}): {str(e)}\n"
+            f"  Set '_mode_={CompInitMode.DEBUG}' to enter debugging mode."
+        )
+        raise InstantiationError(error_msg) from e
 
     warnings.warn(f"Component to instantiate must represent a valid class or function, but got {__path}.", stacklevel=2)
     return component

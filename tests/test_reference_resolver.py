@@ -268,17 +268,21 @@ class TestReferenceResolver:
 
     def test_resolve_one_item_circular_reference(self):
         """Test _resolve_one_item detects circular references."""
+        from sparkwheel.exceptions import CircularReferenceError
+
         resolver = ReferenceResolver()
         resolver.add_item(ConfigItem({"ref": "@b"}, id="a"))
         resolver.add_item(ConfigItem({"ref": "@a"}, id="b"))
-        with pytest.raises(ValueError, match="circular references"):
+        with pytest.raises(CircularReferenceError, match="Circular reference"):
             resolver._resolve_one_item("a")
 
     def test_resolve_one_item_missing_reference_error(self):
         """Test _resolve_one_item raises error for missing reference."""
+        from sparkwheel.exceptions import ConfigKeyError
+
         resolver = ReferenceResolver()
         resolver.add_item(ConfigItem({"ref": "@missing"}, id="test"))
-        with pytest.raises(ValueError, match="not defined in the config"):
+        with pytest.raises(ConfigKeyError, match="not found"):
             resolver._resolve_one_item("test")
 
     def test_resolve_one_item_missing_reference_warning(self):
@@ -356,8 +360,10 @@ class TestReferenceResolver:
 
     def test_resolve_one_item_not_found(self):
         """Test _resolve_one_item with non-existent id."""
+        from sparkwheel.exceptions import ConfigKeyError
+
         resolver = ReferenceResolver()
-        with pytest.raises(KeyError, match="not found in the config resolver"):
+        with pytest.raises(ConfigKeyError, match="not found"):
             resolver._resolve_one_item("nonexistent")
 
     def test_resolve_one_item_with_default(self):

@@ -5,6 +5,7 @@ from typing import Any
 
 from sparkwheel.config_item import ConfigComponent, ConfigExpression, ConfigItem
 from sparkwheel.constants import ID_REF_KEY, ID_SEP_KEY
+from sparkwheel.exceptions import CircularReferenceError, ConfigKeyError
 from sparkwheel.utils import allow_missing_reference, look_up_option
 
 __all__ = ["ReferenceResolver"]
@@ -51,6 +52,8 @@ class ReferenceResolver:
     id_matcher = re.compile(rf"{ref}(?:\w*)(?:{sep}\w*)*")
     # if `allow_missing_reference` and can't find a reference ID, will just raise a warning and don't update the config
     allow_missing_reference = allow_missing_reference
+    # Maximum depth for reference resolution to prevent DoS attacks from deeply nested references
+    max_resolution_depth = 100
 
     def __init__(self, items: Sequence[ConfigItem] | None = None):
         # save the items in a dictionary with the `ConfigItem.id` as key
@@ -76,6 +79,13 @@ class ReferenceResolver:
         """
         id = item.get_id()
         if id in self.items:
+            warnings.warn(
+                f"Duplicate config item ID '{id}' detected. "
+                f"The new item will be ignored and the existing item will be kept. "
+                f"This may indicate a configuration error.",
+                UserWarning,
+                stacklevel=2,
+            )
             return
         self.items[id] = item
 
@@ -98,7 +108,7 @@ class ReferenceResolver:
         return self.items.get(id)
 
     def _resolve_one_item(
-        self, id: str, waiting_list: set[str] | None = None, **kwargs: Any
+        self, id: str, waiting_list: set[str] | None = None, _depth: int = 0, **kwargs: Any
     ) -> ConfigExpression | str | Any | None:
         """
         Resolve and return one ``ConfigItem`` of ``id``, cache the resolved result in ``resolved_content``.
@@ -109,18 +119,36 @@ class ReferenceResolver:
             waiting_list: set of ids pending to be resolved.
                 It's used to detect circular references such as:
                 `{"name": "A", "dep": "@B"}` and `{"name": "B", "dep": "@A"}`.
+            _depth: (internal) current recursion depth for preventing stack overflow attacks.
             kwargs: keyword arguments to pass to ``_resolve_one_item()``.
                 Currently support ``instantiate``, ``eval_expr`` and ``default``.
                 `instantiate` and `eval_expr` are defaulting to True, `default` is the target config item
                 if the `id` is not in the config content, must be a `ConfigItem` object.
         """
+        # Check for excessive recursion depth to prevent DoS attacks
+        if _depth >= self.max_resolution_depth:
+            raise RecursionError(
+                f"Maximum reference resolution depth ({self.max_resolution_depth}) exceeded while resolving '{id}'. "
+                f"This may indicate an overly complex configuration or a potential DoS attack."
+            )
+
         id = self.normalize_id(id)
         if id in self.resolved_content:
             return self.resolved_content[id]
         try:
             item = look_up_option(id, self.items, print_all_options=False, default=kwargs.get("default", "no_default"))
         except ValueError as err:
-            raise KeyError(f"id='{id}' is not found in the config resolver.") from err
+            # Try to get source location from any existing item to provide context
+            source_location = None
+            for config_item in self.items.values():
+                if hasattr(config_item, 'source_location') and config_item.source_location:
+                    source_location = config_item.source_location
+                    break
+
+            raise ConfigKeyError(
+                f"Config ID '{id}' not found in the configuration",
+                source_location=source_location,
+            ) from err
         if not isinstance(item, ConfigItem):
             return item
         item_config = item.get_config()
@@ -135,7 +163,10 @@ class ReferenceResolver:
         for d in self.find_refs_in_config(config=item_config, id=id).keys():
             # if current item has reference already in the waiting list, that's circular references
             if d in waiting_list:
-                raise ValueError(f"detected circular references '{d}' for id='{id}' in the config content.")
+                raise CircularReferenceError(
+                    f"Circular reference detected: '{d}' references back to '{id}'",
+                    source_location=item.source_location if hasattr(item, 'source_location') else None,
+                )
             # check whether the component has any unresolved references
             if d not in self.resolved_content:
                 # this referring item is not resolved
@@ -144,11 +175,14 @@ class ReferenceResolver:
                 except ValueError as err:
                     msg = f"the referring item `@{d}` is not defined in the config content."
                     if not self.allow_missing_reference:
-                        raise ValueError(msg) from err
+                        raise ConfigKeyError(
+                            f"Reference '@{d}' not found in configuration",
+                            source_location=item.source_location if hasattr(item, 'source_location') else None,
+                        ) from err
                     warnings.warn(msg, stacklevel=2)
                     continue
                 # recursively resolve the reference first
-                self._resolve_one_item(id=d, waiting_list=waiting_list, **kwargs)
+                self._resolve_one_item(id=d, waiting_list=waiting_list, _depth=_depth + 1, **kwargs)
                 waiting_list.discard(d)
 
         # all references are resolved, then try to resolve current config item
@@ -332,6 +366,7 @@ class ReferenceResolver:
         if not isinstance(config, (list, dict)):
             return config
         ret = type(config)()
+
         for idx, sub_id, v in cls.iter_subconfigs(id, config):
             if ConfigComponent.is_instantiable(v) or ConfigExpression.is_expression(v):
                 updated = refs_[sub_id]

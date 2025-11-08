@@ -81,7 +81,13 @@ if SafeLoader is not None:
     class CheckKeyDuplicatesYamlLoader(SafeLoader):
         """
         YAML loader that detects duplicate keys and either warns or raises an error.
+        Also tracks line numbers for values to enable better error reporting.
         """
+
+        def __init__(self, stream):
+            super().__init__(stream)
+            # Store filename if available
+            self.source_file = getattr(stream, "name", None)
 
         def construct_mapping(self, node, deep=False):
             mapping = set()
@@ -94,6 +100,25 @@ if SafeLoader is not None:
                         warnings.warn(f"Duplicate key: `{key}`", stacklevel=2)
                 mapping.add(key)
             return super().construct_mapping(node, deep)
+
+        def construct_object(self, node, deep=False):
+            """Construct object and attach source location metadata."""
+            obj = super().construct_object(node, deep)
+
+            # Attach location metadata to the object if it's a dict or scalar
+            # This allows us to track where each config value came from
+            if hasattr(node, "start_mark") and self.source_file:
+                # Store metadata as a special attribute that we can extract later
+                # We'll use a tuple: (value, line, column, filepath)
+                if isinstance(obj, dict):
+                    # For dicts, store location info in a special key
+                    obj["__sparkwheel_metadata__"] = {
+                        "line": node.start_mark.line + 1,  # YAML uses 0-indexed lines
+                        "column": node.start_mark.column,
+                        "file": self.source_file,
+                    }
+
+            return obj
 
 else:
     CheckKeyDuplicatesYamlLoader = None  # type: ignore

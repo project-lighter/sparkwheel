@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import re
+import warnings
 from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
@@ -8,6 +11,7 @@ import yaml
 
 from sparkwheel.config_item import ConfigComponent, ConfigExpression, ConfigItem
 from sparkwheel.constants import ID_REF_KEY, ID_SEP_KEY, MACRO_KEY
+from sparkwheel.exceptions import SourceLocation
 from sparkwheel.reference_resolver import ReferenceResolver
 from sparkwheel.utils import CheckKeyDuplicatesYamlLoader, PathLike, ensure_tuple, look_up_option, optional_import
 
@@ -61,16 +65,21 @@ class ConfigParser:
     suffixes = ("yaml", "yml")
     suffix_match = rf".*\.({'|'.join(suffixes)})"
     path_match = rf"({suffix_match}$)"
+    # Pre-compiled regex patterns for better performance
+    path_match_compiled = re.compile(path_match, re.IGNORECASE)
+    split_path_compiled = re.compile(rf"({suffix_match}(?=(?:{ID_SEP_KEY}.*)|$))", re.IGNORECASE)
     # match relative id names, e.g. "@#data", "@##transform#1"
     relative_id_prefix = re.compile(rf"(?:{ID_REF_KEY}|{MACRO_KEY}){ID_SEP_KEY}+")
     meta_key = "_meta_"  # field key to save metadata
+    _METADATA_REF_KEY = "__source_locations__"  # key within _meta_ to store source location metadata
 
     def __init__(
         self,
         config: Any = None,
         globals: dict[str, Any] | None | bool = None,
     ):
-        self.config: ConfigItem | None = None
+        self.config: Any = None  # Public config, always clean (no __sparkwheel_metadata__)
+        self._metadata: dict[str, SourceLocation] = {}  # Maps id_path -> SourceLocation
         self.globals: dict[str, Any] = {}
         if isinstance(globals, dict):
             for k, v in globals.items():
@@ -79,6 +88,14 @@ class ConfigParser:
         self.ref_resolver = ReferenceResolver()
         if config is None:
             config = {self.meta_key: {}}
+
+        # Inherit source location metadata from _meta_ section if present
+        # This enables metadata to persist when config dicts are copied/passed around
+        if isinstance(config, dict) and self.meta_key in config:
+            meta_section = config.get(self.meta_key, {})
+            if isinstance(meta_section, dict) and self._METADATA_REF_KEY in meta_section:
+                self._metadata = meta_section[self._METADATA_REF_KEY].copy()
+
         self.set(config=self.ref_resolver.normalize_meta_id(config))
 
     def __repr__(self):
@@ -265,11 +282,32 @@ class ConfigParser:
                 if providing a dictionary directly, use it as config.
             kwargs: other arguments for ``yaml.safe_load``.
         """
-        content = {self.meta_key: self.get(self.meta_key, {})}
-        content.update(self.load_config_files(f, **kwargs))
-        self.set(config=content)
+        # Inherit source location metadata if input is a dict with existing metadata
+        if isinstance(f, dict) and self.meta_key in f:
+            meta_section = f.get(self.meta_key, {})
+            if isinstance(meta_section, dict) and self._METADATA_REF_KEY in meta_section:
+                self._metadata = meta_section[self._METADATA_REF_KEY].copy()
 
-    def _do_resolve(self, config: Any, id: str = "") -> Any:
+        content = {self.meta_key: self.get(self.meta_key, {})}
+        loaded_config = self._load_config_files_with_metadata(f, **kwargs)
+        content.update(loaded_config)
+
+        # Extract source location metadata from YAML (stored as __sparkwheel_metadata__)
+        self._extract_metadata(content, id_prefix="")
+
+        # Strip temporary __sparkwheel_metadata__ keys and store clean config
+        clean_content = self._strip_metadata(content)
+        self.set(config=clean_content)
+
+        # Store source location metadata in _meta_ so it persists across dict.copy()
+        if isinstance(self.config, dict) and self._metadata:
+            if self.meta_key not in self.config:
+                self.config[self.meta_key] = {}
+            if not isinstance(self.config[self.meta_key], dict):
+                self.config[self.meta_key] = {}
+            self.config[self.meta_key][self._METADATA_REF_KEY] = self._metadata
+
+    def _do_resolve(self, config: Any, id: str = "", _macro_stack: set[str] | None = None) -> Any:
         """
         Recursively resolve `self.config` to replace the relative ids with absolute ids, for example,
         `@##A` means `A` in the upper level. and replace the macro tokens with target content,
@@ -283,17 +321,37 @@ class ConfigParser:
                 go one level further into the nested structures.
                 Use digits indexing from "0" for list or other strings for dict.
                 For example: ``"xform::5"``, ``"net::channels"``. ``""`` indicates the entire ``self.config``.
+            _macro_stack: (internal) set of macro references currently being resolved, used to detect circular references.
         """
+        if _macro_stack is None:
+            _macro_stack = set()
+
         if isinstance(config, (dict, list)):
             for k, sub_id, v in self.ref_resolver.iter_subconfigs(id=id, config=config):
-                config[k] = self._do_resolve(v, sub_id)  # type: ignore
+                resolved_value = self._do_resolve(v, sub_id, _macro_stack)
+                config[k] = resolved_value  # type: ignore
         if isinstance(config, str):
             config = self.resolve_relative_ids(id, config)
             if config.startswith(MACRO_KEY):
+                # Check for circular macro references
+                if config in _macro_stack:
+                    raise ValueError(
+                        f"Circular macro reference detected: {config} is already being resolved. "
+                        f"Macro resolution chain: {' -> '.join(sorted(_macro_stack))} -> {config}"
+                    )
+
                 path, ids = ConfigParser.split_path_id(config[len(MACRO_KEY) :])
-                parser = ConfigParser(config=self.get() if not path else ConfigParser.load_config_file(path))
-                # deepcopy to ensure the macro replacement is independent config content
-                return deepcopy(parser[ids])
+                # Add current macro to the stack before resolving
+                _macro_stack.add(config)
+                try:
+                    parser = ConfigParser(config=self.get() if not path else ConfigParser.load_config_file(path))
+                    # Propagate the macro stack when resolving the referenced content
+                    result = parser._do_resolve(parser[ids], ids, _macro_stack)
+                    # deepcopy to ensure the macro replacement is independent config content
+                    return deepcopy(result)
+                finally:
+                    # Remove from stack after resolving
+                    _macro_stack.discard(config)
         return config
 
     def resolve_macro_and_relative_ids(self):
@@ -305,7 +363,40 @@ class ConfigParser:
         """
         self.set(self._do_resolve(config=self.get()))
 
-    def _do_parse(self, config: Any, id: str = "") -> None:
+    def _extract_metadata(self, config: Any, id_prefix: str = "") -> None:
+        """Extract source location metadata from YAML-loaded config into self._metadata.
+
+        During YAML loading, CheckKeyDuplicatesYamlLoader attaches __sparkwheel_metadata__
+        keys to dict nodes. This method extracts those into self._metadata for permanent storage.
+
+        Args:
+            config: Config structure potentially containing __sparkwheel_metadata__ keys
+            id_prefix: Current config ID path (e.g., "system::optimizer")
+        """
+        if isinstance(config, dict):
+            # Extract metadata at this level if present
+            if "__sparkwheel_metadata__" in config:
+                meta = config["__sparkwheel_metadata__"]
+                self._metadata[id_prefix] = SourceLocation(
+                    filepath=meta["file"],
+                    line=meta["line"],
+                    column=meta["column"],
+                    id=id_prefix,
+                )
+
+            # Recursively extract from child configs
+            for key, value in config.items():
+                if key != "__sparkwheel_metadata__":
+                    new_id = f"{id_prefix}{ID_SEP_KEY}{key}" if id_prefix else key
+                    self._extract_metadata(value, new_id)
+
+        elif isinstance(config, list):
+            # Recursively extract from list items
+            for idx, item in enumerate(config):
+                new_id = f"{id_prefix}{ID_SEP_KEY}{idx}" if id_prefix else str(idx)
+                self._extract_metadata(item, new_id)
+
+    def _do_parse(self, config: Any, id: str = "", source_file: str | None = None) -> None:
         """
         Recursively parse the nested data in config source, add every item as `ConfigItem` to the resolver.
 
@@ -315,17 +406,91 @@ class ConfigParser:
                 go one level further into the nested structures.
                 Use digits indexing from "0" for list or other strings for dict.
                 For example: ``"xform::5"``, ``"net::channels"``. ``""`` indicates the entire ``self.config``.
+            source_file: optional path to the source file being parsed.
         """
+        # Look up source location from metadata store
+        source_location = self._metadata.get(id)
+
         if isinstance(config, (dict, list)):
             for _, sub_id, v in self.ref_resolver.iter_subconfigs(id=id, config=config):
-                self._do_parse(config=v, id=sub_id)
+                self._do_parse(config=v, id=sub_id, source_file=source_file)
 
         if ConfigComponent.is_instantiable(config):
-            self.ref_resolver.add_item(ConfigComponent(config=config, id=id))
+            self.ref_resolver.add_item(
+                ConfigComponent(config=config, id=id, source_location=source_location)
+            )
         elif ConfigExpression.is_expression(config):
-            self.ref_resolver.add_item(ConfigExpression(config=config, id=id, globals=self.globals))
+            self.ref_resolver.add_item(
+                ConfigExpression(config=config, id=id, globals=self.globals, source_location=source_location)
+            )
         else:
-            self.ref_resolver.add_item(ConfigItem(config=config, id=id))
+            self.ref_resolver.add_item(ConfigItem(config=config, id=id, source_location=source_location))
+
+    @staticmethod
+    def _strip_metadata(config: Any) -> Any:
+        """Remove temporary __sparkwheel_metadata__ keys from config.
+
+        These keys are added during YAML loading and extracted by _extract_metadata.
+        After extraction, they're removed to keep the config clean.
+
+        Args:
+            config: Config structure potentially containing __sparkwheel_metadata__ keys
+
+        Returns:
+            Config with __sparkwheel_metadata__ keys removed (reuses objects when possible)
+        """
+        if isinstance(config, dict):
+            # Early exit if no metadata present
+            has_metadata = "__sparkwheel_metadata__" in config or any(
+                isinstance(v, (dict, list)) for v in config.values()
+            )
+            if not has_metadata:
+                return config
+
+            # Strip metadata from this level and recursively from children
+            return {k: ConfigParser._strip_metadata(v) for k, v in config.items() if k != "__sparkwheel_metadata__"}
+        elif isinstance(config, list):
+            # Early exit if no dict/list children
+            if not any(isinstance(item, (dict, list)) for item in config):
+                return config
+
+            return [ConfigParser._strip_metadata(item) for item in config]
+        else:
+            return config
+
+    @classmethod
+    def _load_config_file_with_metadata(cls, filepath: PathLike, **kwargs: Any) -> dict:
+        """
+        Internal method to load config file with metadata preserved.
+
+        Args:
+            filepath: path of target file to load.
+            kwargs: other arguments for ``yaml.safe_load``.
+
+        Returns:
+            Config dict with __sparkwheel_metadata__ keys.
+        """
+        if not filepath:
+            return {}
+        _filepath: str = str(Path(filepath))
+        if not cls.path_match_compiled.findall(_filepath):
+            raise ValueError(f'unknown file input: "{filepath}", must be a YAML file (.yaml or .yml)')
+
+        # Resolve path to detect potential path traversal attempts
+        resolved_path = Path(_filepath).resolve()
+        # Warn if the path uses parent directory references (potential security risk with untrusted input)
+        if ".." in str(filepath):
+            warnings.warn(
+                f"Config file path contains '..' (parent directory reference): {filepath}\n"
+                f"Resolved to: {resolved_path}\n"
+                f"This is allowed but ensure the path is from a trusted source to prevent path traversal attacks.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        # Extension already validated above, safe to open and load
+        with open(resolved_path) as f:
+            return yaml.load(f, CheckKeyDuplicatesYamlLoader, **kwargs)  # type: ignore[no-any-return]
 
     @classmethod
     def load_config_file(cls, filepath: PathLike, **kwargs: Any) -> dict:
@@ -335,16 +500,37 @@ class ConfigParser:
         Args:
             filepath: path of target file to load, supported postfixes: `.yml`, `.yaml`.
             kwargs: other arguments for ``yaml.safe_load``.
+
+        Returns:
+            Clean config dict without internal metadata.
         """
-        if not filepath:
-            return {}
-        _filepath: str = str(Path(filepath))
-        if not re.compile(cls.path_match, re.IGNORECASE).findall(_filepath):
-            raise ValueError(f'unknown file input: "{filepath}", must be a YAML file (.yaml or .yml)')
-        with open(_filepath) as f:
-            if _filepath.lower().endswith(cls.suffixes):
-                return yaml.load(f, CheckKeyDuplicatesYamlLoader, **kwargs)  # type: ignore[no-any-return]
-            raise ValueError(f"only support YAML config file, got name {_filepath}.")
+        config_with_metadata = cls._load_config_file_with_metadata(filepath, **kwargs)
+        return cls._strip_metadata(config_with_metadata)  # type: ignore[no-any-return]
+
+    @classmethod
+    def _load_config_files_with_metadata(cls, files: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> dict:
+        """
+        Internal method to load and merge multiple config files WITH metadata.
+
+        Args:
+            files: path of target files to load.
+            kwargs: other arguments for ``yaml.safe_load``.
+
+        Returns:
+            Merged config dict with __sparkwheel_metadata__ keys.
+        """
+        if isinstance(files, dict):  # already a config dict
+            return files
+        parser = ConfigParser(config={})
+        if isinstance(files, str) and not Path(files).is_file() and "," in files:
+            files = files.split(",")
+        for i in ensure_tuple(files):
+            config_dict = cls._load_config_file_with_metadata(i, **kwargs)
+            for k, v in config_dict.items():
+                parser.set(v, k)
+
+        # Return with metadata - caller will extract and strip
+        return parser.config  # type: ignore
 
     @classmethod
     def load_config_files(cls, files: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> dict:
@@ -360,18 +546,12 @@ class ConfigParser:
                 if providing a string with comma separated file paths, will merge the content of them.
                 if providing a dictionary, return it directly.
             kwargs: other arguments for ``yaml.safe_load``.
-        """
-        if isinstance(files, dict):  # already a config dict
-            return files
-        parser = ConfigParser(config={})
-        if isinstance(files, str) and not Path(files).is_file() and "," in files:
-            files = files.split(",")
-        for i in ensure_tuple(files):
-            config_dict = cls.load_config_file(i, **kwargs)
-            for k, v in config_dict.items():
-                parser.set(v, k)
 
-        return parser.get()  # type: ignore
+        Returns:
+            Clean merged config dict without internal metadata.
+        """
+        config_with_metadata = cls._load_config_files_with_metadata(files, **kwargs)
+        return cls._strip_metadata(config_with_metadata)  # type: ignore[no-any-return]
 
     @classmethod
     def export_config_file(cls, config: dict, filepath: PathLike, **kwargs: Any) -> None:
@@ -398,7 +578,7 @@ class ConfigParser:
             src: source string to split.
         """
         src = ReferenceResolver.normalize_id(src)
-        result = re.compile(rf"({cls.suffix_match}(?=(?:{ID_SEP_KEY}.*)|$))", re.IGNORECASE).findall(src)
+        result = cls.split_path_compiled.findall(src)
         if not result:
             return "", src  # the src is a pure id
         path_name = result[0][0]  # at most one path_name

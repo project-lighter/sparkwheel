@@ -6,6 +6,7 @@ from functools import partial
 
 import pytest
 
+from sparkwheel.exceptions import InstantiationError
 from sparkwheel.utils import (
     CheckKeyDuplicatesYamlLoader,
     check_key_duplicates,
@@ -298,6 +299,8 @@ class TestModuleUtils:
 
     def test_instantiate_not_found(self):
         """Test instantiate raises error for non-existent path."""
+        from sparkwheel.exceptions import ModuleNotFoundError
+
         with pytest.raises(ModuleNotFoundError, match="Cannot locate"):
             instantiate("nonexistent.module.Class", "default")
 
@@ -316,7 +319,7 @@ class TestModuleUtils:
 
     def test_instantiate_error_handling(self):
         """Test instantiate error handling."""
-        with pytest.raises((RuntimeError, TypeError)):
+        with pytest.raises((InstantiationError, RuntimeError, TypeError)):
             # Try to instantiate with invalid arguments
             # Some callables may raise TypeError instead of being caught
             instantiate("int", "default", invalid_arg="not_an_int")
