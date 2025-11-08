@@ -16,12 +16,9 @@ dataset:
   image_size: 224
 
 model:
-  _target_: torch.nn.Sequential
-  _args_:
-    - _target_: torch.nn.Flatten
-    - _target_: torch.nn.Linear
-      in_features: "$@dataset::image_size ** 2 * 3"  # 224*224*3
-      out_features: "@dataset::num_classes"
+  _target_: torch.nn.Linear
+  in_features: "$@dataset::image_size ** 2 * 3"  # 224*224*3
+  out_features: "@dataset::num_classes"
 
 training:
   batch_size: 32
@@ -33,18 +30,17 @@ training:
 
 ```python
 import torch
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
 # Load configuration
-parser = ConfigParser()
-config = parser.read_config("simple_config.yaml")
+config = Config.load("simple_config.yaml")
 
 # Get values
 project_name = config["project"]["name"]
 num_classes = config["dataset"]["num_classes"]
 
 # Instantiate model
-model = parser.get_parsed_content("model")
+model = config.resolve("model")
 print(model)
 
 # Access training parameters

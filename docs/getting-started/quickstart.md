@@ -26,15 +26,19 @@ training:
 ### 2. Load the Configuration
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-# Create parser and load config
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+# Load config (single line!)
+config = Config.load("config.yaml")
 
-# Access values
+# Access values - two equivalent syntaxes:
 print(config["name"])  # "My Project"
+
+# Nested dict access (standard Python)
 print(config["training"]["batch_size"])  # 32
+
+# Path notation with :: (more concise)
+print(config["training::batch_size"])  # 32
 ```
 
 ## Using References
@@ -54,12 +58,11 @@ model:
 ```
 
 ```python
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+config = Config.load("config.yaml")
 
 # The @ reference is automatically resolved
-print(config["model"]["input_size"])  # 224
-print(config["model"]["num_outputs"])  # 10
+print(config.resolve("model::input_size"))  # 224
+print(config.resolve("model::num_outputs"))  # 10
 ```
 
 ## Using Expressions
@@ -82,12 +85,11 @@ data:
 ```
 
 ```python
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+config = Config.load("config.yaml")
 
-print(config["training"]["steps_per_epoch"])  # 312
-print(config["data"]["values"])  # [0, 1, 4, 9, 16]
-print(config["data"]["pi"])  # 3.14159...
+print(config.resolve("training::steps_per_epoch"))  # 312
+print(config.resolve("data::values"))  # [0, 1, 4, 9, 16]
+print(config.resolve("data::pi"))  # 3.14159...
 ```
 
 ## Creating Objects with `_target_`
@@ -108,13 +110,12 @@ transform:
 ```
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+config = Config.load("config.yaml")
 
 # Get the instantiated object
-transform = parser.get_parsed_content("transform")
+transform = config.resolve("transform")
 
 # transform is now a torchvision.transforms.Compose object!
 # You can use it directly
@@ -133,16 +134,9 @@ dataset:
   image_size: 32
 
 model:
-  _target_: torch.nn.Sequential
-  _args_:
-    - _target_: torch.nn.Flatten
-    - _target_: torch.nn.Linear
-      in_features: "$@dataset::image_size ** 2 * 3"  # 32*32*3
-      out_features: 128
-    - _target_: torch.nn.ReLU
-    - _target_: torch.nn.Linear
-      in_features: 128
-      out_features: "@dataset::num_classes"
+  _target_: torch.nn.Linear
+  in_features: "$@dataset::image_size ** 2 * 3"  # 32*32*3
+  out_features: "@dataset::num_classes"
 
 optimizer:
   _target_: torch.optim.Adam
@@ -158,16 +152,15 @@ training:
 
 ```python
 import torch
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
 # Load configuration
-parser = ConfigParser()
-config = parser.read_config("training_config.yaml")
+config = Config.load("training_config.yaml")
 
 # Get instantiated objects
-model = parser.get_parsed_content("model")
-optimizer = parser.get_parsed_content("optimizer")
-device = parser.get_parsed_content("training#device")
+model = config.resolve("model")
+optimizer = config.resolve("optimizer")
+device = config.resolve("training::device")
 
 # Everything is ready to use!
 model = model.to(device)
@@ -181,9 +174,9 @@ for epoch in range(config["training"]["epochs"]):
     pass
 ```
 
-## Reference Syntax
+## Path Notation
 
-Sparkwheel uses `#` as a separator for nested keys:
+Sparkwheel uses `::` as a separator for nested paths, making it easy to work with deeply nested configurations:
 
 ```yaml
 data:
@@ -192,10 +185,21 @@ data:
   test:
     path: "/data/test"
 
-# Reference nested values
+# Reference nested values using ::
 validation:
   path: "@data::train::path"  # Accesses data.train.path
 ```
+
+```python
+# In Python, both syntaxes work:
+train_path = config["data"]["train"]["path"]  # Standard dict access
+train_path = config["data::train::path"]      # Path notation (same result!)
+```
+
+The `::` notation is especially useful for:
+- Passing paths as strings: `config.get("model::optimizer::lr")`
+- Deep nesting: `config["a::b::c::d::e"]` vs `config["a"]["b"]["c"]["d"]["e"]`
+- Config references: `"@section::subsection::key"`
 
 ## Working with Lists
 

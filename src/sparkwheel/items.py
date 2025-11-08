@@ -5,10 +5,11 @@ from collections.abc import Mapping
 from pprint import pformat
 from typing import Any
 
-from sparkwheel.constants import EXPR_KEY
-from sparkwheel.utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
+from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
+from .utils.constants import EXPR_KEY
+from .utils.exceptions import EvaluationError, InstantiationError, ModuleNotFoundError, SourceLocation
 
-__all__ = ["ConfigItem", "ConfigExpression", "ConfigComponent", "Instantiable"]
+__all__ = ["Item", "Expression", "Component", "Instantiable"]
 
 
 class Instantiable(ABC):
@@ -31,22 +32,24 @@ class Instantiable(ABC):
         raise NotImplementedError(f"subclass {self.__class__.__name__} must implement this method.")
 
 
-class ConfigItem:
+class Item:
     """
     Basic data structure to represent a configuration item.
 
-    A `ConfigItem` instance can optionally have a string id, so that other items can refer to it.
+    A `Item` instance can optionally have a string id, so that other items can refer to it.
     It has a build-in `config` property to store the configuration object.
 
     Args:
         config: content of a config item, can be objects of any types,
             a configuration resolver may interpret the content to generate a configuration object.
         id: name of the current config item, defaults to empty string.
+        source_location: optional location in source file where this config item was defined.
     """
 
-    def __init__(self, config: Any, id: str = "") -> None:
+    def __init__(self, config: Any, id: str = "", source_location: SourceLocation | None = None) -> None:
         self.config = config
         self.id = id
+        self.source_location = source_location
 
     def get_id(self) -> str:
         """
@@ -60,7 +63,7 @@ class ConfigItem:
         A typical usage is to modify the initial config content at runtime.
 
         Args:
-            config: content of a `ConfigItem`.
+            config: content of a `Item`.
         """
         self.config = config
 
@@ -74,7 +77,7 @@ class ConfigItem:
         return f"{type(self).__name__}: \n{pformat(self.config)}"
 
 
-class ConfigComponent(ConfigItem, Instantiable):
+class Component(Item, Instantiable):
     """Component that can be instantiated from configuration.
 
     Uses a dictionary with string keys to represent a Python class or function
@@ -114,8 +117,8 @@ class ConfigComponent(ConfigItem, Instantiable):
 
     non_arg_keys = {"_target_", "_disabled_", "_requires_", "_mode_"}
 
-    def __init__(self, config: Any, id: str = "") -> None:
-        super().__init__(config=config, id=id)
+    def __init__(self, config: Any, id: str = "", source_location: SourceLocation | None = None) -> None:
+        super().__init__(config=config, id=id, source_location=source_location)
 
     @staticmethod
     def is_instantiable(config: Any) -> bool:
@@ -148,7 +151,13 @@ class ConfigComponent(ConfigItem, Instantiable):
         """
         Utility function used in `instantiate()` to resolve the arguments from current config content.
         """
-        return {k: v for k, v in self.get_config().items() if k not in self.non_arg_keys}
+        config = self.get_config()
+        if not isinstance(config, Mapping):
+            raise TypeError(
+                f"Expected config to be a Mapping (dict-like), but got {type(config).__name__}. "
+                f"Cannot resolve arguments from non-mapping config."
+            )
+        return {k: v for k, v in config.items() if k not in self.non_arg_keys}
 
     def is_disabled(self) -> bool:
         """
@@ -173,10 +182,72 @@ class ConfigComponent(ConfigItem, Instantiable):
         mode = self.get_config().get("_mode_", CompInitMode.DEFAULT)
         args = self.resolve_args()
         args.update(kwargs)
-        return instantiate(modname, mode, **args)
+
+        try:
+            return instantiate(modname, mode, **args)
+        except ModuleNotFoundError as e:
+            # Re-raise with source location and suggestions
+            suggestion = self._suggest_similar_modules(modname) if isinstance(modname, str) else None
+            raise ModuleNotFoundError(
+                f"Cannot locate class or function: '{modname}'",
+                source_location=self.source_location,
+                suggestion=suggestion,
+            ) from e
+        except Exception as e:
+            # Wrap other errors with location context (points to _target_ line)
+            raise InstantiationError(
+                f"Failed to instantiate '{modname}': {type(e).__name__}: {e}",
+                source_location=self.source_location,
+            ) from e
+
+    def _suggest_similar_modules(self, target: str) -> str | None:
+        """Suggest similar valid module names using fuzzy matching.
+
+        Args:
+            target: The module path that couldn't be found (e.g., 'torch.optim.Adamfad')
+
+        Returns:
+            A helpful suggestion string, or None if no good suggestions found.
+        """
+        if not isinstance(target, str) or "." not in target:
+            return None
+
+        try:
+            from pydoc import locate
+
+            from .utils import damerau_levenshtein_distance
+
+            # Split into module path and attribute name
+            parts = target.rsplit(".", 1)
+            base_module, attr_name = parts[0], parts[1]
+
+            # Try to import the base module
+            base = locate(base_module)
+            if base is None:
+                return None
+
+            # Find similar attribute names in the module
+            similar = []
+            for name in dir(base):
+                if name.startswith("_"):
+                    continue
+                distance = damerau_levenshtein_distance(name, attr_name)
+                if distance <= 2:  # Allow up to 2 character edits
+                    similar.append((distance, name))
+
+            if similar:
+                # Sort by distance and return the closest match
+                similar.sort(key=lambda x: x[0])
+                closest = similar[0][1]
+                return f"Did you mean '{base_module}.{closest}'?"
+        except Exception:
+            # If anything fails during suggestion generation, just skip it
+            pass
+
+        return None
 
 
-class ConfigExpression(ConfigItem):
+class Expression(Item):
     """Executable expression that evaluates Python code.
 
     Expressions start with `$` and are evaluated using Python's `eval()`,
@@ -203,8 +274,14 @@ class ConfigExpression(ConfigItem):
     prefix = EXPR_KEY
     run_eval = run_eval
 
-    def __init__(self, config: Any, id: str = "", globals: dict | None = None) -> None:
-        super().__init__(config=config, id=id)
+    def __init__(
+        self,
+        config: Any,
+        id: str = "",
+        globals: dict | None = None,
+        source_location: SourceLocation | None = None,
+    ) -> None:
+        super().__init__(config=config, id=id, source_location=source_location)
         self.globals = globals if globals is not None else {}
 
     def _parse_import_string(self, import_string: str) -> Any | None:
@@ -242,7 +319,7 @@ class ConfigExpression(ConfigItem):
             RuntimeError: If evaluation fails
         """
         value = self.get_config()
-        if not ConfigExpression.is_expression(value):
+        if not Expression.is_expression(value):
             return None
         optional_module = self._parse_import_string(value[len(self.prefix) :])
         if optional_module is not None:
@@ -259,7 +336,10 @@ class ConfigExpression(ConfigItem):
             try:
                 return eval(value[len(self.prefix) :], globals_, locals)
             except Exception as e:
-                raise RuntimeError(f"Failed to evaluate {self}") from e
+                raise EvaluationError(
+                    f"Failed to evaluate expression: '{value[len(self.prefix) :]}'",
+                    source_location=self.source_location,
+                ) from e
         warnings.warn(
             f"\n\npdb: value={value}\nSee also Debugger commands documentation: https://docs.python.org/3/library/pdb.html\n",
             stacklevel=2,

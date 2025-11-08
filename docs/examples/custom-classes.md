@@ -31,11 +31,10 @@ model:
 ## Usage
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+config = Config.load("config.yaml")
 
-model = parser.get_parsed_content("model")
+model = config.resolve("model")
 # model is now an instance of CustomModel!
 ```
