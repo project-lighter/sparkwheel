@@ -29,6 +29,7 @@ class ConfigParser:
         ```python
         from sparkwheel import ConfigParser
 
+        # Create parser from dict
         config = {
             "base_count": 10,
             "doubled": "$@base_count * 2",
@@ -38,25 +39,31 @@ class ConfigParser:
             },
             "my_list": [1, 2, 2, 3, 3, 3]
         }
+        parser = ConfigParser.from_dict(config)
 
-        parser = ConfigParser(config)
+        # Or create from YAML file
+        parser = ConfigParser.from_file("config.yaml")
 
-        # Access and modify config before parsing
+        # Access raw config
         print(parser["my_counter"]["iterable"])  # "@my_list"
+
+        # Modify config before resolution
         parser["my_list"] = [1, 1, 1]
 
-        # Parse and instantiate
-        parser.parse()
-        counter = parser.get_parsed_content("my_counter", instantiate=True)
+        # Resolve references and instantiate components
+        counter = parser.resolve("my_counter")
         print(counter)  # Counter({1: 3})
 
-        # Get parsed values
-        doubled = parser.get_parsed_content("doubled")
-        print(doubled)  # 20
+        doubled = parser.resolve("doubled")
+        print(doubled)  # 2 (since list was changed to [1,1,1])
         ```
 
+    Use factory methods to create instances:
+        - `ConfigParser.from_dict(config_dict)` - from dictionary
+        - `ConfigParser.from_file(filepath)` - from single YAML file
+        - `ConfigParser.from_files(filepaths)` - from multiple YAML files (merged)
+
     Args:
-        config: Configuration source (dict, list, or YAML file path)
         globals: Pre-imported packages for expressions.
             Pass a dict like `{"pd": "pandas", "Path": "pathlib.Path"}` to make
             these packages available in expressions.
@@ -77,9 +84,11 @@ class ConfigParser:
         self,
         config: Any = None,
         globals: dict[str, Any] | None | bool = None,
+        _metadata: dict[str, SourceLocation] | None = None,
     ):
+        """Internal constructor. Use factory methods (from_dict, from_file, from_files) instead."""
         self.config: Any = None  # Public config, always clean (no __sparkwheel_metadata__)
-        self._metadata: dict[str, SourceLocation] = {}  # Maps id_path -> SourceLocation
+        self._metadata: dict[str, SourceLocation] = _metadata or {}  # Maps id_path -> SourceLocation
         self.globals: dict[str, Any] = {}
         if isinstance(globals, dict):
             for k, v in globals.items():
@@ -98,21 +107,74 @@ class ConfigParser:
 
         self.set(config=self.ref_resolver.normalize_meta_id(config))
 
-    def __repr__(self):
-        return f"{self.config}"
-
-    def __getattr__(self, id):
-        """
-        Get the parsed result of ``ConfigItem`` with the specified ``id``
-        with default arguments (e.g. ``lazy=True``, ``instantiate=True`` and ``eval_expr=True``).
+    @classmethod
+    def from_dict(cls, config: dict, globals: dict[str, Any] | None = None) -> "ConfigParser":
+        """Create a ConfigParser from a configuration dictionary.
 
         Args:
-            id: id of the ``ConfigItem``.
+            config: Configuration dictionary with nested structure
+            globals: Pre-imported packages for expressions (e.g., {"pd": "pandas"})
 
-        See also:
-             :py:meth:`get_parsed_content`
+        Returns:
+            New ConfigParser instance
+
+        Example:
+            ```python
+            config = {"optimizer": {"_target_": "torch.optim.Adam", "lr": 0.001}}
+            parser = ConfigParser.from_dict(config)
+            ```
         """
-        return self.get_parsed_content(id)
+        return cls(config=config, globals=globals)
+
+    @classmethod
+    def from_file(cls, filepath: PathLike, globals: dict[str, Any] | None = None) -> "ConfigParser":
+        """Create a ConfigParser from a single YAML file.
+
+        Args:
+            filepath: Path to YAML configuration file
+            globals: Pre-imported packages for expressions
+
+        Returns:
+            New ConfigParser instance with loaded configuration
+
+        Example:
+            ```python
+            parser = ConfigParser.from_file("config.yaml")
+            optimizer = parser.resolve("optimizer")
+            ```
+        """
+        parser = cls(globals=globals)
+        parser.merge_file(filepath)
+        return parser
+
+    @classmethod
+    def from_files(
+        cls, filepaths: PathLike | Sequence[PathLike], globals: dict[str, Any] | None = None
+    ) -> "ConfigParser":
+        """Create a ConfigParser from multiple YAML files (merged in order).
+
+        Later files override/extend earlier files. Useful for base + override configs.
+
+        Args:
+            filepaths: Single file path or sequence of file paths to merge
+            globals: Pre-imported packages for expressions
+
+        Returns:
+            New ConfigParser instance with merged configuration
+
+        Example:
+            ```python
+            # Override base config with experiment-specific settings
+            parser = ConfigParser.from_files(["base.yaml", "experiment.yaml"])
+            ```
+        """
+        parser = cls(globals=globals)
+        for filepath in ensure_tuple(filepaths):
+            parser.merge_file(filepath)
+        return parser
+
+    def __repr__(self):
+        return f"{self.config}"
 
     def __getitem__(self, id: str | int) -> Any:
         """
@@ -219,78 +281,101 @@ class ConfigParser:
         except (KeyError, IndexError, ValueError):  # Index error for integer indexing
             return False
 
-    def parse(self, reset: bool = True) -> None:
-        """
-        Recursively resolve `self.config` to replace the macro tokens with target content.
-        Then recursively parse the config source, add every item as ``ConfigItem`` to the reference resolver.
+    def resolve(self, id: str = "", **kwargs: Any) -> Any:
+        """Resolve references and return parsed config item.
+
+        Automatically parses the config if not already parsed. This is the primary
+        method for accessing configuration values with references resolved and
+        components instantiated.
 
         Args:
-            reset: whether to reset the ``reference_resolver`` before parsing. Defaults to `True`.
+            id: ID of the config item to resolve. Use "::" to access nested items.
+                Examples: "optimizer", "model::layers::0"
+                Empty string "" returns the entire resolved config.
+            instantiate: Whether to instantiate components with _target_ (default: True)
+            eval_expr: Whether to evaluate expressions starting with $ (default: True)
+            lazy: Whether to use cached resolution (default: True)
+            default: Default value if id not found
+
+        Returns:
+            Resolved configuration value:
+            - Instantiated objects for ConfigComponent (if instantiate=True)
+            - Evaluated results for ConfigExpression (if eval_expr=True)
+            - Raw values for primitives and non-instantiable configs
+
+        Example:
+            ```python
+            parser = ConfigParser.from_file("config.yaml")
+
+            # Get instantiated optimizer
+            optimizer = parser.resolve("optimizer")
+
+            # Get nested config value
+            lr = parser.resolve("optimizer::lr")
+
+            # Get entire resolved config
+            all_config = parser.resolve()
+            ```
+        """
+        if not self.ref_resolver.is_resolved():
+            # Automatically parse on first access
+            self._parse(reset=True)
+        elif not kwargs.get("lazy", True):
+            self._parse(reset=not kwargs.get("lazy", True))
+        return self.ref_resolver.get_resolved_content(id=id, **kwargs)
+
+    def _parse(self, reset: bool = True) -> None:
+        """Internal method to parse config and resolve references.
+
+        Called automatically by resolve(). Users should not call this directly.
+
+        Args:
+            reset: whether to reset the reference_resolver before parsing.
         """
         if reset:
             self.ref_resolver.reset()
         self.resolve_macro_and_relative_ids()
         self._do_parse(config=self.get())
 
-    def get_parsed_content(self, id: str = "", **kwargs: Any) -> Any:
-        """
-        Get the parsed result of ``ConfigItem`` with the specified ``id``.
+    def merge_file(self, filepath: PathLike, **kwargs: Any) -> None:
+        """Merge configuration from a YAML file into this parser.
 
-            - If the item is ``ConfigComponent`` and ``instantiate=True``, the result is the instance.
-            - If the item is ``ConfigExpression`` and ``eval_expr=True``, the result is the evaluated output.
-            - Else, the result is the configuration content of `ConfigItem`.
+        Loaded configuration is merged with existing config. Later values
+        override earlier ones at the same path.
 
         Args:
-            id: id of the ``ConfigItem``, ``"::"`` (or ``"#"``) in id are interpreted as special characters to
-                go one level further into the nested structures.
-                Use digits indexing from "0" for list or other strings for dict.
-                For example: ``"xform::5"``, ``"net::channels"``. ``""`` indicates the entire ``self.config``.
-            kwargs: additional keyword arguments to be passed to ``_resolve_one_item``.
-                Currently support ``lazy`` (whether to retain the current config cache, default to `True`),
-                ``instantiate`` (whether to instantiate the `ConfigComponent`, default to `True`) and
-                ``eval_expr`` (whether to evaluate the `ConfigExpression`, default to `True`), ``default``
-                (the default config item if the `id` is not in the config content).
-        """
-        if not self.ref_resolver.is_resolved():
-            # not parsed the config source yet, parse it
-            self.parse(reset=True)
-        elif not kwargs.get("lazy", True):
-            self.parse(reset=not kwargs.get("lazy", True))
-        return self.ref_resolver.get_resolved_content(id=id, **kwargs)
+            filepath: Path to YAML configuration file
+            kwargs: Additional arguments for yaml.safe_load
 
-    def read_meta(self, f: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> None:
+        Example:
+            ```python
+            parser = ConfigParser.from_file("base.yaml")
+            parser.merge_file("overrides.yaml")  # Merges with base config
+            ```
         """
-        Read the metadata from specified YAML file.
-        The metadata as a dictionary will be stored at ``self.config["_meta_"]``.
+        self.merge_dict(self._load_config_files_with_metadata(filepath, **kwargs))
+
+    def merge_dict(self, config_dict: dict, **kwargs: Any) -> None:
+        """Merge a configuration dictionary into this parser.
 
         Args:
-            f: filepath of the metadata file, the content must be a dictionary,
-                if providing a list of files, will merge the content of them.
-                if providing a dictionary directly, use it as metadata.
-            kwargs: other arguments for ``yaml.safe_load``.
-        """
-        self.set(self.load_config_files(f, **kwargs), self.meta_key)
+            config_dict: Configuration dictionary to merge
+            kwargs: Additional arguments (reserved for future use)
 
-    def read_config(self, f: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> None:
+        Example:
+            ```python
+            parser = ConfigParser.from_file("config.yaml")
+            parser.merge_dict({"optimizer::lr": 0.01})  # Override learning rate
+            ```
         """
-        Read the config from specified YAML file or a dictionary and
-        override the config content in the `self.config` dictionary.
-
-        Args:
-            f: filepath of the config file, the content must be a dictionary,
-                if providing a list of files, will merge the content of them.
-                if providing a dictionary directly, use it as config.
-            kwargs: other arguments for ``yaml.safe_load``.
-        """
-        # Inherit source location metadata if input is a dict with existing metadata
-        if isinstance(f, dict) and self.meta_key in f:
-            meta_section = f.get(self.meta_key, {})
+        # Inherit source location metadata if input dict has existing metadata
+        if isinstance(config_dict, dict) and self.meta_key in config_dict:
+            meta_section = config_dict.get(self.meta_key, {})
             if isinstance(meta_section, dict) and self._METADATA_REF_KEY in meta_section:
-                self._metadata = meta_section[self._METADATA_REF_KEY].copy()
+                self._metadata.update(meta_section[self._METADATA_REF_KEY])
 
         content = {self.meta_key: self.get(self.meta_key, {})}
-        loaded_config = self._load_config_files_with_metadata(f, **kwargs)
-        content.update(loaded_config)
+        content.update(config_dict)
 
         # Extract source location metadata from YAML (stored as __sparkwheel_metadata__)
         self._extract_metadata(content, id_prefix="")
@@ -344,7 +429,13 @@ class ConfigParser:
                 # Add current macro to the stack before resolving
                 _macro_stack.add(config)
                 try:
-                    parser = ConfigParser(config=self.get() if not path else ConfigParser.load_config_file(path))
+                    if not path:
+                        loaded_config = self.get()
+                    else:
+                        # Load config file and strip metadata for macro expansion
+                        config_with_metadata = ConfigParser._load_config_file_with_metadata(path)
+                        loaded_config = ConfigParser._strip_metadata(config_with_metadata)
+                    parser = ConfigParser(config=loaded_config)
                     # Propagate the macro stack when resolving the referenced content
                     result = parser._do_resolve(parser[ids], ids, _macro_stack)
                     # deepcopy to ensure the macro replacement is independent config content
@@ -493,21 +584,6 @@ class ConfigParser:
             return yaml.load(f, CheckKeyDuplicatesYamlLoader, **kwargs)  # type: ignore[no-any-return]
 
     @classmethod
-    def load_config_file(cls, filepath: PathLike, **kwargs: Any) -> dict:
-        """
-        Load a single config file with specified file path (currently support YAML files only).
-
-        Args:
-            filepath: path of target file to load, supported postfixes: `.yml`, `.yaml`.
-            kwargs: other arguments for ``yaml.safe_load``.
-
-        Returns:
-            Clean config dict without internal metadata.
-        """
-        config_with_metadata = cls._load_config_file_with_metadata(filepath, **kwargs)
-        return cls._strip_metadata(config_with_metadata)  # type: ignore[no-any-return]
-
-    @classmethod
     def _load_config_files_with_metadata(cls, files: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> dict:
         """
         Internal method to load and merge multiple config files WITH metadata.
@@ -533,22 +609,47 @@ class ConfigParser:
         return parser.config  # type: ignore
 
     @classmethod
-    def load_config_files(cls, files: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> dict:
-        """
-        Load multiple config files into a single config dict.
-        The latter config file in the list will override or add the former config file.
-        ``"::"`` (or ``"#"``) in the config keys are interpreted as special characters to go one level
-        further into the nested structures.
+    def load_config_file(cls, filepath: PathLike, **kwargs: Any) -> dict:
+        """Load a YAML config file and return as dictionary.
+
+        Utility method for loading config without creating a ConfigParser instance.
 
         Args:
-            files: path of target files to load, supported postfixes: `.yml`, `.yaml`.
-                if providing a list of files, will merge the content of them.
-                if providing a string with comma separated file paths, will merge the content of them.
-                if providing a dictionary, return it directly.
-            kwargs: other arguments for ``yaml.safe_load``.
+            filepath: Path to YAML configuration file
+            kwargs: Additional arguments for yaml.safe_load
 
         Returns:
-            Clean merged config dict without internal metadata.
+            Clean config dictionary without internal metadata
+
+        Example:
+            ```python
+            config_dict = ConfigParser.load_config_file("config.yaml")
+            # Returns plain dict, not a ConfigParser instance
+            ```
+        """
+        if not filepath:
+            return {}
+        config_with_metadata = cls._load_config_file_with_metadata(filepath, **kwargs)
+        return cls._strip_metadata(config_with_metadata)  # type: ignore[no-any-return]
+
+    @classmethod
+    def load_config_files(cls, files: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> dict:
+        """Load and merge multiple YAML config files, return as dictionary.
+
+        Utility method for loading and merging configs without creating a ConfigParser instance.
+
+        Args:
+            files: Single file path, list of paths, comma-separated string, or dict
+            kwargs: Additional arguments for yaml.safe_load
+
+        Returns:
+            Clean merged config dictionary without internal metadata
+
+        Example:
+            ```python
+            config_dict = ConfigParser.load_config_files(["base.yaml", "override.yaml"])
+            # Returns plain dict, not a ConfigParser instance
+            ```
         """
         config_with_metadata = cls._load_config_files_with_metadata(files, **kwargs)
         return cls._strip_metadata(config_with_metadata)  # type: ignore[no-any-return]

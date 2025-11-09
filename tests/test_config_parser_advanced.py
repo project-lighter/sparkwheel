@@ -123,22 +123,22 @@ class TestConfigParserFileOperations:
         finally:
             Path(filepath).unlink()
 
-    def test_read_config(self):
-        """Test read_config method."""
+    def test_merge_file(self):
+        """Test merge_file method."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.safe_dump({"config_key": "config_value"}, f)
             filepath = f.name
 
         try:
-            parser = ConfigParser()
-            parser.read_config(filepath)
+            parser = ConfigParser.from_dict({})
+            parser.merge_file(filepath)
             assert parser["config_key"] == "config_value"
         finally:
             Path(filepath).unlink()
 
-    def test_read_config_preserves_meta(self):
-        """Test read_config preserves _meta_ field."""
-        parser = ConfigParser()
+    def test_merge_file_preserves_meta(self):
+        """Test merge_file preserves _meta_ field."""
+        parser = ConfigParser.from_dict({})
         parser["_meta_"] = {"existing": "meta"}
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -146,30 +146,35 @@ class TestConfigParserFileOperations:
             filepath = f.name
 
         try:
-            parser.read_config(filepath)
-            assert parser["_meta_"] == {"existing": "meta"}
+            parser.merge_file(filepath)
+            # Check that existing meta is preserved (along with new __source_locations__)
+            assert parser["_meta_"]["existing"] == "meta"
             assert parser["new_key"] == "new_value"
+            # __source_locations__ should also be present from the file load
+            assert "__source_locations__" in parser["_meta_"]
         finally:
             Path(filepath).unlink()
 
-    def test_read_meta(self):
-        """Test read_meta method."""
+    def test_merge_dict_for_meta(self):
+        """Test merging metadata via merge_dict method."""
+        parser = ConfigParser.from_dict({})
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.safe_dump({"meta_key": "meta_value"}, f)
             filepath = f.name
 
         try:
-            parser = ConfigParser()
-            parser.read_meta(filepath)
+            # Load config and set it in _meta_
+            meta_config = ConfigParser.load_config_file(filepath)
+            parser["_meta_"] = meta_config
             assert parser["_meta_"]["meta_key"] == "meta_value"
         finally:
             Path(filepath).unlink()
 
-    def test_read_meta_with_dict(self):
-        """Test read_meta with direct dict."""
-        parser = ConfigParser()
+    def test_set_meta_with_dict(self):
+        """Test setting meta with direct dict."""
+        parser = ConfigParser.from_dict({})
         meta_dict = {"direct": "meta"}
-        parser.read_meta(meta_dict)
+        parser["_meta_"] = meta_dict
         assert parser["_meta_"] == meta_dict
 
     def test_split_path_id_with_path(self):
@@ -206,13 +211,12 @@ class TestConfigParserAdvanced:
         repr_str = repr(parser)
         assert "key" in repr_str
 
-    def test_getattr(self):
-        """Test ConfigParser __getattr__."""
+    def test_resolve_direct_access(self):
+        """Test ConfigParser resolve() for direct access."""
         config = {"value": 10, "ref": "@value"}
-        parser = ConfigParser(config)
-        parser.parse()
-        # __getattr__ should call get_parsed_content
-        result = parser.ref
+        parser = ConfigParser.from_dict(config)
+        # Use resolve() explicitly (no magic __getattr__)
+        result = parser.resolve("ref")
         assert result == 10
 
     def test_get_with_default(self):
@@ -342,20 +346,20 @@ class TestConfigParserAdvanced:
     def test_parse_reset_true(self):
         """Test parse with reset=True."""
         parser = ConfigParser({"value": 10, "expr": "$@value * 2"})
-        parser.parse(reset=True)
+        parser._parse(reset=True)
         # After parse, items should be added to resolver
         assert len(parser.ref_resolver.items) > 0
         # Parse again with reset - should reset and re-add items
-        parser.parse(reset=True)
+        parser._parse(reset=True)
         # Items should still be present
         assert len(parser.ref_resolver.items) > 0
 
     def test_parse_reset_false(self):
         """Test parse with reset=False."""
         parser = ConfigParser({"value": 10})
-        parser.parse(reset=True)
+        parser._parse(reset=True)
         first_resolved = dict(parser.ref_resolver.resolved_content)
-        parser.parse(reset=False)
+        parser._parse(reset=False)
         # Should keep existing resolved content
         assert parser.ref_resolver.resolved_content == first_resolved
 
@@ -363,34 +367,34 @@ class TestConfigParserAdvanced:
         """Test get_parsed_content auto-parses if not parsed."""
         parser = ConfigParser({"value": 10, "ref": "@value"})
         # Don't call parse() manually
-        result = parser.get_parsed_content("ref")
+        result = parser.resolve("ref")
         assert result == 10
 
     def test_get_parsed_content_lazy_false(self):
         """Test get_parsed_content with lazy=False."""
         parser = ConfigParser({"value": 10})
-        parser.parse()
+        parser._parse()
         # Modify config after parsing
         parser["value"] = 20
         # With lazy=False, should re-parse
-        result = parser.get_parsed_content("value", lazy=False)
+        result = parser.resolve("value", lazy=False)
         assert result == 20
 
     def test_get_parsed_content_with_default(self):
         """Test get_parsed_content with default."""
         parser = ConfigParser({})
-        parser.parse()
+        parser._parse()
         from sparkwheel import ConfigItem
 
         default = ConfigItem({"default": True}, id="default")
-        result = parser.get_parsed_content("missing", default=default)
+        result = parser.resolve("missing", default=default)
         assert result == {"default": True}
 
     def test_do_parse_nested(self):
         """Test _do_parse with nested structures."""
         config = {"comp": {"_target_": "dict", "a": 1}, "expr": "$1 + 1", "plain": "value"}
         parser = ConfigParser(config)
-        parser.parse()
+        parser._parse()
         assert "comp" in parser.ref_resolver.items
         assert "expr" in parser.ref_resolver.items
         assert "plain" in parser.ref_resolver.items
@@ -425,8 +429,8 @@ class TestConfigParserAdvanced:
         """Test complex nested reference resolution."""
         config = {"data": {"values": [1, 2, 3], "metadata": {"count": "$len(@data::values)"}}, "ref": "@data::metadata::count"}
         parser = ConfigParser(config)
-        parser.parse()
-        result = parser.get_parsed_content("ref")
+        parser._parse()
+        result = parser.resolve("ref")
         assert result == 3
 
     def test_disabled_component_in_dict(self):
@@ -435,8 +439,8 @@ class TestConfigParserAdvanced:
             "components": {"enabled": {"_target_": "dict", "a": 1}, "disabled": {"_target_": "dict", "_disabled_": True}}
         }
         parser = ConfigParser(config)
-        parser.parse()
-        result = parser.get_parsed_content("components")
+        parser._parse()
+        result = parser.resolve("components")
         assert "enabled" in result
         assert "disabled" not in result
 
@@ -444,8 +448,8 @@ class TestConfigParserAdvanced:
         """Test expression referencing an instantiated component."""
         config = {"mydict": {"_target_": "dict", "a": 1, "b": 2}, "value": "$@mydict['a']"}
         parser = ConfigParser(config)
-        parser.parse()
-        result = parser.get_parsed_content("value")
+        parser._parse()
+        result = parser.resolve("value")
         assert result == 1
 
 
@@ -478,13 +482,13 @@ def test_load_uppercase_yaml():
 def test_get_parsed_content_with_lazy_false_forces_reparse():
     """Test get_parsed_content with lazy=False forces re-parse."""
     parser = ConfigParser({"value": 10, "ref": "@value"})
-    parser.parse()
+    parser._parse()
     # Get first result (not used, but establishes baseline)
-    parser.get_parsed_content("ref")
+    parser.resolve("ref")
     # Change the value
     parser["value"] = 20
     # With lazy=False, should re-parse
-    result2 = parser.get_parsed_content("ref", lazy=False)
+    result2 = parser.resolve("ref", lazy=False)
     assert result2 == 20
 
 

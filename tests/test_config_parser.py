@@ -18,35 +18,33 @@ def test_basic_config():
 def test_reference():
     """Test reference resolution."""
     config = {"value": 10, "reference": "@value"}
-    parser = ConfigParser(config)
-    parser.parse()
-    result = parser.get_parsed_content("reference")
+    parser = ConfigParser.from_dict(config)
+    result = parser.resolve("reference")
     assert result == 10
 
 
 def test_expression():
     """Test expression evaluation."""
     config = {"base": 5, "computed": "$@base * 2"}
-    parser = ConfigParser(config)
-    parser.parse()
-    result = parser.get_parsed_content("computed")
+    parser = ConfigParser.from_dict(config)
+    result = parser.resolve("computed")
     assert result == 10
 
 
 def test_nested_reference():
     """Test nested reference with ::."""
     config = {"nested": {"value": 100}, "ref": "@nested::value"}
-    parser = ConfigParser(config)
-    parser.parse()
-    result = parser.get_parsed_content("ref")
+    parser = ConfigParser.from_dict(config)
+    result = parser.resolve("ref")
     assert result == 100
 
 
 def test_macro():
     """Test macro expansion with %."""
     config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
-    parser = ConfigParser(config)
-    parser.parse()
+    parser = ConfigParser.from_dict(config)
+    # After resolve(), macros are expanded
+    parser.resolve()
     assert parser["copy"] == {"a": 1, "b": 2}
     # Ensure it's a copy, not the same object
     assert parser["copy"] is not parser["original"]
@@ -84,27 +82,24 @@ def test_disabled_component():
             "_disabled_": True,
         }
     }
-    parser = ConfigParser(config)
-    parser.parse()
-    result = parser.get_parsed_content("component", instantiate=True)
+    parser = ConfigParser.from_dict(config)
+    result = parser.resolve("component", instantiate=True)
     assert result is None
 
 
 def test_expression_with_builtin():
     """Test expression using Python builtins."""
     config = {"items": [1, 2, 3, 4, 5], "count": "$len(@items)"}
-    parser = ConfigParser(config)
-    parser.parse()
-    result = parser.get_parsed_content("count")
+    parser = ConfigParser.from_dict(config)
+    result = parser.resolve("count")
     assert result == 5
 
 
 def test_multiple_references():
     """Test multiple references in one expression."""
     config = {"a": 10, "b": 20, "sum": "$@a + @b"}
-    parser = ConfigParser(config)
-    parser.parse()
-    result = parser.get_parsed_content("sum")
+    parser = ConfigParser.from_dict(config)
+    result = parser.resolve("sum")
     assert result == 30
 
 
