@@ -222,9 +222,8 @@ learning_rate: "$0.001 * (@training::batch_size ** 0.5)"
 # In your Python code
 from sparkwheel import ConfigParser
 
-parser = ConfigParser()
 try:
-    config = parser.read_config("config.yaml")
+    parser = ConfigParser.load("config.yaml")
 except SyntaxError as e:
     print(f"Expression syntax error: {e}")
 except Exception as e:

@@ -1,3 +1,12 @@
+"""
+Comprehensive tests for utility functions.
+
+This module contains tests for utility functions across different modules:
+- Miscellaneous utilities (first, ensure_tuple, etc.)
+- Module utilities (instantiate, look_up_option, etc.)
+- Enums (CompInitMode, StrEnum)
+"""
+
 import os
 import warnings
 from collections import Counter
@@ -23,7 +32,7 @@ from sparkwheel.utils.module import OptionalImportError
 
 
 class TestMiscUtils:
-    """Test functions in utils/misc.py"""
+    """Test miscellaneous utility functions."""
 
     @pytest.mark.parametrize(
         "iterable,expected",
@@ -55,14 +64,15 @@ class TestMiscUtils:
 
     def test_first_generator(self):
         """Test first works with generator."""
-
         def gen():
             yield 1
             yield 2
 
         assert first(gen()) == 1
 
-    @pytest.mark.parametrize("value", [[1, 2, 3], (1, 2, 3), {1, 2, 3}, {"a": 1}, range(5)])
+    @pytest.mark.parametrize(
+        "value", [[1, 2, 3], (1, 2, 3), {1, 2, 3}, {"a": 1}, range(5)]
+    )
     def test_issequenceiterable_true(self, value):
         """Test issequenceiterable with iterable sequences."""
         assert issequenceiterable(value) is True
@@ -71,6 +81,15 @@ class TestMiscUtils:
     def test_issequenceiterable_false(self, value):
         """Test issequenceiterable returns False for non-iterables."""
         assert issequenceiterable(value) is False
+
+    def test_issequenceiterable_exception_handling(self):
+        """Test issequenceiterable handles exceptions from ndim."""
+        class BadNdim:
+            @property
+            def ndim(self):
+                raise RuntimeError("Bad")
+
+        assert issequenceiterable(BadNdim()) is False
 
     @pytest.mark.parametrize(
         "value,expected",
@@ -108,7 +127,7 @@ class TestMiscUtils:
             result = check_key_duplicates(pairs)
             assert len(w) > 0
             assert "Duplicate key" in str(w[0].message)
-            assert result == {"a": 3, "b": 2}  # Last value wins
+            assert result == {"a": 3, "b": 2}
 
     def test_check_key_duplicates_strict_mode(self):
         """Test check_key_duplicates raises error in strict mode."""
@@ -160,7 +179,7 @@ a: 2
 
 
 class TestModuleUtils:
-    """Test functions in utils/module.py"""
+    """Test module-related utility functions."""
 
     @pytest.mark.parametrize(
         "str1,str2,expected",
@@ -204,6 +223,11 @@ class TestModuleUtils:
         result = look_up_option(CompInitMode.DEFAULT, CompInitMode)
         assert result == CompInitMode.DEFAULT
 
+    def test_look_up_option_enum_not_in_values(self):
+        """Test look_up_option with enum member not matching."""
+        with pytest.raises(ValueError):
+            look_up_option(999, CompInitMode)
+
     def test_look_up_option_not_found_with_default(self):
         """Test look_up_option returns default when not found."""
         result = look_up_option("missing", {"a", "b", "c"}, default="fallback")
@@ -221,7 +245,6 @@ class TestModuleUtils:
 
     def test_look_up_option_no_close_match(self):
         """Test look_up_option without close match."""
-        # Note: Even distant strings may get suggestions if edit distance <= 3
         with pytest.raises(ValueError):
             look_up_option("wxyz", {"abc", "def", "ghi"})
 
@@ -229,6 +252,11 @@ class TestModuleUtils:
         """Test look_up_option with empty collection."""
         with pytest.raises(ValueError, match="No options available"):
             look_up_option("any", set())
+
+    def test_look_up_option_with_none_collection(self):
+        """Test look_up_option with None as collection."""
+        with pytest.raises(ValueError, match="No options"):
+            look_up_option("any", None)
 
     def test_look_up_option_whitespace_stripped(self):
         """Test look_up_option strips whitespace from string."""
@@ -251,7 +279,6 @@ class TestModuleUtils:
         module, success = optional_import("os")
         assert success is True
         import os as expected_os
-
         assert module is expected_os
 
     def test_optional_import_with_name(self):
@@ -287,9 +314,14 @@ class TestModuleUtils:
         """Test instantiate with callable mode and kwargs."""
         result = instantiate("collections.Counter", "callable", iterable=[1, 2])
         assert isinstance(result, partial)
-        # Call the partial to verify it works
         counter = result()
         assert isinstance(counter, Counter)
+
+    def test_instantiate_callable_mode_returns_partial(self):
+        """Test callable mode with kwargs returns partial."""
+        result = instantiate("dict", "callable", a=1)
+        assert isinstance(result, partial)
+        assert result() == {"a": 1}
 
     def test_instantiate_with_callable_object(self):
         """Test instantiate with callable object instead of string."""
@@ -320,13 +352,19 @@ class TestModuleUtils:
     def test_instantiate_error_handling(self):
         """Test instantiate error handling."""
         with pytest.raises((InstantiationError, RuntimeError, TypeError)):
-            # Try to instantiate with invalid arguments
-            # Some callables may raise TypeError instead of being caught
             instantiate("int", "default", invalid_arg="not_an_int")
+
+    def test_instantiate_debug_mode_with_dict(self):
+        """Test instantiate in debug mode."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            result = instantiate("dict", "debug", a=1)
+            assert any("pdb" in str(warning.message).lower() for warning in w)
+            assert result == {"a": 1}
 
 
 class TestEnums:
-    """Test enums in utils/enums.py"""
+    """Test enum classes."""
 
     @pytest.mark.parametrize(
         "mode,value",
@@ -355,56 +393,5 @@ class TestEnums:
         assert CompInitMode.DEBUG in modes
 
 
-def test_issequenceiterable_exception_handling():
-    """Test issequenceiterable handles exceptions from ndim."""
-    from sparkwheel.utils import issequenceiterable
-
-    class BadNdim:
-        @property
-        def ndim(self):
-            raise RuntimeError("Bad")
-
-    assert issequenceiterable(BadNdim()) is False
-
-
-def test_look_up_option_with_none_collection():
-    """Test look_up_option with None as collection."""
-    from sparkwheel.utils import look_up_option
-
-    with pytest.raises(ValueError, match="No options"):
-        look_up_option("any", None)
-
-
-def test_instantiate_debug_mode_with_dict():
-    """Test instantiate in debug mode."""
-    import warnings
-
-    from sparkwheel.utils import instantiate
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        result = instantiate("dict", "debug", a=1)
-        # Should have pdb warnings
-        assert any("pdb" in str(warning.message).lower() for warning in w)
-        assert result == {"a": 1}
-
-
-def test_instantiate_callable_mode_returns_partial():
-    """Test callable mode with kwargs returns partial."""
-    from functools import partial
-
-    from sparkwheel.utils import instantiate
-
-    result = instantiate("dict", "callable", a=1)
-    assert isinstance(result, partial)
-    assert result() == {"a": 1}
-
-
-def test_look_up_option_enum_not_in_values():
-    """Test look_up_option with enum member not matching."""
-    from sparkwheel.utils import look_up_option
-    from sparkwheel.utils.enums import CompInitMode
-
-    # Test with integer that won't match
-    with pytest.raises(ValueError):
-        look_up_option(999, CompInitMode)
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

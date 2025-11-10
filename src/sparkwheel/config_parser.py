@@ -12,6 +12,7 @@ import yaml
 from sparkwheel.config_item import ConfigComponent, ConfigExpression, ConfigItem
 from sparkwheel.constants import ID_REF_KEY, ID_SEP_KEY, MACRO_KEY
 from sparkwheel.exceptions import SourceLocation
+from sparkwheel.merge import merge_configs
 from sparkwheel.reference_resolver import ReferenceResolver
 from sparkwheel.utils import CheckKeyDuplicatesYamlLoader, PathLike, ensure_tuple, look_up_option, optional_import
 
@@ -29,7 +30,7 @@ class ConfigParser:
         ```python
         from sparkwheel import ConfigParser
 
-        # Create parser from dict
+        # Load config from dict
         config = {
             "base_count": 10,
             "doubled": "$@base_count * 2",
@@ -39,10 +40,11 @@ class ConfigParser:
             },
             "my_list": [1, 2, 2, 3, 3, 3]
         }
-        parser = ConfigParser.from_dict(config)
+        parser = ConfigParser.load(config)
 
-        # Or create from YAML file
-        parser = ConfigParser.from_file("config.yaml")
+        # Or load from YAML file(s)
+        parser = ConfigParser.load("config.yaml")
+        parser = ConfigParser.load(["base.yaml", "override.yaml"])
 
         # Access raw config
         print(parser["my_counter"]["iterable"])  # "@my_list"
@@ -58,10 +60,7 @@ class ConfigParser:
         print(doubled)  # 2 (since list was changed to [1,1,1])
         ```
 
-    Use factory methods to create instances:
-        - `ConfigParser.from_dict(config_dict)` - from dictionary
-        - `ConfigParser.from_file(filepath)` - from single YAML file
-        - `ConfigParser.from_files(filepaths)` - from multiple YAML files (merged)
+    Use ConfigParser.load() to create instances from files or dicts.
 
     Args:
         globals: Pre-imported packages for expressions.
@@ -75,7 +74,7 @@ class ConfigParser:
     # Pre-compiled regex patterns for better performance
     path_match_compiled = re.compile(path_match, re.IGNORECASE)
     split_path_compiled = re.compile(rf"({suffix_match}(?=(?:{ID_SEP_KEY}.*)|$))", re.IGNORECASE)
-    # match relative id names, e.g. "@#data", "@##transform#1"
+    # match relative id names, e.g. "@::data", "@::::transform::1"
     relative_id_prefix = re.compile(rf"(?:{ID_REF_KEY}|{MACRO_KEY}){ID_SEP_KEY}+")
     meta_key = "_meta_"  # field key to save metadata
     _METADATA_REF_KEY = "__source_locations__"  # key within _meta_ to store source location metadata
@@ -86,7 +85,7 @@ class ConfigParser:
         globals: dict[str, Any] | None | bool = None,
         _metadata: dict[str, SourceLocation] | None = None,
     ):
-        """Internal constructor. Use factory methods (from_dict, from_file, from_files) instead."""
+        """Internal constructor. Use load() to create instances."""
         self.config: Any = None  # Public config, always clean (no __sparkwheel_metadata__)
         self._metadata: dict[str, SourceLocation] = _metadata or {}  # Maps id_path -> SourceLocation
         self.globals: dict[str, Any] = {}
@@ -105,72 +104,60 @@ class ConfigParser:
             if isinstance(meta_section, dict) and self._METADATA_REF_KEY in meta_section:
                 self._metadata = meta_section[self._METADATA_REF_KEY].copy()
 
-        self.set(config=self.ref_resolver.normalize_meta_id(config))
+        # Set config directly (replaces old set() method call)
+        self[""] = config
 
     @classmethod
-    def from_dict(cls, config: dict, globals: dict[str, Any] | None = None) -> "ConfigParser":
-        """Create a ConfigParser from a configuration dictionary.
+    def load(
+        cls,
+        source: PathLike | Sequence[PathLike] | dict,
+        globals: dict[str, Any] | None = None,
+    ) -> "ConfigParser":
+        """Load config from file(s) or dict - unified loading method.
+
+        This is the primary way to create a ConfigParser instance.
 
         Args:
-            config: Configuration dictionary with nested structure
-            globals: Pre-imported packages for expressions (e.g., {"pd": "pandas"})
+            source: Single file path, list of paths, or config dict
+            globals: Pre-imported packages for expressions
 
         Returns:
             New ConfigParser instance
 
-        Example:
-            ```python
-            config = {"optimizer": {"_target_": "torch.optim.Adam", "lr": 0.001}}
-            parser = ConfigParser.from_dict(config)
-            ```
+        Merge Behavior:
+            Files are merged in order. Use + and ~ prefixes in YAML to control merging:
+
+            +key: value   - MERGE this dict with existing (preserves other keys)
+            ~key          - DELETE this key
+            key: value    - REPLACE (default - but if nested values have +, will merge)
+
+            Implicit Propagation: When you use + on a nested key, parent keys
+            automatically merge instead of replace.
+
+        Examples:
+            >>> # Single file
+            >>> parser = ConfigParser.load("config.yaml")
+
+            >>> # Multiple files - merge behavior controlled by + in YAML
+            >>> parser = ConfigParser.load(["base.yaml", "override.yaml"])
+
+            >>> # From dict
+            >>> parser = ConfigParser.load({"model": {"lr": 0.001}})
         """
-        return cls(config=config, globals=globals)
+        # Handle dict input
+        if isinstance(source, dict):
+            return cls(config=source, globals=globals)
 
-    @classmethod
-    def from_file(cls, filepath: PathLike, globals: dict[str, Any] | None = None) -> "ConfigParser":
-        """Create a ConfigParser from a single YAML file.
+        # Handle single file or list of files
+        file_list = ensure_tuple(source)
 
-        Args:
-            filepath: Path to YAML configuration file
-            globals: Pre-imported packages for expressions
-
-        Returns:
-            New ConfigParser instance with loaded configuration
-
-        Example:
-            ```python
-            parser = ConfigParser.from_file("config.yaml")
-            optimizer = parser.resolve("optimizer")
-            ```
-        """
+        # Load first file as base
         parser = cls(globals=globals)
-        parser.merge_file(filepath)
-        return parser
+        if file_list:
+            # Merge files using internal helper
+            for filepath in file_list:
+                parser._merge_file_internal(filepath)
 
-    @classmethod
-    def from_files(
-        cls, filepaths: PathLike | Sequence[PathLike], globals: dict[str, Any] | None = None
-    ) -> "ConfigParser":
-        """Create a ConfigParser from multiple YAML files (merged in order).
-
-        Later files override/extend earlier files. Useful for base + override configs.
-
-        Args:
-            filepaths: Single file path or sequence of file paths to merge
-            globals: Pre-imported packages for expressions
-
-        Returns:
-            New ConfigParser instance with merged configuration
-
-        Example:
-            ```python
-            # Override base config with experiment-specific settings
-            parser = ConfigParser.from_files(["base.yaml", "experiment.yaml"])
-            ```
-        """
-        parser = cls(globals=globals)
-        for filepath in ensure_tuple(filepaths):
-            parser.merge_file(filepath)
         return parser
 
     def __repr__(self):
@@ -199,29 +186,47 @@ class ConfigParser:
         return config
 
     def __setitem__(self, id: str | int, config: Any) -> None:
-        """
-        Set config by ``id``.  Note that this method should be used before ``parse()`` or ``get_parsed_content()``
-        to ensure the updates are included in the parsed content.
+        """Set config value, creating missing paths as needed.
+
+        Like normal dict assignment - always succeeds by creating intermediate dicts.
 
         Args:
-            id: id of the ``ConfigItem``, ``"::"`` (or ``"#"``) in id are interpreted as special characters to
-                go one level further into the nested structures.
+            id: id of the ConfigItem, "::" (or "#") in id are interpreted as special
+                characters to go one level further into nested structures.
                 Use digits indexing from "0" for list or other strings for dict.
-                For example: ``"xform::5"``, ``"net::channels"``. ``""`` indicates the entire ``self.config``.
-            config: config to set at location ``id``.
+                For example: "xform::5", "net::channels". "" indicates entire self.config.
+            config: config to set at location id
+
+        Examples:
+            parser["model::lr"] = 0.001              # Creates "model" if needed
+            parser["model::nested::deep"] = value    # Creates all paths
         """
         if id == "":
             self.config = config
             self.ref_resolver.reset()
             return
-        last_id, base_id = ReferenceResolver.split_id(id, last=True)
-        # get the last parent level config item and replace it
-        conf_ = self[last_id]
 
-        indexing = base_id if isinstance(conf_, dict) else int(base_id)
-        conf_[indexing] = config
+        # Always create missing paths (like recursive=True behavior)
+        keys = ReferenceResolver.split_id(id)
+
+        # Ensure we have a dict to work with
+        if not isinstance(self.config, dict):
+            self.config = {}
+
+        conf = self.config
+
+        # Create missing intermediate dicts
+        for k in keys[:-1]:
+            if k not in conf:
+                conf[k] = {}
+            elif not isinstance(conf[k], dict):
+                # If the intermediate value is not a dict, replace it
+                conf[k] = {}
+            conf = conf[k]
+
+        # Set final value
+        conf[keys[-1]] = config
         self.ref_resolver.reset()
-        return
 
     def get(self, id: str = "", default: Any | None = None) -> Any:
         """
@@ -236,37 +241,63 @@ class ConfigParser:
         except (KeyError, IndexError, ValueError):  # Index error for integer indexing
             return default
 
-    def set(self, config: Any, id: str = "", recursive: bool = True) -> None:
-        """
-        Set config by ``id``.
-
-        Args:
-            config: config to set at location ``id``.
-            id: id to specify the expected position. See also :py:meth:`__setitem__`.
-            recursive: if the nested id doesn't exist, whether to recursively create the nested items in the config.
-                default to `True`. for the nested id, only support `dict` for the missing section.
-        """
-        keys = ReferenceResolver.split_id(id)
-        conf_ = self.get()
-        if recursive:
-            if conf_ is None:
-                self.config = conf_ = {}  # type: ignore
-            for k in keys[:-1]:
-                if isinstance(conf_, dict) and k not in conf_:
-                    conf_[k] = {}
-                conf_ = conf_[k if isinstance(conf_, dict) else int(k)]
-        self[ReferenceResolver.normalize_id(id)] = self.ref_resolver.normalize_meta_id(config)
-
     def update(self, pairs: dict[str, Any]) -> None:
-        """
-        Set the ``id`` and the corresponding config content in pairs, see also :py:meth:`__setitem__`.
-        For example, ``parser.update({"train::epoch": 100, "train::lr": 0.02})``
+        """Batch update with +/~ prefix support.
+
+        Prefixes control merge behavior:
+            +key - MERGE dict value into existing (for dicts only)
+            ~key - DELETE key
+            key  - SET/REPLACE value (default)
 
         Args:
-            pairs: dictionary of `id` and config pairs.
+            pairs: dictionary of id and config pairs
+
+        Examples:
+            # Simple updates (scalars)
+            parser.update({"model::lr": 0.001})
+
+            # Dict replacement vs merge
+            parser.update({"model::layers": {...}})      # Replace layers
+            parser.update({"+model::layers": {...}})     # Merge into layers
+
+            # Delete
+            parser.update({"~model::old_param": None})
         """
-        for k, v in pairs.items():
-            self[k] = v
+        for key, value in pairs.items():
+            if isinstance(key, str):
+                if key.startswith('+'):
+                    # Merge directive - only for dict values
+                    actual_key = key[1:]
+                    if actual_key in self and isinstance(self[actual_key], dict) and isinstance(value, dict):
+                        # Both dicts - merge them
+                        merged = merge_configs(self[actual_key], value)
+                        self[actual_key] = merged
+                    else:
+                        # Not both dicts or doesn't exist - just set
+                        self[actual_key] = value
+                elif key.startswith('~'):
+                    # Delete directive
+                    actual_key = key[1:]
+                    if actual_key in self:
+                        # Need to delete from parent
+                        if '::' in actual_key or '#' in actual_key:
+                            # Nested key - delete from parent dict
+                            keys = ReferenceResolver.split_id(actual_key)
+                            parent_id = ReferenceResolver.normalize_id('::'.join(keys[:-1]))
+                            parent = self[parent_id] if parent_id else self.config
+                            if isinstance(parent, dict) and keys[-1] in parent:
+                                del parent[keys[-1]]
+                        else:
+                            # Top-level key
+                            if isinstance(self.config, dict) and actual_key in self.config:
+                                del self.config[actual_key]
+                    self.ref_resolver.reset()
+                else:
+                    # Normal set/replace
+                    self[key] = value
+            else:
+                # Non-string key - just set normally
+                self[key] = value
 
     def __contains__(self, id: str | int) -> bool:
         """
@@ -337,36 +368,10 @@ class ConfigParser:
         self.resolve_macro_and_relative_ids()
         self._do_parse(config=self.get())
 
-    def merge_file(self, filepath: PathLike, **kwargs: Any) -> None:
-        """Merge configuration from a YAML file into this parser.
+    def _merge_dict_internal(self, config_dict: dict) -> None:
+        """Internal method to merge a configuration dictionary.
 
-        Loaded configuration is merged with existing config. Later values
-        override earlier ones at the same path.
-
-        Args:
-            filepath: Path to YAML configuration file
-            kwargs: Additional arguments for yaml.safe_load
-
-        Example:
-            ```python
-            parser = ConfigParser.from_file("base.yaml")
-            parser.merge_file("overrides.yaml")  # Merges with base config
-            ```
-        """
-        self.merge_dict(self._load_config_files_with_metadata(filepath, **kwargs))
-
-    def merge_dict(self, config_dict: dict, **kwargs: Any) -> None:
-        """Merge a configuration dictionary into this parser.
-
-        Args:
-            config_dict: Configuration dictionary to merge
-            kwargs: Additional arguments (reserved for future use)
-
-        Example:
-            ```python
-            parser = ConfigParser.from_file("config.yaml")
-            parser.merge_dict({"optimizer::lr": 0.01})  # Override learning rate
-            ```
+        Supports +/~ directives in config_dict keys for fine-grained merge control.
         """
         # Inherit source location metadata if input dict has existing metadata
         if isinstance(config_dict, dict) and self.meta_key in config_dict:
@@ -374,15 +379,23 @@ class ConfigParser:
             if isinstance(meta_section, dict) and self._METADATA_REF_KEY in meta_section:
                 self._metadata.update(meta_section[self._METADATA_REF_KEY])
 
+        # Get current config without metadata
+        current = self.config if isinstance(self.config, dict) else {}
+        current_clean = {k: v for k, v in current.items() if k != self.meta_key}
+
+        # Merge using merge_configs to handle +/~ directives
+        merged = merge_configs(current_clean, config_dict)
+
+        # Prepare content with metadata
         content = {self.meta_key: self.get(self.meta_key, {})}
-        content.update(config_dict)
+        content.update(merged)
 
         # Extract source location metadata from YAML (stored as __sparkwheel_metadata__)
         self._extract_metadata(content, id_prefix="")
 
         # Strip temporary __sparkwheel_metadata__ keys and store clean config
         clean_content = self._strip_metadata(content)
-        self.set(config=clean_content)
+        self[""] = clean_content  # Direct assignment instead of set()
 
         # Store source location metadata in _meta_ so it persists across dict.copy()
         if isinstance(self.config, dict) and self._metadata:
@@ -392,17 +405,51 @@ class ConfigParser:
                 self.config[self.meta_key] = {}
             self.config[self.meta_key][self._METADATA_REF_KEY] = self._metadata
 
+    def _merge_file_internal(self, filepath: PathLike, **kwargs: Any) -> None:
+        """Internal method to merge configuration from a YAML file."""
+        self._merge_dict_internal(self._load_config_files_with_metadata(filepath, **kwargs))
+
+    def merge(
+        self,
+        source: PathLike | Sequence[PathLike] | dict,
+    ) -> None:
+        """Merge configuration from file(s) or dict - unified merge method.
+
+        This is the primary way to merge configurations after initial load.
+
+        Args:
+            source: File path, list of paths, or config dict
+
+        Merge behavior controlled by +/~ directives in source files/dicts:
+            +key: value   - MERGE dict into existing
+            ~key          - DELETE key
+            key: value    - REPLACE (default, but implicit propagation applies)
+
+        Examples:
+            >>> parser.merge("override.yaml")
+            >>> parser.merge({"+model": {"dropout": 0.1}})  # Merge into model
+            >>> parser.merge(["file1.yaml", "file2.yaml"])
+        """
+        # Handle dict input
+        if isinstance(source, dict):
+            self._merge_dict_internal(source)
+            return
+
+        # Handle file(s) input
+        for filepath in ensure_tuple(source):
+            self._merge_file_internal(filepath)
+
     def _do_resolve(self, config: Any, id: str = "", _macro_stack: set[str] | None = None) -> Any:
         """
         Recursively resolve `self.config` to replace the relative ids with absolute ids, for example,
-        `@##A` means `A` in the upper level. and replace the macro tokens with target content,
+        `@::::A` means `A` one level up. and replace the macro tokens with target content,
         The macro tokens start with "%", can be from another structured file, like:
-        ``"%default_net"``, ``"%/data/config.yaml#net"``.
+        ``"%default_net"``, ``"%/data/config.yaml::net"``.
         Note that the macro replacement doesn't support recursive macro tokens.
 
         Args:
             config: input config file to resolve.
-            id: id of the ``ConfigItem``, ``"::"`` (or ``"#"``) in id are interpreted as special characters to
+            id: id of the ``ConfigItem``, ``"::"`` in id are interpreted as special characters to
                 go one level further into the nested structures.
                 Use digits indexing from "0" for list or other strings for dict.
                 For example: ``"xform::5"``, ``"net::channels"``. ``""`` indicates the entire ``self.config``.
@@ -448,11 +495,11 @@ class ConfigParser:
     def resolve_macro_and_relative_ids(self):
         """
         Recursively resolve `self.config` to replace the relative ids with absolute ids, for example,
-        `@##A` means `A` in the upper level. and replace the macro tokens with target content,
+        `@::::A` means `A` one level up. and replace the macro tokens with target content,
         The macro tokens are marked as starting with "%", can be from another structured file, like:
         ``"%default_net"``, ``"%/data/config.yaml::net"``.
         """
-        self.set(self._do_resolve(config=self.get()))
+        self[""] = self._do_resolve(config=self.get())
 
     def _extract_metadata(self, config: Any, id_prefix: str = "") -> None:
         """Extract source location metadata from YAML-loaded config into self._metadata.
@@ -603,56 +650,10 @@ class ConfigParser:
         for i in ensure_tuple(files):
             config_dict = cls._load_config_file_with_metadata(i, **kwargs)
             for k, v in config_dict.items():
-                parser.set(v, k)
+                parser[k] = v
 
         # Return with metadata - caller will extract and strip
         return parser.config  # type: ignore
-
-    @classmethod
-    def load_config_file(cls, filepath: PathLike, **kwargs: Any) -> dict:
-        """Load a YAML config file and return as dictionary.
-
-        Utility method for loading config without creating a ConfigParser instance.
-
-        Args:
-            filepath: Path to YAML configuration file
-            kwargs: Additional arguments for yaml.safe_load
-
-        Returns:
-            Clean config dictionary without internal metadata
-
-        Example:
-            ```python
-            config_dict = ConfigParser.load_config_file("config.yaml")
-            # Returns plain dict, not a ConfigParser instance
-            ```
-        """
-        if not filepath:
-            return {}
-        config_with_metadata = cls._load_config_file_with_metadata(filepath, **kwargs)
-        return cls._strip_metadata(config_with_metadata)  # type: ignore[no-any-return]
-
-    @classmethod
-    def load_config_files(cls, files: PathLike | Sequence[PathLike] | dict, **kwargs: Any) -> dict:
-        """Load and merge multiple YAML config files, return as dictionary.
-
-        Utility method for loading and merging configs without creating a ConfigParser instance.
-
-        Args:
-            files: Single file path, list of paths, comma-separated string, or dict
-            kwargs: Additional arguments for yaml.safe_load
-
-        Returns:
-            Clean merged config dictionary without internal metadata
-
-        Example:
-            ```python
-            config_dict = ConfigParser.load_config_files(["base.yaml", "override.yaml"])
-            # Returns plain dict, not a ConfigParser instance
-            ```
-        """
-        config_with_metadata = cls._load_config_files_with_metadata(files, **kwargs)
-        return cls._strip_metadata(config_with_metadata)  # type: ignore[no-any-return]
 
     @classmethod
     def export_config_file(cls, config: dict, filepath: PathLike, **kwargs: Any) -> None:
@@ -690,24 +691,24 @@ class ConfigParser:
     def resolve_relative_ids(cls, id: str, value: str) -> str:
         """
         To simplify the reference or macro tokens ID in the nested config content, it's available to use
-        relative ID name which starts with the `ID_SEP_KEY`, for example, "@#A" means `A` in the same level,
-        `@##A` means `A` in the upper level.
+        relative ID name which starts with the `ID_SEP_KEY`, for example, "@::A" means `A` in the same level,
+        `@::::A` means `A` in the upper level.
         It resolves the relative ids to absolute ids. For example, if the input data is:
 
         .. code-block:: python
 
             {
                 "A": 1,
-                "B": {"key": "@##A", "value1": 2, "value2": "%#value1", "value3": [3, 4, "@#1"]},
+                "B": {"key": "@::::A", "value1": 2, "value2": "%::value1", "value3": [3, 4, "@::1"]},
             }
 
-        It will resolve `B` to `{"key": "@A", "value1": 2, "value2": "%B#value1", "value3": [3, 4, "@B#value3#1"]}`.
+        It will resolve `B` to `{"key": "@A", "value1": 2, "value2": "%B::value1", "value3": [3, 4, "@B::value3::1"]}`.
 
         Args:
             id: id name for current config item to compute relative id.
             value: input value to resolve relative ids.
         """
-        # get the prefixes like: "@####", "%###", "@#"
+        # get the prefixes like: "@::::::::", "%::::::", "@::"
         value = ReferenceResolver.normalize_id(value)
         prefixes = sorted(set().union(cls.relative_id_prefix.findall(value)), reverse=True)
         current_id = id.split(ID_SEP_KEY)

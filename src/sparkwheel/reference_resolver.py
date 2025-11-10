@@ -145,9 +145,14 @@ class ReferenceResolver:
                     source_location = config_item.source_location
                     break
 
+            # Get available keys for smart suggestions
+            available_keys = list(self.items.keys())
+
             raise ConfigKeyError(
                 f"Config ID '{id}' not found in the configuration",
                 source_location=source_location,
+                missing_key=id,
+                available_keys=available_keys,
             ) from err
         if not isinstance(item, ConfigItem):
             return item
@@ -175,9 +180,13 @@ class ReferenceResolver:
                 except ValueError as err:
                     msg = f"the referring item `@{d}` is not defined in the config content."
                     if not self.allow_missing_reference:
+                        # Get available keys for smart suggestions
+                        available_keys = list(self.items.keys())
                         raise ConfigKeyError(
                             f"Reference '@{d}' not found in configuration",
                             source_location=item.source_location if hasattr(item, 'source_location') else None,
+                            missing_key=d,
+                            available_keys=available_keys,
                         ) from err
                     warnings.warn(msg, stacklevel=2)
                     continue
@@ -223,21 +232,12 @@ class ReferenceResolver:
     @classmethod
     def normalize_id(cls, id: str | int) -> str:
         """
-        Normalize the id string to consistently use `cls.sep`.
+        Normalize the id to string format.
 
         Args:
-            id: id string to be normalized.
+            id: id to be normalized.
         """
-        return str(id).replace("#", cls.sep)  # backward compatibility `#` is the old separator
-
-    def normalize_meta_id(self, config: Any) -> Any:
-        """
-        Placeholder for deprecated ID mapping (removed from sparkwheel).
-
-        Args:
-            config: input config to be returned as-is.
-        """
-        return config
+        return str(id)
 
     @classmethod
     def split_id(cls, id: str | int, last: bool = False) -> list[str]:

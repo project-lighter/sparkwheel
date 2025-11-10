@@ -2,14 +2,16 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "SourceLocation",
-    "SparkwheelError",
+    "BaseError",
     "ModuleNotFoundError",
     "CircularReferenceError",
     "InstantiationError",
     "ConfigKeyError",
+    "ConfigMergeError",
     "EvaluationError",
 ]
 
@@ -27,7 +29,7 @@ class SourceLocation:
         return f"{self.filepath}:{self.line}"
 
 
-class SparkwheelError(Exception):
+class BaseError(Exception):
     """Base exception for sparkwheel with rich error context.
 
     Attributes:
@@ -106,31 +108,95 @@ class SparkwheelError(Exception):
             return ""
 
 
-class ModuleNotFoundError(SparkwheelError):
+class ModuleNotFoundError(BaseError):
     """Raised when a _target_ module/class/function cannot be located."""
 
     pass
 
 
-class CircularReferenceError(SparkwheelError):
+class CircularReferenceError(BaseError):
     """Raised when circular references are detected in config."""
 
     pass
 
 
-class InstantiationError(SparkwheelError):
+class InstantiationError(BaseError):
     """Raised when instantiating a component fails."""
 
     pass
 
 
-class ConfigKeyError(SparkwheelError):
-    """Raised when a config key is not found."""
+class ConfigKeyError(BaseError):
+    """Raised when a config key is not found.
+
+    Supports smart suggestions and available keys display.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        source_location: SourceLocation | None = None,
+        suggestion: str | None = None,
+        missing_key: str | None = None,
+        available_keys: list[str] | None = None,
+        config_context: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize ConfigKeyError with enhanced context.
+
+        Args:
+            message: Error message
+            source_location: Location where error occurred
+            suggestion: Manual suggestion (optional)
+            missing_key: The key that wasn't found
+            available_keys: List of available keys for suggestions
+            config_context: The config dict where the key wasn't found (for displaying available keys)
+        """
+        self.missing_key = missing_key
+        self.available_keys = available_keys or []
+        self.config_context = config_context
+
+        # Auto-generate suggestion if not provided
+        if not suggestion and missing_key and available_keys:
+            suggestion = self._generate_suggestion()
+
+        super().__init__(message, source_location, suggestion)
+
+    def _generate_suggestion(self) -> str | None:
+        """Generate smart suggestion with typo detection and available keys."""
+        from .errors import format_available_keys, format_suggestions, get_suggestions
+
+        parts = []
+
+        # Try to find similar keys
+        if self.missing_key and self.available_keys:
+            suggestions = get_suggestions(self.missing_key, self.available_keys)
+            if suggestions:
+                parts.append(format_suggestions(suggestions))
+
+        # Show available keys if we have config context and not too many keys
+        if self.config_context and len(self.config_context) <= 10:
+            available = format_available_keys(self.config_context)
+            if available:
+                if parts:
+                    parts.append("")  # Blank line separator
+                parts.append(available)
+
+        return "\n".join(parts) if parts else None
+
+
+class ConfigMergeError(BaseError):
+    """Raised when configuration merge operation fails.
+
+    This is typically raised when using merge directives (+ or ~) incorrectly:
+    - Using + on a non-existent key
+    - Using + with type mismatch (e.g., trying to merge dict into list)
+    - Using ~ on a non-existent key
+    """
 
     pass
 
 
-class EvaluationError(SparkwheelError):
+class EvaluationError(BaseError):
     """Raised when evaluating an expression fails."""
 
     pass

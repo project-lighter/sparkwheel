@@ -8,7 +8,7 @@ from importlib import import_module
 from pydoc import locate
 from typing import Any
 
-from sparkwheel.exceptions import InstantiationError, ModuleNotFoundError as SparkwheelModuleNotFoundError
+from sparkwheel.exceptions import InstantiationError, ModuleNotFoundError
 from sparkwheel.utils.enums import CompInitMode
 
 __all__ = [
@@ -222,7 +222,7 @@ def instantiate(__path: str, __mode: str, **kwargs: Any) -> Any:
     """
     component = locate(__path) if isinstance(__path, str) else __path
     if component is None:
-        raise SparkwheelModuleNotFoundError(f"Cannot locate class or function path: '{__path}'.")
+        raise ModuleNotFoundError(f"Cannot locate class or function path: '{__path}'.")
     m = look_up_option(__mode, CompInitMode)
     try:
         if kwargs.pop("_debug_", False) or run_debug:

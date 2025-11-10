@@ -14,11 +14,10 @@ model:
 ```python
 from sparkwheel import ConfigParser
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+parser = ConfigParser.load("config.yaml")
 
 # Instantiate the object
-model = parser.get_parsed_content("model")
+model = parser.resolve("model")
 # model is now a torch.nn.Linear(784, 10) instance!
 ```
 

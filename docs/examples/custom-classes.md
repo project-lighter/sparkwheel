@@ -33,9 +33,8 @@ model:
 ```python
 from sparkwheel import ConfigParser
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+parser = ConfigParser.load("config.yaml")
 
-model = parser.get_parsed_content("model")
+model = parser.resolve("model")
 # model is now an instance of CustomModel!
 ```

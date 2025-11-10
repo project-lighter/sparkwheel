@@ -28,13 +28,12 @@ training:
 ```python
 from sparkwheel import ConfigParser
 
-# Create parser and load config
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+# Load config (single line!)
+parser = ConfigParser.load("config.yaml")
 
 # Access values
-print(config["name"])  # "My Project"
-print(config["training"]["batch_size"])  # 32
+print(parser["name"])  # "My Project"
+print(parser["training"]["batch_size"])  # 32
 ```
 
 ## Using References
@@ -54,12 +53,11 @@ model:
 ```
 
 ```python
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+parser = ConfigParser.load("config.yaml")
 
 # The @ reference is automatically resolved
-print(config["model"]["input_size"])  # 224
-print(config["model"]["num_outputs"])  # 10
+print(parser.resolve("model::input_size"))  # 224
+print(parser.resolve("model::num_outputs"))  # 10
 ```
 
 ## Using Expressions
@@ -82,12 +80,11 @@ data:
 ```
 
 ```python
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+parser = ConfigParser.load("config.yaml")
 
-print(config["training"]["steps_per_epoch"])  # 312
-print(config["data"]["values"])  # [0, 1, 4, 9, 16]
-print(config["data"]["pi"])  # 3.14159...
+print(parser.resolve("training::steps_per_epoch"))  # 312
+print(parser.resolve("data::values"))  # [0, 1, 4, 9, 16]
+print(parser.resolve("data::pi"))  # 3.14159...
 ```
 
 ## Creating Objects with `_target_`
@@ -110,11 +107,10 @@ transform:
 ```python
 from sparkwheel import ConfigParser
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+parser = ConfigParser.load("config.yaml")
 
 # Get the instantiated object
-transform = parser.get_parsed_content("transform")
+transform = parser.resolve("transform")
 
 # transform is now a torchvision.transforms.Compose object!
 # You can use it directly
@@ -161,13 +157,12 @@ import torch
 from sparkwheel import ConfigParser
 
 # Load configuration
-parser = ConfigParser()
-config = parser.read_config("training_config.yaml")
+parser = ConfigParser.load("training_config.yaml")
 
 # Get instantiated objects
-model = parser.get_parsed_content("model")
-optimizer = parser.get_parsed_content("optimizer")
-device = parser.get_parsed_content("training#device")
+model = parser.resolve("model")
+optimizer = parser.resolve("optimizer")
+device = parser.resolve("training::device")
 
 # Everything is ready to use!
 model = model.to(device)
@@ -176,7 +171,7 @@ print(f"Optimizer: {optimizer}")
 print(f"Device: {device}")
 
 # Training loop (simplified)
-for epoch in range(config["training"]["epochs"]):
+for epoch in range(parser["training"]["epochs"]):
     # Your training code here
     pass
 ```

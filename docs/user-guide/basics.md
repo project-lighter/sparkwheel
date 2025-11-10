@@ -24,19 +24,8 @@ YAML provides excellent readability and native support for comments, making it i
 ```python
 from sparkwheel import ConfigParser
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
-```
-
-### Loading from String
-
-```python
-yaml_string = """
-name: Test
-value: 42
-"""
-
-config = parser.read_config(yaml_string)
+# Load from file
+parser = ConfigParser.load("config.yaml")
 ```
 
 ### Loading from Dictionary
@@ -47,7 +36,15 @@ config_dict = {
     "value": 42
 }
 
-parser = ConfigParser(config_dict)
+# Load from dict
+parser = ConfigParser.load(config_dict)
+```
+
+### Loading Multiple Files
+
+```python
+# Load and merge multiple config files
+parser = ConfigParser.load(["base.yaml", "override.yaml"])
 ```
 
 ## Accessing Configuration Values
@@ -55,24 +52,26 @@ parser = ConfigParser(config_dict)
 ### Dictionary-style Access
 
 ```python
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+parser = ConfigParser.load("config.yaml")
 
-# Direct access
-name = config["name"]
-debug = config["settings"]["debug"]
+# Direct access to raw config
+name = parser["name"]
+debug = parser["settings"]["debug"]
 ```
 
-### Using get_parsed_content
+### Using resolve()
 
-For nested keys, use the `#` separator:
+For resolving references and expressions, use `resolve()`:
 
 ```python
-# Get nested values
-debug_mode = parser.get_parsed_content("settings#debug")
+# Resolve with nested keys using :: separator
+debug_mode = parser.resolve("settings::debug")
 
-# Get with default value
-timeout = parser.get_parsed_content("settings#timeout", default=60)
+# Resolve entire config
+all_config = parser.resolve()
+
+# Resolve specific section
+training_config = parser.resolve("training")
 ```
 
 ## Configuration Structure
@@ -99,8 +98,8 @@ project:
 Access nested values:
 
 ```python
-db_host = parser.get_parsed_content("project#database#host")
-username = parser.get_parsed_content("project#database#credentials#username")
+db_host = parser.resolve("project::database::host")
+username = parser.resolve("project::database::credentials::username")
 ```
 
 ### Lists and Arrays
@@ -120,8 +119,8 @@ matrix:
 Access list elements:
 
 ```python
-first_color = parser.get_parsed_content("colors#0")  # "red"
-matrix_row = parser.get_parsed_content("matrix#1")  # [4, 5, 6]
+first_color = parser.resolve("colors::0")  # "red"
+matrix_row = parser.resolve("matrix::1")  # [4, 5, 6]
 ```
 
 ## Configuration Sections
@@ -160,22 +159,27 @@ training:
 
 ## Configuration Validation
 
-While Sparkwheel doesn't enforce schemas by default, you can validate after loading:
+Use `check_config()` to validate your configuration:
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import check_config, format_check_result
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+# Check config file
+result = check_config("config.yaml")
 
-# Manual validation
+if result.is_valid:
+    print("Config is valid!")
+else:
+    print(format_check_result(result))
+    for error in result.errors:
+        print(f"  Error: {error}")
+
+# Or manual validation
+parser = ConfigParser.load("config.yaml")
 required_keys = ["name", "version", "settings"]
 for key in required_keys:
-    if key not in config:
+    if key not in parser.config:
         raise ValueError(f"Missing required key: {key}")
-
-# Type checking
-assert isinstance(config["version"], (int, float)), "Version must be numeric"
 ```
 
 ## Best Practices
@@ -242,20 +246,20 @@ database:
 
 ## Configuration Inheritance
 
-Load multiple config files and merge them:
+Load and merge multiple config files:
 
 ```python
 from sparkwheel import ConfigParser
 
-# Load base config
-parser = ConfigParser()
-parser.read_config("base_config.yaml")
+# Method 1: Load multiple files at once
+parser = ConfigParser.load(["base_config.yaml", "prod_config.yaml"])
 
-# Update with environment-specific config
-parser.read_config("prod_config.yaml")
+# Method 2: Load then merge
+parser = ConfigParser.load("base_config.yaml")
+parser.merge("prod_config.yaml")
 
 # Later configs override earlier ones
-config = parser.get()
+config = parser.resolve()
 ```
 
 ## Special Keys

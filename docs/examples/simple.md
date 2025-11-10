@@ -36,21 +36,20 @@ import torch
 from sparkwheel import ConfigParser
 
 # Load configuration
-parser = ConfigParser()
-config = parser.read_config("simple_config.yaml")
+parser = ConfigParser.load("simple_config.yaml")
 
 # Get values
-project_name = config["project"]["name"]
-num_classes = config["dataset"]["num_classes"]
+project_name = parser["project"]["name"]
+num_classes = parser["dataset"]["num_classes"]
 
 # Instantiate model
-model = parser.get_parsed_content("model")
+model = parser.resolve("model")
 print(model)
 
 # Access training parameters
-batch_size = config["training"]["batch_size"]
-epochs = config["training"]["epochs"]
-lr = config["training"]["learning_rate"]
+batch_size = parser["training"]["batch_size"]
+epochs = parser["training"]["epochs"]
+lr = parser["training"]["learning_rate"]
 
 print(f"Training {project_name} for {epochs} epochs with lr={lr}")
 ```
