@@ -133,7 +133,7 @@ import sys
 # Load base config
 parser = ConfigParser.load("config.yaml")
 
-# Parse CLI args: python main.py model.lr=0.01 training.batch_size=64
+# Parse CLI args: python main.py model::lr=0.01 training::batch_size=64
 cli_overrides = parse_args(sys.argv[1:])
 
 # Apply overrides
@@ -144,7 +144,7 @@ Supported types (auto-detected):
 
 ```bash
 # Numbers
-python main.py model.lr=0.001 epochs=100
+python main.py model::lr=0.001 epochs=100
 
 # Booleans
 python main.py debug=true use_gpu=false
@@ -159,10 +159,10 @@ python main.py layers=[64,128,256]
 python main.py optimizer={lr:0.01,momentum:0.9}
 
 # Merge directive
-python main.py +model.layers=[512]
+python main.py +model::layers=[512]
 
 # Delete directive
-python main.py ~model.dropout
+python main.py ~model::dropout
 ```
 
 ## Config Validation

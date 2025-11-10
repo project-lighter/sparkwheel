@@ -168,7 +168,7 @@ class ConfigParser:
         Get the config by id.
 
         Args:
-            id: id of the ``ConfigItem``, ``"::"`` (or ``"#"``) in id are interpreted as special characters to
+            id: id of the ``ConfigItem``, ``"::"`` in id are interpreted as special characters to
                 go one level further into the nested structures.
                 Use digits indexing from "0" for list or other strings for dict.
                 For example: ``"xform::5"``, ``"net::channels"``. ``""`` indicates the entire ``self.config``.
@@ -191,7 +191,7 @@ class ConfigParser:
         Like normal dict assignment - always succeeds by creating intermediate dicts.
 
         Args:
-            id: id of the ConfigItem, "::" (or "#") in id are interpreted as special
+            id: id of the ConfigItem, "::" in id are interpreted as special
                 characters to go one level further into nested structures.
                 Use digits indexing from "0" for list or other strings for dict.
                 For example: "xform::5", "net::channels". "" indicates entire self.config.
@@ -233,7 +233,7 @@ class ConfigParser:
         Get the config by id.
 
         Args:
-            id: id to specify the expected position. See also :py:meth:`__getitem__`.
+            id: id to specify the expected position. See also `__getitem__`.
             default: default value to return if the specified ``id`` is invalid.
         """
         try:
@@ -280,7 +280,7 @@ class ConfigParser:
                     actual_key = key[1:]
                     if actual_key in self:
                         # Need to delete from parent
-                        if '::' in actual_key or '#' in actual_key:
+                        if '::' in actual_key:
                             # Nested key - delete from parent dict
                             keys = ReferenceResolver.split_id(actual_key)
                             parent_id = ReferenceResolver.normalize_id('::'.join(keys[:-1]))
@@ -304,7 +304,7 @@ class ConfigParser:
         Returns True if `id` is stored in this configuration.
 
         Args:
-            id: id to specify the expected position. See also :py:meth:`__getitem__`.
+            id: id to specify the expected position. See also `__getitem__`.
         """
         try:
             _ = self[id]
@@ -540,7 +540,7 @@ class ConfigParser:
 
         Args:
             config: config source to parse.
-            id: id of the ``ConfigItem``, ``"::"`` (or ``"#"``) in id are interpreted as special characters to
+            id: id of the ``ConfigItem``, ``"::"`` in id are interpreted as special characters to
                 go one level further into the nested structures.
                 Use digits indexing from "0" for list or other strings for dict.
                 For example: ``"xform::5"``, ``"net::channels"``. ``""`` indicates the entire ``self.config``.

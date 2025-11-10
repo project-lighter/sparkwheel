@@ -25,7 +25,7 @@ model = parser.resolve("model")
 Run with overrides:
 
 ```bash
-python main.py model.lr=0.01 training.batch_size=64
+python main.py model::lr=0.01 training::batch_size=64
 ```
 
 ## Automatic Type Inference
@@ -112,11 +112,9 @@ python main.py optional_param=null cleanup=none
 
 ## Nested Keys
 
-Use `.` or `::` to set nested config values:
+Use `::` to set nested config values:
 
 ```bash
-# These are equivalent:
-python main.py model.optimizer.lr=0.01
 python main.py model::optimizer::lr=0.01
 ```
 
@@ -167,10 +165,10 @@ Remove a configuration key:
 
 ```bash
 # Delete a key
-python main.py ~model.dropout
+python main.py ~model::dropout
 
 # Delete multiple keys
-python main.py ~model.dropout ~training.debug_mode
+python main.py ~model::dropout ~training::debug_mode
 ```
 
 **Note:** The `~` directive validates that the key exists before deletion. If you try to delete a non-existent key, you'll get an error with a helpful suggestion. This catches typos and config ordering issues early.
@@ -207,28 +205,28 @@ Usage examples:
 
 ```bash
 # Basic override
-python train.py model.hidden_size=1024
+python train.py model::hidden_size=1024
 
 # Multiple overrides
-python train.py model.hidden_size=1024 training.lr=0.01 training.epochs=100
+python train.py model::hidden_size=1024 training::lr=0.01 training::epochs=100
 
 # Complex overrides
 python train.py \
-  model.layers=[512,512,256] \
+  model::layers=[512,512,256] \
   optimizer={type:"sgd",lr:0.1,momentum:0.9} \
-  training.batch_size=128
+  training::batch_size=128
 
 # Merge into existing dict
 python train.py +optimizer={lr:0.01}
 
 # Remove keys
-python train.py ~model.dropout ~training.debug
+python train.py ~model::dropout ~training::debug=null
 
 # Mix and match
 python train.py \
   +model={hidden_size:1024} \
-  training.lr=0.001 \
-  ~training.old_param
+  training::lr=0.001 \
+  ~training::old_param: null
 ```
 
 ## Advanced Patterns
@@ -262,7 +260,7 @@ if __name__ == "__main__":
 
 ```bash
 # Run with name and CLI overrides
-python experiment.py resnet50 model.depth=101 training.lr=0.01
+python experiment.py resnet50 model::depth=101 training::lr=0.01
 ```
 
 ### Grid Search
@@ -299,7 +297,7 @@ grid_search()
 ```
 
 ```bash
-python grid_search.py model.hidden_size=512  # Applies to all runs
+python grid_search.py model::hidden_size=512  # Applies to all runs
 ```
 
 ### Config Inheritance
@@ -329,7 +327,7 @@ if __name__ == "__main__":
 ```
 
 ```bash
-python inherit.py training.epochs=200 +model={layers:6}
+python inherit.py training::epochs=200 +model={layers:6}
 ```
 
 ## Type Inference Rules
@@ -370,10 +368,10 @@ Keep base config in files, use CLI for experiment-specific changes:
 python train.py
 
 # Vary learning rate
-python train.py training.lr=0.01
+python train.py training::lr=0.01
 
 # Ablation study
-python train.py ~model.dropout ~model.batch_norm
+python train.py ~model::dropout ~model::batch_norm
 ```
 
 ### 2. Document CLI Parameters
@@ -386,14 +384,14 @@ Add help text to your script:
 Train a model with the given configuration.
 
 Common CLI overrides:
-  model.hidden_size=N       - Model hidden size
-  training.lr=X             - Learning rate
-  training.epochs=N         - Number of epochs
+  model::hidden_size=N      - Model hidden size
+  training::lr=X            - Learning rate
+  training::epochs=N        - Number of epochs
   +optimizer={key:value}    - Merge optimizer settings
-  ~model.dropout            - Disable dropout
+  ~model::dropout           - Disable dropout
 
 Example:
-  python train.py model.hidden_size=1024 training.lr=0.01
+  python train.py model::hidden_size=1024 training::lr=0.01
 """
 ```
 
@@ -428,13 +426,13 @@ For frequently used complex overrides:
 #!/bin/bash
 python train.py \
   +optimizer={lr:0.1,momentum:0.95} \
-  training.warmup_steps=1000 \
-  training.epochs=200 \
+  training::warmup_steps=1000 \
+  training::epochs=200 \
   "$@"  # Pass additional args
 ```
 
 ```bash
-./experiments/high_lr.sh model.hidden_size=512
+./experiments/high_lr.sh model::hidden_size=512
 ```
 
 ## Integration with Other Tools
@@ -457,14 +455,14 @@ wandb.init(project="my-project", config=config)
 
 ### Hydra Migration
 
-If you're migrating from Hydra, the CLI syntax is similar:
+If you're migrating from Hydra, the CLI syntax is similar but uses `::` instead of `.`:
 
 ```bash
 # Hydra style
 python train.py model.lr=0.01 +model.dropout=0.1
 
-# Sparkwheel (same!)
-python train.py model.lr=0.01 +model.dropout=0.1
+# Sparkwheel (use :: instead of .)
+python train.py model::lr=0.01 +model::dropout=0.1
 ```
 
 ## Next Steps
