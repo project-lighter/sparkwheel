@@ -94,6 +94,7 @@ class Config:
         cls,
         source: PathLike | Sequence[PathLike] | dict,
         globals: dict[str, Any] | None = None,
+        schema: type | None = None,
     ) -> "Config":
         """Load configuration from file(s) or dict.
 
@@ -102,6 +103,7 @@ class Config:
         Args:
             source: File path, list of paths, or config dict
             globals: Pre-imported packages for expressions
+            schema: Optional dataclass schema for validation
 
         Returns:
             New Config instance
@@ -124,12 +126,22 @@ class Config:
 
             >>> # With globals for expressions
             >>> config = Config.load("config.yaml", globals={"torch": "torch"})
+
+            >>> # With schema validation
+            >>> from dataclasses import dataclass
+            >>> @dataclass
+            ... class MySchema:
+            ...     name: str
+            ...     value: int
+            >>> config = Config.load("config.yaml", schema=MySchema)
         """
         config = cls(globals=globals)
 
         # Handle dict input
         if isinstance(source, dict):
             config._data = source
+            if schema is not None:
+                config.validate(schema)
             return config
 
         # Handle file(s) input
@@ -139,6 +151,10 @@ class Config:
             # Merge data and metadata
             config._data = merge_configs(config._data, loaded_data)
             config._metadata.merge(loaded_metadata)
+
+        # Validate against schema if provided
+        if schema is not None:
+            config.validate(schema)
 
         return config
 
@@ -201,6 +217,31 @@ class Config:
         # Set final value
         current[keys[-1]] = value
         self._invalidate_resolution()
+
+    def validate(self, schema: type) -> None:
+        """Validate configuration against a dataclass schema.
+
+        Args:
+            schema: Dataclass type defining the expected structure and types
+
+        Raises:
+            ValidationError: If configuration doesn't match schema
+            TypeError: If schema is not a dataclass
+
+        Example:
+            >>> from dataclasses import dataclass
+            >>> @dataclass
+            ... class ModelConfig:
+            ...     hidden_size: int
+            ...     dropout: float
+            >>> config = Config.load({"hidden_size": 512, "dropout": 0.1})
+            >>> config.validate(ModelConfig)  # Passes
+            >>> bad_config = Config.load({"hidden_size": "not an int"})
+            >>> bad_config.validate(ModelConfig)  # Raises ValidationError
+        """
+        from .schema import validate as validate_schema
+
+        validate_schema(self._data, schema, metadata=self._metadata)
 
     def merge(self, source: PathLike | dict) -> None:
         """Merge additional configuration.

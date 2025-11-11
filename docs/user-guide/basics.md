@@ -237,7 +237,39 @@ training:
 
 ## Configuration Validation
 
-You can manually validate your configuration:
+### Schema Validation with Dataclasses
+
+Sparkwheel supports automatic validation using Python dataclasses. This is the recommended approach for production code:
+
+```python
+from dataclasses import dataclass
+from sparkwheel import Config
+
+@dataclass
+class AppConfig:
+    name: str
+    version: str
+    port: int
+    debug: bool = False
+
+# Validate automatically on load
+config = Config.load("config.yaml", schema=AppConfig)
+
+# Or validate explicitly
+config = Config.load("config.yaml")
+config.validate(AppConfig)
+```
+
+Schema validation provides:
+- **Type checking**: Ensures values have the correct types
+- **Required fields**: Catches missing configuration
+- **Clear errors**: Points directly to the problem with helpful messages
+
+See the [Schema Validation Guide](schema-validation.md) for complete details.
+
+### Manual Validation
+
+You can also validate manually:
 
 ```python
 from sparkwheel import Config

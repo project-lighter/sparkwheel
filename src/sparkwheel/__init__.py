@@ -9,6 +9,7 @@ from .errors import enable_colors
 from .items import Component, Expression, Instantiable, Item
 from .merger import merge_configs
 from .resolver import Resolver
+from .schema import ValidationError, validate
 from .utils.constants import DELETE_KEY, EXPR_KEY, ID_REF_KEY, ID_SEP_KEY, MACRO_KEY, MERGE_KEY
 from .utils.exceptions import (
     BaseError,
@@ -32,6 +33,7 @@ __all__ = [
     "Instantiable",
     "Resolver",
     "merge_configs",
+    "validate",
     "enable_colors",
     "ID_REF_KEY",
     "ID_SEP_KEY",
@@ -46,5 +48,6 @@ __all__ = [
     "ConfigKeyError",
     "ConfigMergeError",
     "EvaluationError",
+    "ValidationError",
     "SourceLocation",
 ]
