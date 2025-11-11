@@ -603,7 +603,7 @@ class ConfigParser:
 
         Args:
             filepath: path of target file to load.
-            kwargs: other arguments for ``yaml.safe_load``.
+            kwargs: other arguments for ``yaml.load``.
 
         Returns:
             Config dict with __sparkwheel_metadata__ keys.
