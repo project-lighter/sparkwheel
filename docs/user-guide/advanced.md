@@ -21,7 +21,6 @@ training:
 Sparkwheel recognizes these special keys in configuration:
 
 - `_target_`: Class or function path to instantiate (e.g., `"torch.nn.Linear"`)
-- `_args_`: List of positional arguments to pass to the target
 - `_disabled_`: Boolean or expression - skip instantiation if evaluates to `True`
 - `_requires_`: List of dependencies to evaluate/instantiate first
 - `_mode_`: Operating mode for instantiation (see below)
@@ -75,10 +74,10 @@ model:
 ```
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser.load("base.yaml")
-parser.merge("override.yaml")
+config = Config.load("base.yaml")
+config.merge("override.yaml")
 
 # Result:
 # model:
@@ -99,182 +98,106 @@ Use `~key: null` to delete a key (the value must be present for valid YAML, but 
 ```
 
 ```python
-parser = ConfigParser.load("base.yaml")
-parser.update({"~model::dropout": None})
+config = Config.load("base.yaml")
+config.merge({"~model::dropout": None})
 
 # dropout is now removed from model config
 ```
 
 **Note:** The `~` directive now validates that the key exists, catching typos and config ordering issues early.
 
-### Using update()
+### Programmatic Updates
 
-Batch updates with directives:
+Apply directives programmatically:
 
 ```python
-parser = ConfigParser.load("config.yaml")
+config = Config.load("config.yaml")
 
-# Apply multiple updates at once
-parser.update({
-    "model::hidden_size": 1024,        # Replace
+# Set individual values
+config.set("model::hidden_size", 1024)
+
+# Merge with directives
+config.merge({
     "+optimizer": {"lr": 0.01},        # Merge
     "~training::old_param": None,      # Delete
 })
 ```
 
-## CLI Overrides
+## Relative ID References
 
-Parse command-line arguments with automatic type inference:
-
-```python
-from sparkwheel import ConfigParser, parse_args
-import sys
-
-# Load base config
-parser = ConfigParser.load("config.yaml")
-
-# Parse CLI args: python main.py model::lr=0.01 training::batch_size=64
-cli_overrides = parse_args(sys.argv[1:])
-
-# Apply overrides
-parser.update(cli_overrides)
-```
-
-Supported types (auto-detected):
-
-```bash
-# Numbers
-python main.py model::lr=0.001 epochs=100
-
-# Booleans
-python main.py debug=true use_gpu=false
-
-# Strings
-python main.py name="My Experiment"
-
-# Lists
-python main.py layers=[64,128,256]
-
-# Dicts
-python main.py optimizer={lr:0.01,momentum:0.9}
-
-# Merge directive
-python main.py +model::layers=[512]
-
-# Delete directive
-python main.py ~model::dropout
-```
-
-## Config Validation
-
-Check your config for errors:
-
-```python
-from sparkwheel import check_config, format_check_result
-
-# Check config file
-result = check_config("config.yaml")
-
-if result.is_valid:
-    print("✓ Config is valid!")
-    print(f"  - {result.num_references} references")
-    print(f"  - {result.num_expressions} expressions")
-    print(f"  - {result.num_components} components")
-else:
-    print(format_check_result(result, verbose=True))
-```
-
-Checks performed:
-- YAML syntax validation
-- Reference resolution (`@references`)
-- Circular dependency detection
-- Expression evaluation (`$expressions`)
-- Component instantiation (`_target_`)
-
-## Config Diffing
-
-Compare configurations to see what changed:
-
-```python
-from sparkwheel import diff_configs, format_diff_tree
-
-# Compare two configs
-diff = diff_configs("config_v1.yaml", "config_v2.yaml")
-
-print(f"Changes: {diff.summary()}")
-print(format_diff_tree(diff))
-
-# Semantic diff - compare resolved values
-diff = diff_configs("config_v1.yaml", "config_v2.yaml", resolve=True)
-
-if not diff.has_changes():
-    print("Configs are semantically equivalent!")
-```
-
-Output formats:
-- **Tree** (human-readable): `format_diff_tree(diff)`
-- **Unified** (git-style): `format_diff_unified(diff)`
-- **JSON** (machine-readable): `format_diff_json(diff)`
-
-### Semantic Diff
-
-Compare configs after resolving references and expressions:
+Use relative references to navigate the config hierarchy:
 
 ```yaml
-# config1.yaml
-base_lr: 0.001
 model:
-  lr: "@base_lr"
-
-# config2.yaml
-model:
-  lr: 0.001
+  encoder:
+    hidden_size: 512
+    activation: "relu"
+  decoder:
+    # Reference sibling section
+    hidden_size: "@::encoder::hidden_size"  # Same level (model)
+    # Reference parent level
+    loss_fn: "@::::training::loss"  # Go up to root, then to training
 ```
 
-```python
-# Syntactic diff - shows differences
-diff = diff_configs("config1.yaml", "config2.yaml", resolve=False)
-assert diff.has_changes()  # Different syntax
-
-# Semantic diff - resolves first
-diff = diff_configs("config1.yaml", "config2.yaml", resolve=True)
-assert not diff.has_changes()  # Same resolved values!
-```
+**Syntax:**
+- `@::` - Same level (sibling)
+- `@::::` - Parent level
+- Add more `::` to go up more levels
 
 ## Enhanced Error Messages
 
 Sparkwheel provides helpful error messages with suggestions:
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config, ConfigKeyError
 
-parser = ConfigParser.load({
+config = Config.load({
     "model": {"hidden_size": 512, "num_layers": 4},
     "training": {"batch_size": 32}
 })
 
 try:
     # Typo in key name
-    value = parser.resolve("model::hiden_size")
+    value = config.resolve("model::hiden_size")
 except ConfigKeyError as e:
     print(e)
     # Output:
     # Config ID 'model::hiden_size' not found
     #
     # Did you mean one of these?
-    #   - model::hidden_size (90% match)
-    #   - model::num_layers (40% match)
+    #   - model::hidden_size
+    #   - model::num_layers
 ```
 
 Color output is auto-detected and respects `NO_COLOR` environment variable.
 
+## Globals for Expressions
+
+Pre-import modules for use in expressions:
+
+```python
+from sparkwheel import Config
+
+# Pre-import torch for all expressions
+config = Config.load("config.yaml", globals={"torch": "torch", "np": "numpy"})
+
+# Now expressions can use torch and np without importing
+```
+
+Example config:
+
+```yaml
+device: "$torch.device('cuda' if torch.cuda.is_available() else 'cpu')"
+data: "$np.array([1, 2, 3])"
+```
+
 ## Type Hints
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser: ConfigParser = ConfigParser.load("config.yaml")
-config: dict = parser.resolve()
+config: Config = Config.load("config.yaml")
+resolved: dict = config.resolve()
 ```
 
 For complete details, see the [API Reference](../reference/).

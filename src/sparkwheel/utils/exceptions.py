@@ -163,7 +163,7 @@ class ConfigKeyError(BaseError):
 
     def _generate_suggestion(self) -> str | None:
         """Generate smart suggestion with typo detection and available keys."""
-        from .errors import format_available_keys, format_suggestions, get_suggestions
+        from ..errors import format_available_keys, format_suggestions, get_suggestions
 
         parts = []
 

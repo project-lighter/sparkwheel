@@ -12,12 +12,12 @@ model:
 ```
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser.load("config.yaml")
+config = Config.load("config.yaml")
 
 # Instantiate the object
-model = parser.resolve("model")
+model = config.resolve("model")
 # model is now a torch.nn.Linear(784, 10) instance!
 ```
 
@@ -33,10 +33,12 @@ examples:
     in_features: 100
     out_features: 10
 
-  # Function call
-  tensor:
-    _target_: torch.tensor
-    _args_: [[1, 2, 3, 4]]
+  # Class with multiple parameters
+  adam:
+    _target_: torch.optim.Adam
+    params: "$@model.parameters()"
+    lr: 0.001
+    betas: [0.9, 0.999]
 
   # Custom class
   custom:
@@ -44,35 +46,21 @@ examples:
     hidden_size: 256
 ```
 
-## Positional Arguments
-
-Use `_args_` for positional arguments:
-
-```yaml
-# Python: MyClass(arg1, arg2, key=value)
-instance:
-  _target_: myproject.MyClass
-  _args_:
-    - arg1
-    - arg2
-  key: value
-```
-
 ## Nested Instantiation
 
 Instantiate objects within objects:
 
 ```yaml
-model:
-  _target_: torch.nn.Sequential
-  _args_:
-    - _target_: torch.nn.Linear
-      in_features: 784
-      out_features: 128
-    - _target_: torch.nn.ReLU
-    - _target_: torch.nn.Linear
-      in_features: 128
-      out_features: 10
+# Nested components
+transform:
+  _target_: torchvision.transforms.Compose
+  transforms:
+    - _target_: torchvision.transforms.Resize
+      size: [224, 224]
+    - _target_: torchvision.transforms.ToTensor
+    - _target_: torchvision.transforms.Normalize
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
 ```
 
 ## Complex Example
@@ -140,6 +128,6 @@ debug_component:
 
 - `_disabled_`: Skip instantiation if `True`
 - `_requires_`: Dependencies to resolve first
-- `_args_`: Positional arguments
+- `_target_`: Class or function path to instantiate
 
 For complete details, see the [Advanced Features](advanced.md) and [API Reference](../reference/).

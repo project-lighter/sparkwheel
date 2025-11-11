@@ -8,7 +8,7 @@ from importlib import import_module
 from pydoc import locate
 from typing import Any
 
-from sparkwheel.exceptions import InstantiationError, ModuleNotFoundError
+from sparkwheel.utils.exceptions import InstantiationError, ModuleNotFoundError
 from sparkwheel.utils.enums import CompInitMode
 
 __all__ = [

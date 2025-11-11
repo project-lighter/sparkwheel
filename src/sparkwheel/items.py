@@ -5,11 +5,11 @@ from collections.abc import Mapping
 from pprint import pformat
 from typing import Any
 
-from sparkwheel.constants import EXPR_KEY
-from sparkwheel.exceptions import EvaluationError, InstantiationError, ModuleNotFoundError, SourceLocation
-from sparkwheel.utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
+from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
+from .utils.constants import EXPR_KEY
+from .utils.exceptions import EvaluationError, InstantiationError, ModuleNotFoundError, SourceLocation
 
-__all__ = ["ConfigItem", "ConfigExpression", "ConfigComponent", "Instantiable"]
+__all__ = ["Item", "Expression", "Component", "Instantiable"]
 
 
 class Instantiable(ABC):
@@ -32,11 +32,11 @@ class Instantiable(ABC):
         raise NotImplementedError(f"subclass {self.__class__.__name__} must implement this method.")
 
 
-class ConfigItem:
+class Item:
     """
     Basic data structure to represent a configuration item.
 
-    A `ConfigItem` instance can optionally have a string id, so that other items can refer to it.
+    A `Item` instance can optionally have a string id, so that other items can refer to it.
     It has a build-in `config` property to store the configuration object.
 
     Args:
@@ -63,7 +63,7 @@ class ConfigItem:
         A typical usage is to modify the initial config content at runtime.
 
         Args:
-            config: content of a `ConfigItem`.
+            config: content of a `Item`.
         """
         self.config = config
 
@@ -77,7 +77,7 @@ class ConfigItem:
         return f"{type(self).__name__}: \n{pformat(self.config)}"
 
 
-class ConfigComponent(ConfigItem, Instantiable):
+class Component(Item, Instantiable):
     """Component that can be instantiated from configuration.
 
     Uses a dictionary with string keys to represent a Python class or function
@@ -215,7 +215,7 @@ class ConfigComponent(ConfigItem, Instantiable):
         try:
             from pydoc import locate
 
-            from sparkwheel.utils import damerau_levenshtein_distance
+            from .utils import damerau_levenshtein_distance
 
             # Split into module path and attribute name
             parts = target.rsplit('.', 1)
@@ -247,7 +247,7 @@ class ConfigComponent(ConfigItem, Instantiable):
         return None
 
 
-class ConfigExpression(ConfigItem):
+class Expression(Item):
     """Executable expression that evaluates Python code.
 
     Expressions start with `$` and are evaluated using Python's `eval()`,
@@ -319,7 +319,7 @@ class ConfigExpression(ConfigItem):
             RuntimeError: If evaluation fails
         """
         value = self.get_config()
-        if not ConfigExpression.is_expression(value):
+        if not Expression.is_expression(value):
             return None
         optional_module = self._parse_import_string(value[len(self.prefix) :])
         if optional_module is not None:

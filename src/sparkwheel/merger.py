@@ -3,7 +3,8 @@
 from copy import deepcopy
 from typing import Any
 
-from .exceptions import ConfigMergeError
+from .utils.constants import DELETE_KEY, MERGE_KEY
+from .utils.exceptions import ConfigMergeError
 
 __all__ = ["merge_configs"]
 
@@ -25,7 +26,7 @@ def _has_merge_directive(config: Any) -> bool:
 
     # Check if any keys start with +
     for key in config.keys():
-        if isinstance(key, str) and key.startswith('+'):
+        if isinstance(key, str) and key.startswith(MERGE_KEY):
             return True
         # Recursively check nested dicts for + directives
         if _has_merge_directive(config[key]):
@@ -94,7 +95,7 @@ def merge_configs(base: dict, override: dict, _in_merge_context: bool = False) -
     for key, value in override.items():
         if isinstance(key, str):
             # Handle delete directive (~key)
-            if key.startswith('~'):
+            if key.startswith(DELETE_KEY):
                 actual_key = key[1:]
                 if actual_key not in result:
                     raise ConfigMergeError(
@@ -106,7 +107,7 @@ def merge_configs(base: dict, override: dict, _in_merge_context: bool = False) -
                 continue
 
             # Handle merge directive (+key)
-            if key.startswith('+'):
+            if key.startswith(MERGE_KEY):
                 actual_key = key[1:]
 
                 # Validate that key exists

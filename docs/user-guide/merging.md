@@ -21,9 +21,9 @@ model:
 ```
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser.load(["base.yaml", "override.yaml"])
+config = Config.load(["base.yaml", "override.yaml"])
 
 # Result: model only has hidden_size=1024
 # activation and dropout are GONE!
@@ -42,7 +42,7 @@ Use `+key` to merge a dict into existing config, preserving other keys:
 ```
 
 ```python
-parser = ConfigParser.load(["base.yaml", "override.yaml"])
+config = Config.load(["base.yaml", "override.yaml"])
 
 # Result:
 # model:
@@ -117,7 +117,7 @@ model:
 ```
 
 ```python
-parser = ConfigParser.load(["base.yaml", "override.yaml"])
+config = Config.load(["base.yaml", "override.yaml"])
 
 # Result:
 # model:
@@ -163,9 +163,9 @@ middleware:
 ```
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser.load(["base.yaml", "override.yaml"])
+config = Config.load(["base.yaml", "override.yaml"])
 
 # Result:
 # plugins: [logger, metrics, cache, redis]
@@ -285,18 +285,20 @@ These validations catch common mistakes:
 - **Missing base configurations** - Trying to merge into undefined keys
 - **Outdated override configs** - Referencing removed keys from earlier versions
 
-## Using `update()` Method
+## Programmatic Updates
 
-Apply directives programmatically:
+Apply directives programmatically using `set()` and `merge()`:
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser.load("config.yaml")
+config = Config.load("config.yaml")
 
-# Batch updates with directives
-parser.update({
-    "model::hidden_size": 1024,        # Replace value
+# Set individual values
+config.set("model::hidden_size", 1024)
+
+# Merge dicts (with directives supported)
+config.merge({
     "+optimizer": {"lr": 0.01},        # Merge dict
     "~training::old_param": None,      # Delete key
 })
@@ -308,14 +310,14 @@ Merge additional configs after loading:
 
 ```python
 # Load base config
-parser = ConfigParser.load("base.yaml")
+config = Config.load("base.yaml")
 
 # Merge additional configs
-parser.merge("experiments/exp1.yaml")
-parser.merge("environments/prod.yaml")
+config.merge("experiments/exp1.yaml")
+config.merge("environments/prod.yaml")
 
 # Or merge a dict
-parser.merge({
+config.merge({
     "+model": {"dropout": 0.2},
     "~training::debug_mode": None
 })
@@ -482,19 +484,19 @@ Build configs in layers from general to specific:
 
 ```python
 # Layer 1: Defaults
-parser = ConfigParser.load("defaults.yaml")
+config = Config.load("defaults.yaml")
 
 # Layer 2: Model architecture
-parser.merge("models/resnet50.yaml")
+config.merge("models/resnet50.yaml")
 
 # Layer 3: Dataset specific
-parser.merge("datasets/imagenet.yaml")
+config.merge("datasets/imagenet.yaml")
 
 # Layer 4: Experiment specific
-parser.merge("experiments/exp_042.yaml")
+config.merge("experiments/exp_042.yaml")
 
 # Layer 5: Environment
-parser.merge("env/production.yaml")
+config.merge("env/production.yaml")
 ```
 
 ### 4. Document Merge Behavior
@@ -546,15 +548,13 @@ With validation, typos in merge and delete directives are caught immediately, he
 # These produce different results:
 
 # Order 1: base -> exp -> env
-parser = ConfigParser.load(["base.yaml", "exp.yaml", "env.yaml"])
+config = Config.load(["base.yaml", "exp.yaml", "env.yaml"])
 
 # Order 2: base -> env -> exp (experiment overrides environment)
-parser = ConfigParser.load(["base.yaml", "env.yaml", "exp.yaml"])
+config = Config.load(["base.yaml", "env.yaml", "exp.yaml"])
 ```
 
 ## Next Steps
 
-- [CLI Overrides](cli.md) - Override configs from command line
-- [Config Diffing](diffing.md) - Compare configurations
-- [Validation](validation.md) - Check configs for errors
-- [Advanced Features](advanced.md) - Power user techniques
+- [Advanced Features](advanced.md) - Macros, special keys, and power user techniques
+- [Examples](../examples/simple.md) - Real-world merging patterns

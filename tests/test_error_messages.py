@@ -1,6 +1,6 @@
 import pytest
 
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 from sparkwheel.errors import (
     enable_colors,
     format_available_keys,
@@ -8,7 +8,7 @@ from sparkwheel.errors import (
     get_suggestions,
     levenshtein_distance,
 )
-from sparkwheel.exceptions import ConfigKeyError
+from sparkwheel.utils.exceptions import ConfigKeyError
 
 
 class TestLevenshteinDistance:
@@ -235,11 +235,11 @@ class TestConfigKeyErrorEnhanced:
         assert "epochs:" in error_str
 
     def test_error_integration_with_parser(self, tmp_path):
-        """Test that ConfigParser raises enhanced errors."""
+        """Test that Config raises enhanced errors."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("model:\n  learning_rate: 0.001\n  batch_size: 32\nvalue: 10\nref: '@valu'")
 
-        parser = ConfigParser.load(str(config_file))
+        parser = Config.load(str(config_file))
 
         # Try to access reference with typo - should get suggestion
         with pytest.raises(ConfigKeyError) as exc_info:
@@ -258,7 +258,7 @@ class TestErrorMessagesIntegration:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("value: 10\nref: '@vlue'")
 
-        parser = ConfigParser.load(str(config_file))
+        parser = Config.load(str(config_file))
 
         with pytest.raises(ConfigKeyError) as exc_info:
             parser.resolve("ref")
@@ -273,7 +273,7 @@ class TestErrorMessagesIntegration:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("model:\n  lr: 0.001")
 
-        parser = ConfigParser.load(str(config_file))
+        parser = Config.load(str(config_file))
 
         with pytest.raises(ConfigKeyError) as exc_info:
             _ = parser.resolve("model::optimizer")

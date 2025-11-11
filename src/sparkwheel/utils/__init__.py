@@ -1,3 +1,4 @@
+from .constants import DELETE_KEY, EXPR_KEY, ID_REF_KEY, ID_SEP_KEY, MACRO_KEY, MERGE_KEY
 from .enums import CompInitMode
 from .misc import CheckKeyDuplicatesYamlLoader, check_key_duplicates, ensure_tuple, first, issequenceiterable
 from .module import (
@@ -26,4 +27,10 @@ __all__ = [
     "look_up_option",
     "optional_import",
     "instantiate",
+    "ID_REF_KEY",
+    "ID_SEP_KEY",
+    "EXPR_KEY",
+    "MACRO_KEY",
+    "DELETE_KEY",
+    "MERGE_KEY",
 ]

@@ -1,7 +1,7 @@
 """
-Comprehensive tests for ConfigParser.
+Comprehensive tests for Config.
 
-This module contains all tests for the ConfigParser class, organized by functionality:
+This module contains all tests for the Config class, organized by functionality:
 - Basic operations (get/set, contains, iteration)
 - Reference resolution
 - Expression evaluation
@@ -18,36 +18,36 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sparkwheel import ConfigParser, merge_configs
+from sparkwheel import Config, merge_configs
 
 
-class TestConfigParserBasics:
-    """Test basic ConfigParser operations."""
+class TestConfigBasics:
+    """Test basic Config operations."""
 
     def test_basic_config(self):
         """Test basic configuration parsing."""
         config = {"key1": "value1", "key2": 42}
-        parser = ConfigParser(config)
+        parser = Config(config)
         assert parser["key1"] == "value1"
         assert parser["key2"] == 42
 
     def test_set_and_get(self):
         """Test setting and getting config values."""
         config = {}
-        parser = ConfigParser(config)
+        parser = Config(config)
         parser["new_key"] = "new_value"
         assert parser["new_key"] == "new_value"
 
     def test_nested_set(self):
         """Test setting nested config values."""
         config = {"level1": {}}
-        parser = ConfigParser(config)
+        parser = Config(config)
         parser["level1::level2"] = "nested_value"
         assert parser["level1"]["level2"] == "nested_value"
 
     def test_nested_set_creates_paths(self):
         """Test that __setitem__ creates missing paths."""
-        parser = ConfigParser.load({})
+        parser = Config.load({})
         parser["model::lr"] = 0.001
         assert parser["model"]["lr"] == 0.001
 
@@ -57,13 +57,13 @@ class TestConfigParserBasics:
     def test_contains(self):
         """Test __contains__ method."""
         config = {"exists": True}
-        parser = ConfigParser(config)
+        parser = Config(config)
         assert "exists" in parser
         assert "not_exists" not in parser
 
     def test_contains_nested(self):
         """Test __contains__ with nested path."""
-        parser = ConfigParser({"a": {"b": {"c": 1}}})
+        parser = Config({"a": {"b": {"c": 1}}})
         assert "a" in parser
         assert "a::b" in parser
         assert "a::b::c" in parser
@@ -71,86 +71,86 @@ class TestConfigParserBasics:
 
     def test_get_with_default(self):
         """Test get method with default."""
-        parser = ConfigParser({"existing": "value"})
+        parser = Config({"existing": "value"})
         assert parser.get("existing") == "value"
         assert parser.get("missing", "default") == "default"
 
     def test_get_invalid_key_default(self):
         """Test get returns default for invalid key."""
-        parser = ConfigParser({"a": {"b": 1}})
+        parser = Config({"a": {"b": 1}})
         assert parser.get("a::b::c", "default") == "default"
 
     def test_setitem_empty_id(self):
         """Test __setitem__ with empty id."""
-        parser = ConfigParser({"old": "config"})
+        parser = Config({"old": "config"})
         parser[""] = {"new": "config"}
         assert parser.get() == {"new": "config"}
 
-    def test_update(self):
-        """Test update method."""
-        parser = ConfigParser({"a": 1, "b": {"c": 2}})
-        parser.update({"a": 10, "b::c": 20, "d": 30})
+    def test_merge_nested_paths(self):
+        """Test merge method with nested paths."""
+        parser = Config({"a": 1, "b": {"c": 2}})
+        parser.merge({"a": 10, "b::c": 20, "d": 30})
         assert parser["a"] == 10
         assert parser["b::c"] == 20
         assert parser["d"] == 30
 
     def test_getitem_invalid_config_type(self):
         """Test __getitem__ raises error for invalid config type."""
-        parser = ConfigParser({"scalar": 42})
-        with pytest.raises(ValueError, match="config must be dict or list"):
+        parser = Config({"scalar": 42})
+        with pytest.raises(ValueError, match="Config must be dict or list"):
             _ = parser["scalar::invalid"]
 
     def test_getitem_list_indexing(self):
         """Test __getitem__ with list indexing."""
-        parser = ConfigParser({"items": [10, 20, 30]})
+        parser = Config({"items": [10, 20, 30]})
         assert parser["items::0"] == 10
         assert parser["items::1"] == 20
         assert parser["items::2"] == 30
 
     def test_setitem_list_indexing(self):
         """Test __setitem__ with list indexing."""
-        parser = ConfigParser({"items": [10, 20, 30]})
+        parser = Config({"items": [10, 20, 30]})
         parser["items::1"] = 99
         assert parser["items::1"] == 99
 
     def test_repr(self):
-        """Test ConfigParser __repr__."""
-        parser = ConfigParser({"key": "value"})
+        """Test Config __repr__."""
+        parser = Config({"key": "value"})
         repr_str = repr(parser)
         assert "key" in repr_str
 
     def test_init_with_none(self):
-        """Test ConfigParser init with None."""
-        parser = ConfigParser(None)
-        assert "_meta_" in parser.config
-        assert isinstance(parser.config, dict)
+        """Test Config init with None."""
+        parser = Config(None)
+        assert isinstance(parser._data, dict)
+        assert parser._data == {}
 
     def test_init_with_globals_dict(self):
-        """Test ConfigParser init with globals dict."""
-        parser = ConfigParser({}, globals={"pd": "pandas"})
-        assert "pd" in parser.globals
+        """Test Config init with globals dict."""
+        parser = Config({}, globals={"pd": "pandas"})
+        assert "pd" in parser._globals
 
     def test_init_with_globals_callable(self):
-        """Test ConfigParser init with globals containing callables."""
+        """Test Config init with globals containing callables."""
         from collections import Counter
-        parser = ConfigParser({}, globals={"Counter": Counter})
-        assert parser.globals["Counter"] is Counter
+        parser = Config({}, globals={"Counter": Counter})
+        assert parser._globals["Counter"] is Counter
 
 
-class TestConfigParserReferences:
+class TestConfigReferences:
     """Test reference resolution."""
 
     def test_simple_reference(self):
         """Test simple reference resolution."""
         config = {"value": 10, "reference": "@value"}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         result = parser.resolve("reference")
         assert result == 10
 
     def test_nested_reference(self):
         """Test nested reference with ::."""
         config = {"nested": {"value": 100}, "ref": "@nested::value"}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         result = parser.resolve("ref")
         assert result == 100
 
@@ -163,7 +163,7 @@ class TestConfigParserReferences:
             },
             "ref": "@data::metadata::count"
         }
-        parser = ConfigParser(config)
+        parser = Config(config)
         parser._parse()
         result = parser.resolve("ref")
         assert result == 3
@@ -171,60 +171,60 @@ class TestConfigParserReferences:
     def test_multiple_references(self):
         """Test multiple references in one expression."""
         config = {"a": 10, "b": 20, "sum": "$@a + @b"}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         result = parser.resolve("sum")
         assert result == 30
 
     def test_resolve_relative_ids(self):
         """Test resolve_relative_ids method."""
-        result = ConfigParser.resolve_relative_ids("parent::child", "@::sibling")
+        result = Config.resolve_relative_ids("parent::child", "@::sibling")
         assert result == "@parent::sibling"
 
     def test_resolve_relative_ids_double_colon(self):
         """Test resolve_relative_ids with :: (up one level)."""
-        result = ConfigParser.resolve_relative_ids("parent::child", "@::::value")
+        result = Config.resolve_relative_ids("parent::child", "@::::value")
         assert result == "@value"
 
     def test_resolve_relative_ids_triple_colon(self):
         """Test resolve_relative_ids with :::: (up two levels)."""
-        result = ConfigParser.resolve_relative_ids("a::b::c", "@::::::value")
+        result = Config.resolve_relative_ids("a::b::c", "@::::::value")
         assert result == "@value"
 
     def test_resolve_relative_ids_equal_levels(self):
         """Test resolve_relative_ids when going up equals depth."""
-        result = ConfigParser.resolve_relative_ids("a::b", "@::::value")
+        result = Config.resolve_relative_ids("a::b", "@::::value")
         assert result == "@value"
 
     def test_resolve_relative_ids_out_of_range(self):
         """Test resolve_relative_ids raises error when out of range."""
-        with pytest.raises(ValueError, match="out of the range"):
-            ConfigParser.resolve_relative_ids("a", "@::::value")
+        with pytest.raises(ValueError, match="out of range"):
+            Config.resolve_relative_ids("a", "@::::value")
 
     def test_resolve_relative_ids_macro(self):
         """Test resolve_relative_ids with macro %."""
-        result = ConfigParser.resolve_relative_ids("parent::child", "%::sibling")
+        result = Config.resolve_relative_ids("parent::child", "%::sibling")
         assert result == "%parent::sibling"
 
     def test_resolve_relative_ids_in_list(self):
         """Test resolve_relative_ids in list context."""
-        result = ConfigParser.resolve_relative_ids("parent::items::1", "@::0")
+        result = Config.resolve_relative_ids("parent::items::1", "@::0")
         assert result == "@parent::items::0"
 
 
-class TestConfigParserExpressions:
+class TestExpressions:
     """Test expression evaluation."""
 
     def test_simple_expression(self):
         """Test simple expression evaluation."""
         config = {"base": 5, "computed": "$@base * 2"}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         result = parser.resolve("computed")
         assert result == 10
 
     def test_expression_with_builtin(self):
         """Test expression using Python builtins."""
         config = {"items": [1, 2, 3, 4, 5], "count": "$len(@items)"}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         result = parser.resolve("count")
         assert result == 5
 
@@ -234,27 +234,27 @@ class TestConfigParserExpressions:
             "mydict": {"_target_": "dict", "a": 1, "b": 2},
             "value": "$@mydict['a']"
         }
-        parser = ConfigParser(config)
+        parser = Config(config)
         parser._parse()
         result = parser.resolve("value")
         assert result == 1
 
 
-class TestConfigParserMacros:
+class TestConfigMacros:
     """Test macro expansion."""
 
     def test_basic_macro(self):
         """Test basic macro expansion with %."""
         config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         parser.resolve()
         assert parser["copy"] == {"a": 1, "b": 2}
         assert parser["copy"] is not parser["original"]
 
     def test_do_resolve_macro_from_config(self):
         """Test _do_resolve with macro referencing same config."""
-        parser = ConfigParser({"template": {"a": 1, "b": 2}, "copy": "%template"})
-        parser.resolve_macro_and_relative_ids()
+        parser = Config({"template": {"a": 1, "b": 2}, "copy": "%template"})
+        parser._resolve_macros_and_relative_ids()
         assert parser["copy"] == {"a": 1, "b": 2}
         parser["copy"]["a"] = 99
         assert parser["template"]["a"] == 1
@@ -266,14 +266,14 @@ class TestConfigParserMacros:
             filepath = f.name
 
         try:
-            parser = ConfigParser({"local": f"%{filepath}::external"})
-            parser.resolve_macro_and_relative_ids()
+            parser = Config({"local": f"%{filepath}::external"})
+            parser._resolve_macros_and_relative_ids()
             assert parser["local"] == {"value": 42}
         finally:
             Path(filepath).unlink()
 
 
-class TestConfigParserComponents:
+class TestComponents:
     """Test component instantiation and handling."""
 
     def test_disabled_component(self):
@@ -284,7 +284,7 @@ class TestConfigParserComponents:
                 "_disabled_": True,
             }
         }
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         result = parser.resolve("component", instantiate=True)
         assert result is None
 
@@ -296,20 +296,20 @@ class TestConfigParserComponents:
                 "disabled": {"_target_": "dict", "_disabled_": True}
             }
         }
-        parser = ConfigParser(config)
+        parser = Config(config)
         parser._parse()
         result = parser.resolve("components")
         assert "enabled" in result
         assert "disabled" not in result
 
 
-class TestConfigParserFileOperations:
+class TestConfigFileOperations:
     """Test file loading and exporting."""
 
     def test_load_from_dict(self):
         """Test loading from dict."""
         config = {"key": "value", "num": 42}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         assert parser["key"] == "value"
         assert parser["num"] == 42
 
@@ -318,7 +318,7 @@ class TestConfigParserFileOperations:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("key: value\nnum: 42")
 
-        parser = ConfigParser.load(str(config_file))
+        parser = Config.load(str(config_file))
         assert parser["key"] == "value"
         assert parser["num"] == 42
 
@@ -330,7 +330,7 @@ class TestConfigParserFileOperations:
         override_file = tmp_path / "override.yaml"
         override_file.write_text("+b:\n  z: 3")
 
-        parser = ConfigParser.load([str(base_file), str(override_file)])
+        parser = Config.load([str(base_file), str(override_file)])
         assert parser["a"] == 1
         assert parser["b"]["x"] == 1
         assert parser["b"]["y"] == 2
@@ -343,7 +343,7 @@ class TestConfigParserFileOperations:
             filepath = f.name
 
         try:
-            parser = ConfigParser.load(filepath)
+            parser = Config.load(filepath)
             assert parser["test"] == 1
         finally:
             Path(filepath).unlink()
@@ -355,33 +355,33 @@ class TestConfigParserFileOperations:
             filepath = f.name
 
         try:
-            ConfigParser.export_config_file(config, filepath)
-            loaded_parser = ConfigParser.load(filepath)
-            loaded = {k: v for k, v in loaded_parser.config.items() if k != "_meta_"}
+            Config.export_config_file(config, filepath)
+            loaded_parser = Config.load(filepath)
+            loaded = {k: v for k, v in loaded_parser._data.items() if k != "_meta_"}
             assert loaded == config
         finally:
             Path(filepath).unlink()
 
     def test_split_path_id_with_path(self):
         """Test split_path_id with file path and id."""
-        path, ids = ConfigParser.split_path_id("/path/to/config.yaml::key::subkey")
+        path, ids = Config.split_path_id("/path/to/config.yaml::key::subkey")
         assert path == "/path/to/config.yaml"
         assert ids == "key::subkey"
 
     def test_split_path_id_with_path_no_id(self):
         """Test split_path_id with file path but no id."""
-        path, ids = ConfigParser.split_path_id("/path/to/config.yml")
+        path, ids = Config.split_path_id("/path/to/config.yml")
         assert path == "/path/to/config.yml"
         assert ids == ""
 
     def test_split_path_id_no_path(self):
         """Test split_path_id with only id."""
-        path, ids = ConfigParser.split_path_id("key::subkey")
+        path, ids = Config.split_path_id("key::subkey")
         assert path == ""
         assert ids == "key::subkey"
 
 
-class TestConfigParserMerging:
+class TestConfigMerging:
     """Test merging configurations with +/~ directives."""
 
     def test_basic_merge_replace(self):
@@ -437,7 +437,7 @@ class TestConfigParserMerging:
 
     def test_merge_dict(self):
         """Test merging a dict with + directive."""
-        parser = ConfigParser.load({"a": 1, "b": {"x": 1, "y": 2}})
+        parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
         parser.merge({"+b": {"z": 3}})
 
         assert parser["a"] == 1
@@ -447,7 +447,7 @@ class TestConfigParserMerging:
 
     def test_merge_file(self, tmp_path):
         """Test merging from file."""
-        parser = ConfigParser.load({"a": 1, "b": {"x": 1, "y": 2}})
+        parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
 
         override_file = tmp_path / "override.yaml"
         override_file.write_text("+b:\n  z: 3")
@@ -456,41 +456,41 @@ class TestConfigParserMerging:
         assert parser["b"]["x"] == 1
         assert parser["b"]["z"] == 3
 
-    def test_update_normal_set(self):
-        """Test normal set behavior."""
-        parser = ConfigParser.load({"a": 1, "b": 2})
-        parser.update({"a": 10, "c": 3})
+    def test_merge_normal_set(self):
+        """Test normal set behavior with merge."""
+        parser = Config.load({"a": 1, "b": 2})
+        parser.merge({"a": 10, "c": 3})
         assert parser["a"] == 10
         assert parser["b"] == 2
         assert parser["c"] == 3
 
-    def test_update_merge_directive(self):
+    def test_merge_with_merge_directive(self):
         """Test + merge directive."""
-        parser = ConfigParser.load({"a": 1, "b": {"x": 1, "y": 2}})
-        parser.update({"+b": {"z": 3}})
+        parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
+        parser.merge({"+b": {"z": 3}})
         assert parser["b"]["x"] == 1
         assert parser["b"]["y"] == 2
         assert parser["b"]["z"] == 3
 
-    def test_update_delete_directive(self):
+    def test_merge_with_delete_directive(self):
         """Test ~ delete directive."""
-        parser = ConfigParser.load({"a": 1, "b": 2, "c": 3})
-        parser.update({"~b": None})
+        parser = Config.load({"a": 1, "b": 2, "c": 3})
+        parser.merge({"~b": None})
         assert "b" not in parser
         assert parser["a"] == 1
         assert parser["c"] == 3
 
-    def test_update_nested_delete(self):
+    def test_merge_nested_delete(self):
         """Test ~ delete directive for nested keys."""
-        parser = ConfigParser.load({"model": {"lr": 0.001, "dropout": 0.1}})
-        parser.update({"~model::dropout": None})
+        parser = Config.load({"model": {"lr": 0.001, "dropout": 0.1}})
+        parser.merge({"~model::dropout": None})
         assert parser["model"]["lr"] == 0.001
         assert "dropout" not in parser["model"]
 
-    def test_update_combined_directives(self):
-        """Test combining +, ~, and normal updates."""
-        parser = ConfigParser.load({"a": 1, "b": {"x": 1, "y": 2}, "c": 3})
-        parser.update({
+    def test_merge_combined_directives(self):
+        """Test combining +, ~, and normal updates with merge."""
+        parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}, "c": 3})
+        parser.merge({
             "a": 10,
             "+b": {"z": 3},
             "~c": None,
@@ -503,7 +503,7 @@ class TestConfigParserMerging:
 
     def test_merge_directive_on_nonexistent_key_raises_error(self):
         """Test that +key raises error when key doesn't exist."""
-        from sparkwheel.exceptions import ConfigMergeError
+        from sparkwheel.utils.exceptions import ConfigMergeError
 
         base = {"a": 1}
         override = {"+b": {"x": 1}}
@@ -513,7 +513,7 @@ class TestConfigParserMerging:
 
     def test_merge_directive_type_mismatch_raises_error(self):
         """Test that +key raises error when types don't match."""
-        from sparkwheel.exceptions import ConfigMergeError
+        from sparkwheel.utils.exceptions import ConfigMergeError
 
         # Base is string, override is dict
         base = {"model": "resnet50"}
@@ -538,7 +538,7 @@ class TestConfigParserMerging:
 
     def test_delete_directive_on_nonexistent_key_raises_error(self):
         """Test that ~key raises error when key doesn't exist."""
-        from sparkwheel.exceptions import ConfigMergeError
+        from sparkwheel.utils.exceptions import ConfigMergeError
 
         base = {"a": 1}
         override = {"~b": None}
@@ -580,7 +580,7 @@ class TestConfigParserMerging:
 
     def test_merge_list_with_non_list_errors(self):
         """Test that +key errors when base is list but override is not."""
-        from sparkwheel.exceptions import ConfigMergeError
+        from sparkwheel.utils.exceptions import ConfigMergeError
 
         base = {"items": ["a", "b"]}
         override = {"+items": "c"}  # String, not list
@@ -613,41 +613,41 @@ class TestConfigParserMerging:
         assert result == {"items": ["a", "b"]}
 
 
-class TestConfigParserAdvanced:
-    """Test advanced ConfigParser features."""
+class TestConfigAdvanced:
+    """Test advanced Config features."""
 
     def test_resolve_direct_access(self):
-        """Test ConfigParser resolve() for direct access."""
+        """Test Config resolve() for direct access."""
         config = {"value": 10, "ref": "@value"}
-        parser = ConfigParser.load(config)
+        parser = Config.load(config)
         result = parser.resolve("ref")
         assert result == 10
 
     def test_parse_reset_true(self):
         """Test parse with reset=True."""
-        parser = ConfigParser({"value": 10, "expr": "$@value * 2"})
+        parser = Config({"value": 10, "expr": "$@value * 2"})
         parser._parse(reset=True)
-        assert len(parser.ref_resolver.items) > 0
+        assert len(parser._resolver._items) > 0
         parser._parse(reset=True)
-        assert len(parser.ref_resolver.items) > 0
+        assert len(parser._resolver._items) > 0
 
     def test_parse_reset_false(self):
         """Test parse with reset=False."""
-        parser = ConfigParser({"value": 10})
+        parser = Config({"value": 10})
         parser._parse(reset=True)
-        first_resolved = dict(parser.ref_resolver.resolved_content)
+        first_resolved = dict(parser._resolver._resolved)
         parser._parse(reset=False)
-        assert parser.ref_resolver.resolved_content == first_resolved
+        assert parser._resolver._resolved == first_resolved
 
     def test_get_parsed_content_auto_parse(self):
         """Test get_parsed_content auto-parses if not parsed."""
-        parser = ConfigParser({"value": 10, "ref": "@value"})
+        parser = Config({"value": 10, "ref": "@value"})
         result = parser.resolve("ref")
         assert result == 10
 
     def test_get_parsed_content_lazy_false(self):
         """Test get_parsed_content with lazy=False."""
-        parser = ConfigParser({"value": 10})
+        parser = Config({"value": 10})
         parser._parse()
         parser["value"] = 20
         result = parser.resolve("value", lazy=False)
@@ -655,7 +655,7 @@ class TestConfigParserAdvanced:
 
     def test_get_parsed_content_lazy_false_forces_reparse(self):
         """Test get_parsed_content with lazy=False forces re-parse."""
-        parser = ConfigParser({"value": 10, "ref": "@value"})
+        parser = Config({"value": 10, "ref": "@value"})
         parser._parse()
         parser.resolve("ref")
         parser["value"] = 20
@@ -664,10 +664,10 @@ class TestConfigParserAdvanced:
 
     def test_get_parsed_content_with_default(self):
         """Test get_parsed_content with default."""
-        parser = ConfigParser({})
+        parser = Config({})
         parser._parse()
-        from sparkwheel import ConfigItem
-        default = ConfigItem({"default": True}, id="default")
+        from sparkwheel import Item
+        default = Item({"default": True}, id="default")
         result = parser.resolve("missing", default=default)
         assert result == {"default": True}
 
@@ -678,11 +678,11 @@ class TestConfigParserAdvanced:
             "expr": "$1 + 1",
             "plain": "value"
         }
-        parser = ConfigParser(config)
+        parser = Config(config)
         parser._parse()
-        assert "comp" in parser.ref_resolver.items
-        assert "expr" in parser.ref_resolver.items
-        assert "plain" in parser.ref_resolver.items
+        assert "comp" in parser._resolver._items
+        assert "expr" in parser._resolver._items
+        assert "plain" in parser._resolver._items
 
 
 if __name__ == "__main__":
