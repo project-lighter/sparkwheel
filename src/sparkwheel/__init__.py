@@ -4,10 +4,11 @@ sparkwheel: A powerful YAML-based configuration system with references, expressi
 Uses YAML format only.
 """
 
+from .cli import parse_override, parse_overrides
 from .config import Config
 from .errors import enable_colors
 from .items import Component, Expression, Instantiable, Item
-from .merger import merge_configs
+from .operators import apply_operators
 from .resolver import Resolver
 from .schema import ValidationError, validate
 from .utils.constants import DELETE_KEY, EXPR_KEY, ID_REF_KEY, ID_SEP_KEY, MACRO_KEY, MERGE_KEY
@@ -32,8 +33,10 @@ __all__ = [
     "Expression",
     "Instantiable",
     "Resolver",
-    "merge_configs",
+    "apply_operators",
     "validate",
+    "parse_override",
+    "parse_overrides",
     "enable_colors",
     "ID_REF_KEY",
     "ID_SEP_KEY",

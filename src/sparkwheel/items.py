@@ -194,7 +194,7 @@ class Component(Item, Instantiable):
                 suggestion=suggestion,
             ) from e
         except Exception as e:
-            # Wrap other errors with location context
+            # Wrap other errors with location context (points to _target_ line)
             raise InstantiationError(
                 f"Failed to instantiate '{modname}': {type(e).__name__}: {e}",
                 source_location=self.source_location,

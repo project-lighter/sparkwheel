@@ -365,11 +365,18 @@ config = Config.load(["base_config.yaml", "prod_config.yaml"])
 
 # Method 2: Load then merge
 config = Config.load("base_config.yaml")
-config.merge("prod_config.yaml")
+config.update("prod_config.yaml")
+
+# Method 3: Merge Config instances
+base = Config.load("base.yaml")
+cli = Config.from_cli("override.yaml", ["model::lr=0.001"])
+base.merge(cli)  # Merge one Config into another
 
 # Later configs override earlier ones
 resolved = config.resolve()
 ```
+
+See [Merging & Deleting](operators.md) for details on merge (`+`) and delete (`~`) operators and advanced patterns.
 
 ## Special Keys
 

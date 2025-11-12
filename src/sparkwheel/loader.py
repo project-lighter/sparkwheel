@@ -33,24 +33,74 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
 
     def construct_mapping(self, node, deep=False):
         """Override to track source locations for dict nodes."""
-        mapping = super().construct_mapping(node, deep=deep)
-
         # Register source location for this dict node
-        if self.id_path_stack:
-            id_path = ID_SEP_KEY.join(self.id_path_stack)
-        else:
-            id_path = ""
+        current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
 
         if node.start_mark:
             location = SourceLocation(
                 filepath=self.filepath,
                 line=node.start_mark.line + 1,
                 column=node.start_mark.column + 1,
-                id=id_path,
+                id=current_id,
             )
-            self.registry.register(id_path, location)
+            self.registry.register(current_id, location)
 
-        return mapping
+        # For non-deep construction, we construct children manually to track paths
+        if not deep:
+            mapping = {}
+            for key_node, value_node in node.value:
+                # Construct key
+                key = self.construct_object(key_node, deep=False)
+
+                # Push key onto path stack before constructing value
+                self.id_path_stack.append(str(key))
+
+                # Construct value with updated path
+                value = self.construct_object(value_node, deep=True)
+
+                # Pop key from path stack
+                self.id_path_stack.pop()
+
+                mapping[key] = value
+
+            return mapping
+        else:
+            # Use parent's deep construction
+            return super().construct_mapping(node, deep=True)
+
+    def construct_sequence(self, node, deep=False):
+        """Override to track source locations for list nodes."""
+        # Register source location for this list node
+        current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
+
+        if node.start_mark:
+            location = SourceLocation(
+                filepath=self.filepath,
+                line=node.start_mark.line + 1,
+                column=node.start_mark.column + 1,
+                id=current_id,
+            )
+            self.registry.register(current_id, location)
+
+        # For non-deep construction, construct children manually to track paths
+        if not deep:
+            sequence = []
+            for idx, child_node in enumerate(node.value):
+                # Push index onto path stack
+                self.id_path_stack.append(str(idx))
+
+                # Construct child with updated path
+                value = self.construct_object(child_node, deep=True)
+
+                # Pop index from path stack
+                self.id_path_stack.pop()
+
+                sequence.append(value)
+
+            return sequence
+        else:
+            # Use parent's deep construction
+            return super().construct_sequence(node, deep=True)
 
 
 class Loader:

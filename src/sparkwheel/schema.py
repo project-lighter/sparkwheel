@@ -173,7 +173,7 @@ def validate(
     # Check for unexpected fields
     unexpected_fields = set(config.keys()) - set(schema_fields.keys())
     # Filter out sparkwheel special keys
-    special_keys = {"_target_", "_disabled_", "_requires_", "_mode_", "_meta_"}
+    special_keys = {"_target_", "_disabled_", "_requires_", "_mode_"}
     unexpected_fields = unexpected_fields - special_keys
 
     if unexpected_fields:

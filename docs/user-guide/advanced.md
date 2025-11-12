@@ -77,7 +77,7 @@ model:
 from sparkwheel import Config
 
 config = Config.load("base.yaml")
-config.merge("override.yaml")
+config.update("override.yaml")
 
 # Result:
 # model:
@@ -99,7 +99,7 @@ Use `~key: null` to delete a key (the value must be present for valid YAML, but 
 
 ```python
 config = Config.load("base.yaml")
-config.merge({"~model::dropout": None})
+config.update({"~model::dropout": None})
 
 # dropout is now removed from model config
 ```
@@ -117,7 +117,7 @@ config = Config.load("config.yaml")
 config.set("model::hidden_size", 1024)
 
 # Merge with directives
-config.merge({
+config.update({
     "+optimizer": {"lr": 0.01},        # Merge
     "~training::old_param": None,      # Delete
 })

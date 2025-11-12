@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from .loader import Loader
-from .merger import merge_configs
 from .metadata import MetadataRegistry
+from .operators import _validate_delete_operator, apply_operators
 from .parser import Parser
 from .resolver import Resolver
 from .utils import PathLike, ensure_tuple, look_up_option, optional_import
@@ -46,9 +46,9 @@ class Config:
         # Set values
         config.set("model::dropout", 0.1)
 
-        # Merge additional config
-        config.merge("experiment.yaml")
-        config.merge({"model::lr": 0.01})
+        # Update with additional config
+        config.update("experiment.yaml")
+        config.update({"model::lr": 0.01})
 
         # Resolve references and instantiate
         model = config.resolve("model")
@@ -109,10 +109,10 @@ class Config:
             New Config instance
 
         Merge Behavior:
-            Files are merged in order. Use +/~ prefixes to control merging:
-            - +key: value  - MERGE dict/list with existing
-            - ~key: null   - DELETE key
-            - key: value   - REPLACE (default)
+            Files are merged in order. Use operators to control merging:
+            - +key: value  - Merge operator: merge dict/list with existing
+            - ~key: null   - Delete operator: delete key
+            - key: value   - Replace (default)
 
         Examples:
             >>> # Single file
@@ -149,12 +149,88 @@ class Config:
         for filepath in file_list:
             loaded_data, loaded_metadata = config._loader.load_file(filepath)
             # Merge data and metadata
-            config._data = merge_configs(config._data, loaded_data)
+            config._data = apply_operators(config._data, loaded_data)
             config._metadata.merge(loaded_metadata)
 
         # Validate against schema if provided
         if schema is not None:
             config.validate(schema)
+
+        return config
+
+    @classmethod
+    def from_cli(
+        cls,
+        source: PathLike | Sequence[PathLike] | dict,
+        cli_overrides: list[str],
+        globals: dict[str, Any] | None = None,
+        schema: type | None = None,
+    ) -> "Config":
+        """Load configuration with CLI overrides applied.
+
+        Convenience method for loading configs with command-line overrides.
+        First loads the base config, then applies CLI overrides in the format
+        "key::path=value", and optionally validates against a schema.
+
+        Args:
+            source: File path, list of paths, or config dict
+            cli_overrides: List of override strings in format "key::path=value"
+            globals: Pre-imported packages for expressions
+            schema: Optional dataclass schema for validation
+
+        Returns:
+            New Config instance with CLI overrides applied
+
+        Examples:
+            >>> # Load with CLI overrides
+            >>> config = Config.from_cli(
+            ...     "config.yaml",
+            ...     ["model::lr=0.001", "trainer::max_epochs=100"]
+            ... )
+
+            >>> # Multiple files with overrides
+            >>> config = Config.from_cli(
+            ...     ["base.yaml", "experiment.yaml"],
+            ...     ["model::lr=0.001"]
+            ... )
+
+            >>> # With schema validation
+            >>> from dataclasses import dataclass
+            >>> @dataclass
+            ... class TrainingConfig:
+            ...     model: dict
+            ...     trainer: dict
+            >>> config = Config.from_cli(
+            ...     "config.yaml",
+            ...     ["model::lr=0.001"],
+            ...     schema=TrainingConfig
+            ... )
+
+            >>> # Complex overrides
+            >>> config = Config.from_cli(
+            ...     "config.yaml",
+            ...     [
+            ...         "model::lr=0.001",
+            ...         "trainer::devices=[0,1,2]",
+            ...         "model::layers=[128,256,512]",
+            ...         "debug=True"
+            ...     ]
+            ... )
+        """
+        from .cli import parse_overrides
+
+        # Load base configuration
+        config = cls.load(source, globals=globals, schema=schema)
+
+        # Apply CLI overrides
+        if cli_overrides:
+            overrides = parse_overrides(cli_overrides)
+            for key, value in overrides.items():
+                config.set(key, value)
+
+            # Re-validate after overrides if schema provided
+            if schema is not None:
+                config.validate(schema)
 
         return config
 
@@ -243,81 +319,110 @@ class Config:
 
         validate_schema(self._data, schema, metadata=self._metadata)
 
-    def merge(self, source: PathLike | dict) -> None:
-        """Merge additional configuration.
+    def update(self, source: PathLike | dict | "Config") -> None:
+        """Update configuration with changes from another source.
 
-        Handles both structural merging (files/dicts) and key-value updates with
-        support for nested paths (::) and directives (+/~).
+        Applies changes using operators for fine-grained control.
+        Supports nested paths (::) and merge/delete operators (+/~).
 
         Args:
-            source: File path or dict to merge
+            source: File path, dict, or Config instance to update from
 
-        Directives:
-            - +key: value  - Merge into existing key
-            - ~key: null   - Delete key
+        Operators:
+            - +key: value  - Merge operator: merge into existing key
+            - ~key: null   - Delete operator: delete key
             - key: value   - Replace (default)
 
         Examples:
-            >>> # Merge from file
-            >>> config.merge("override.yaml")
+            >>> # Update from file
+            >>> config.update("override.yaml")
 
-            >>> # Structural merge
-            >>> config.merge({"+model": {"dropout": 0.1}})
+            >>> # Update from dict
+            >>> config.update({"+model": {"dropout": 0.1}})
+
+            >>> # Update from another Config instance
+            >>> config1 = Config.load("base.yaml")
+            >>> config2 = Config.from_cli("override.yaml", ["model::lr=0.001"])
+            >>> config1.update(config2)
 
             >>> # Nested path updates
-            >>> config.merge({"model::lr": 0.001, "~old_param": None})
+            >>> config.update({"model::lr": 0.001, "~old_param": None})
         """
-        if isinstance(source, dict):
-            # Check if any keys use nested path syntax or are just directives
-            has_nested_paths = any(
-                ID_SEP_KEY in str(k).lstrip(MERGE_KEY).lstrip(DELETE_KEY)
-                for k in source.keys()
-            )
-
-            if has_nested_paths:
-                # Handle as key-value updates with nested path support
-                for key, value in source.items():
-                    if isinstance(key, str):
-                        if key.startswith(MERGE_KEY):
-                            # Merge directive: +key
-                            actual_key = key[1:]
-                            if actual_key in self and isinstance(self[actual_key], dict) and isinstance(value, dict):
-                                merged = merge_configs(self[actual_key], value)
-                                self.set(actual_key, merged)
-                            else:
-                                self.set(actual_key, value)
-                        elif key.startswith(DELETE_KEY):
-                            # Delete directive: ~key
-                            actual_key = key[1:]
-                            if actual_key in self:
-                                # Delete from parent
-                                if ID_SEP_KEY in actual_key:
-                                    keys = self.split_id(actual_key)
-                                    parent_id = ID_SEP_KEY.join(keys[:-1])
-                                    parent = self[parent_id] if parent_id else self._data
-                                    if isinstance(parent, dict) and keys[-1] in parent:
-                                        del parent[keys[-1]]
-                                else:
-                                    # Top-level key
-                                    if isinstance(self._data, dict) and actual_key in self._data:
-                                        del self._data[actual_key]
-                                self._invalidate_resolution()
-                        else:
-                            # Normal set (handles nested paths with ::)
-                            self.set(key, value)
-                    else:
-                        # Non-string key - just set normally
-                        self.set(str(key), value)
+        if isinstance(source, Config):
+            self._update_from_config(source)
+        elif isinstance(source, dict):
+            if self._uses_nested_paths(source):
+                self._apply_path_updates(source)
             else:
-                # Structural merge using merge_configs
-                self._data = merge_configs(self._data, source)
-                self._invalidate_resolution()
+                self._apply_structural_update(source)
         else:
-            # File path - always structural merge
-            new_data, new_metadata = self._loader.load_file(source)
-            self._data = merge_configs(self._data, new_data)
-            self._metadata.merge(new_metadata)
-            self._invalidate_resolution()
+            self._update_from_file(source)
+
+    def _update_from_config(self, source: "Config") -> None:
+        """Update from another Config instance."""
+        self._data = apply_operators(self._data, source._data)
+        self._metadata.merge(source._metadata)
+        self._invalidate_resolution()
+
+    def _uses_nested_paths(self, source: dict) -> bool:
+        """Check if dict uses :: path syntax."""
+        return any(
+            ID_SEP_KEY in str(k).lstrip(MERGE_KEY).lstrip(DELETE_KEY)
+            for k in source.keys()
+        )
+
+    def _apply_path_updates(self, source: dict) -> None:
+        """Apply nested path updates (e.g., model::lr=value, ~old::param=null)."""
+        for key, value in source.items():
+            if not isinstance(key, str):
+                self.set(str(key), value)
+                continue
+
+            if key.startswith(MERGE_KEY):
+                # Merge operator: +key
+                actual_key = key[1:]
+                if actual_key in self and isinstance(self[actual_key], dict) and isinstance(value, dict):
+                    merged = apply_operators(self[actual_key], value)
+                    self.set(actual_key, merged)
+                else:
+                    self.set(actual_key, value)
+
+            elif key.startswith(DELETE_KEY):
+                # Delete operator: ~key
+                actual_key = key[1:]
+                _validate_delete_operator(actual_key, value)
+
+                if actual_key in self:
+                    self._delete_nested_key(actual_key)
+            else:
+                # Normal set (handles nested paths with ::)
+                self.set(key, value)
+
+    def _delete_nested_key(self, key: str) -> None:
+        """Delete a key, supporting nested paths with ::."""
+        if ID_SEP_KEY in key:
+            keys = self.split_id(key)
+            parent_id = ID_SEP_KEY.join(keys[:-1])
+            parent = self[parent_id] if parent_id else self._data
+            if isinstance(parent, dict) and keys[-1] in parent:
+                del parent[keys[-1]]
+        else:
+            # Top-level key
+            if isinstance(self._data, dict) and key in self._data:
+                del self._data[key]
+        self._invalidate_resolution()
+
+    def _apply_structural_update(self, source: dict) -> None:
+        """Apply structural update with operators."""
+        self._data = apply_operators(self._data, source)
+        self._invalidate_resolution()
+
+    def _update_from_file(self, source: PathLike) -> None:
+        """Load and update from a file."""
+        new_data, new_metadata = self._loader.load_file(source)
+        self._data = apply_operators(self._data, new_data)
+        self._metadata.merge(new_metadata)
+        self._invalidate_resolution()
 
     def resolve(
         self,

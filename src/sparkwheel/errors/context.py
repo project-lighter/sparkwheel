@@ -31,9 +31,7 @@ def format_available_keys(config: dict[str, Any], max_keys: int = 10) -> str:
 
     lines = ["Available keys:"]
 
-    # Filter out metadata keys
-    keys_to_show = [k for k in config.keys() if not k.startswith("_meta_")]
-    keys_to_show = keys_to_show[:max_keys]
+    keys_to_show = list(config.keys())[:max_keys]
 
     for key in keys_to_show:
         value = config[key]

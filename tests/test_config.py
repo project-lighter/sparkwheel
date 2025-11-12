@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from sparkwheel import Config, merge_configs
+from sparkwheel import Config, apply_operators
 
 
 class TestConfigBasics:
@@ -89,7 +89,7 @@ class TestConfigBasics:
     def test_merge_nested_paths(self):
         """Test merge method with nested paths."""
         parser = Config({"a": 1, "b": {"c": 2}})
-        parser.merge({"a": 10, "b::c": 20, "d": 30})
+        parser.update({"a": 10, "b::c": 20, "d": 30})
         assert parser["a"] == 10
         assert parser["b::c"] == 20
         assert parser["d"] == 30
@@ -357,8 +357,7 @@ class TestConfigFileOperations:
         try:
             Config.export_config_file(config, filepath)
             loaded_parser = Config.load(filepath)
-            loaded = {k: v for k, v in loaded_parser._data.items() if k != "_meta_"}
-            assert loaded == config
+            assert loaded_parser._data == config
         finally:
             Path(filepath).unlink()
 
@@ -388,21 +387,21 @@ class TestConfigMerging:
         """Test default replace behavior."""
         base = {"a": 1, "b": {"x": 1, "y": 2}}
         override = {"b": {"z": 3}}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
         assert result == {"a": 1, "b": {"z": 3}}
 
     def test_merge_directive(self):
         """Test + merge directive."""
         base = {"a": 1, "b": {"x": 1, "y": 2}}
         override = {"+b": {"z": 3}}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
         assert result == {"a": 1, "b": {"x": 1, "y": 2, "z": 3}}
 
     def test_delete_directive(self):
         """Test ~ delete directive."""
         base = {"a": 1, "b": 2, "c": 3}
         override = {"~b": None}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
         assert result == {"a": 1, "c": 3}
 
     def test_nested_merge_directive(self):
@@ -420,7 +419,7 @@ class TestConfigMerging:
                 "optimizer": {"+nested": {"b": 2}, "~type": None}
             }
         }
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result["model"]["lr"] == 0.001
         assert result["model"]["hidden_size"] == 512
@@ -432,13 +431,13 @@ class TestConfigMerging:
         """Test that without + directives, sections are replaced."""
         base = {"training": {"epochs": 50, "batch_size": 16}}
         override = {"training": {"epochs": 100, "batch_size": 32}}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
         assert result == {"training": {"epochs": 100, "batch_size": 32}}
 
     def test_merge_dict(self):
         """Test merging a dict with + directive."""
         parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
-        parser.merge({"+b": {"z": 3}})
+        parser.update({"+b": {"z": 3}})
 
         assert parser["a"] == 1
         assert parser["b"]["x"] == 1
@@ -452,14 +451,72 @@ class TestConfigMerging:
         override_file = tmp_path / "override.yaml"
         override_file.write_text("+b:\n  z: 3")
 
-        parser.merge(str(override_file))
+        parser.update(str(override_file))
         assert parser["b"]["x"] == 1
         assert parser["b"]["z"] == 3
+
+    def test_merge_config_instance(self):
+        """Test merging another Config instance (replaces by default)."""
+        config1 = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
+        config2 = Config.load({"b": {"z": 3}, "c": 4})
+
+        config1.update(config2)
+
+        assert config1["a"] == 1
+        # b is replaced, not merged (default behavior)
+        assert config1["b"]["z"] == 3
+        assert "x" not in config1["b"]
+        assert "y" not in config1["b"]
+        assert config1["c"] == 4
+
+    def test_merge_config_instance_with_merge_directive(self):
+        """Test merging Config instance with + directive."""
+        config1 = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
+        config2 = Config.load({"+b": {"z": 3}, "c": 4})
+
+        config1.update(config2)
+
+        assert config1["a"] == 1
+        # b is merged because of + directive
+        assert config1["b"]["x"] == 1
+        assert config1["b"]["y"] == 2
+        assert config1["b"]["z"] == 3
+        assert config1["c"] == 4
+
+    def test_merge_config_from_cli(self):
+        """Test merging a Config loaded with from_cli()."""
+        base_config = Config.load({"model": {"lr": 0.01, "hidden_size": 256}})
+        cli_config = Config.from_cli(
+            {"trainer": {"max_epochs": 100}},
+            ["trainer::max_epochs=50"]
+        )
+
+        base_config.update(cli_config)
+
+        assert base_config["model"]["lr"] == 0.01
+        assert base_config["model"]["hidden_size"] == 256
+        assert base_config["trainer"]["max_epochs"] == 50
+
+    def test_merge_config_with_references(self):
+        """Test merging Config instances with references."""
+        config1 = Config.load({"base_lr": 0.01, "model": {"lr": "@base_lr"}})
+        config2 = Config.load({"optimizer": {"lr": "@base_lr"}})
+
+        config1.update(config2)
+
+        # References should be preserved before resolution
+        assert config1["model"]["lr"] == "@base_lr"
+        assert config1["optimizer"]["lr"] == "@base_lr"
+
+        # Resolve and check values
+        resolved = config1.resolve()
+        assert resolved["model"]["lr"] == 0.01
+        assert resolved["optimizer"]["lr"] == 0.01
 
     def test_merge_normal_set(self):
         """Test normal set behavior with merge."""
         parser = Config.load({"a": 1, "b": 2})
-        parser.merge({"a": 10, "c": 3})
+        parser.update({"a": 10, "c": 3})
         assert parser["a"] == 10
         assert parser["b"] == 2
         assert parser["c"] == 3
@@ -467,7 +524,7 @@ class TestConfigMerging:
     def test_merge_with_merge_directive(self):
         """Test + merge directive."""
         parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
-        parser.merge({"+b": {"z": 3}})
+        parser.update({"+b": {"z": 3}})
         assert parser["b"]["x"] == 1
         assert parser["b"]["y"] == 2
         assert parser["b"]["z"] == 3
@@ -475,7 +532,7 @@ class TestConfigMerging:
     def test_merge_with_delete_directive(self):
         """Test ~ delete directive."""
         parser = Config.load({"a": 1, "b": 2, "c": 3})
-        parser.merge({"~b": None})
+        parser.update({"~b": None})
         assert "b" not in parser
         assert parser["a"] == 1
         assert parser["c"] == 3
@@ -483,14 +540,38 @@ class TestConfigMerging:
     def test_merge_nested_delete(self):
         """Test ~ delete directive for nested keys."""
         parser = Config.load({"model": {"lr": 0.001, "dropout": 0.1}})
-        parser.merge({"~model::dropout": None})
+        parser.update({"~model::dropout": None})
         assert parser["model"]["lr"] == 0.001
         assert "dropout" not in parser["model"]
+
+    def test_merge_delete_directive_with_non_null_value_raises_error(self):
+        """Test that Config.update() with ~key raises error when value is not null or empty."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        parser = Config.load({"a": 1, "b": 2})
+
+        # Test with non-null value
+        with pytest.raises(ConfigMergeError, match="Delete operator '~b' must have null or empty value"):
+            parser.update({"~b": {"nested": "value"}})
+
+        # Test with nested path and non-null value
+        parser = Config.load({"model": {"lr": 0.001, "dropout": 0.1}})
+        with pytest.raises(ConfigMergeError, match="Delete operator '~model::dropout' must have null or empty value"):
+            parser.update({"~model::dropout": 42})
+
+        # But null and empty should work
+        parser = Config.load({"a": 1, "b": 2})
+        parser.update({"~b": None})
+        assert "b" not in parser
+
+        parser = Config.load({"a": 1, "b": 2})
+        parser.update({"~b": ""})
+        assert "b" not in parser
 
     def test_merge_combined_directives(self):
         """Test combining +, ~, and normal updates with merge."""
         parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}, "c": 3})
-        parser.merge({
+        parser.update({
             "a": 10,
             "+b": {"z": 3},
             "~c": None,
@@ -509,7 +590,7 @@ class TestConfigMerging:
         override = {"+b": {"x": 1}}
 
         with pytest.raises(ConfigMergeError, match="Cannot merge into non-existent key 'b'"):
-            merge_configs(base, override)
+            apply_operators(base, override)
 
     def test_merge_directive_type_mismatch_raises_error(self):
         """Test that +key raises error when types don't match."""
@@ -520,21 +601,21 @@ class TestConfigMerging:
         override = {"+model": {"hidden_size": 512}}
 
         with pytest.raises(ConfigMergeError, match="type mismatch"):
-            merge_configs(base, override)
+            apply_operators(base, override)
 
         # Base is dict, override is string
         base = {"model": {"hidden_size": 512}}
         override = {"+model": "resnet50"}
 
         with pytest.raises(ConfigMergeError, match="type mismatch"):
-            merge_configs(base, override)
+            apply_operators(base, override)
 
         # Base is None, override is dict
         base = {"model": None}
         override = {"+model": {"hidden_size": 512}}
 
         with pytest.raises(ConfigMergeError, match="type mismatch"):
-            merge_configs(base, override)
+            apply_operators(base, override)
 
     def test_delete_directive_on_nonexistent_key_raises_error(self):
         """Test that ~key raises error when key doesn't exist."""
@@ -544,21 +625,94 @@ class TestConfigMerging:
         override = {"~b": None}
 
         with pytest.raises(ConfigMergeError, match="Cannot delete non-existent key 'b'"):
-            merge_configs(base, override)
+            apply_operators(base, override)
+
+    def test_delete_directive_with_non_null_value_raises_error(self):
+        """Test that ~key raises error when value is not null or empty."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        base = {"a": 1, "b": 2}
+
+        # Test with dict value
+        override = {"~b": {"nested": "value"}}
+        with pytest.raises(ConfigMergeError, match="Delete operator '~b' must have null or empty value"):
+            apply_operators(base, override)
+
+        # Test with list value
+        override = {"~b": ["item"]}
+        with pytest.raises(ConfigMergeError, match="Delete operator '~b' must have null or empty value"):
+            apply_operators(base, override)
+
+        # Test with string value
+        override = {"~b": "value"}
+        with pytest.raises(ConfigMergeError, match="Delete operator '~b' must have null or empty value"):
+            apply_operators(base, override)
+
+        # Test with number value
+        override = {"~b": 42}
+        with pytest.raises(ConfigMergeError, match="Delete operator '~b' must have null or empty value"):
+            apply_operators(base, override)
+
+        # Test with boolean value
+        override = {"~b": False}
+        with pytest.raises(ConfigMergeError, match="Delete operator '~b' must have null or empty value"):
+            apply_operators(base, override)
+
+        # But null and empty should work
+        override = {"~b": None}
+        result = apply_operators(base, override)
+        assert result == {"a": 1}
+
+        base = {"a": 1, "b": 2}
+        override = {"~b": ""}
+        result = apply_operators(base, override)
+        assert result == {"a": 1}
 
     def test_merge_into_empty_dict(self):
         """Test that +key works when merging into an empty dict."""
         base = {"model": {}}
         override = {"+model": {"hidden_size": 512}}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result == {"model": {"hidden_size": 512}}
+
+    def test_delete_directive_implicit_propagation(self):
+        """Test that delete directive triggers implicit merge propagation.
+
+        When a nested key has ~, parent keys should automatically merge
+        instead of replace, just like with + directive.
+        """
+        base = {
+            "model": {
+                "dropout": 0.1,
+                "lr": 0.001,
+                "hidden_size": 512
+            }
+        }
+
+        # Without explicit +, the delete directive should trigger implicit merge
+        override = {
+            "model": {
+                "~dropout": None
+            }
+        }
+
+        result = apply_operators(base, override)
+
+        # Expected: model dict is merged (not replaced), dropout deleted, other keys preserved
+        assert result == {
+            "model": {
+                "lr": 0.001,
+                "hidden_size": 512
+            }
+        }
+        # dropout should be deleted, lr and hidden_size should be preserved
 
     def test_merge_lists_appends(self):
         """Test that +key with lists appends them."""
         base = {"plugins": ["logger", "metrics"]}
         override = {"+plugins": ["cache", "auth"]}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result == {"plugins": ["logger", "metrics", "cache", "auth"]}
 
@@ -566,7 +720,7 @@ class TestConfigMerging:
         """Test that list merge keeps duplicates."""
         base = {"items": ["a", "b", "c"]}
         override = {"+items": ["b", "d"]}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result == {"items": ["a", "b", "c", "b", "d"]}
 
@@ -574,7 +728,7 @@ class TestConfigMerging:
         """Test that list merge with dicts just appends."""
         base = {"items": [{"id": 1, "name": "foo"}]}
         override = {"+items": [{"id": 2, "name": "bar"}]}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result == {"items": [{"id": 1, "name": "foo"}, {"id": 2, "name": "bar"}]}
 
@@ -586,13 +740,13 @@ class TestConfigMerging:
         override = {"+items": "c"}  # String, not list
 
         with pytest.raises(ConfigMergeError, match="type mismatch"):
-            merge_configs(base, override)
+            apply_operators(base, override)
 
     def test_merge_lists_of_lists(self):
         """Test that list merge works with nested lists."""
         base = {"matrix": [[1, 2], [3, 4]]}
         override = {"+matrix": [[5, 6]]}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result == {"matrix": [[1, 2], [3, 4], [5, 6]]}
 
@@ -600,7 +754,7 @@ class TestConfigMerging:
         """Test that +key works when merging into an empty list."""
         base = {"items": []}
         override = {"+items": ["a", "b"]}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result == {"items": ["a", "b"]}
 
@@ -608,7 +762,7 @@ class TestConfigMerging:
         """Test that +key works when merging empty list."""
         base = {"items": ["a", "b"]}
         override = {"+items": []}
-        result = merge_configs(base, override)
+        result = apply_operators(base, override)
 
         assert result == {"items": ["a", "b"]}
 

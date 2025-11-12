@@ -144,14 +144,6 @@ class TestFormatAvailableKeys:
         assert "model:" in formatted
         assert "optimizer:" in formatted
 
-    def test_format_excludes_metadata(self):
-        """Test that _meta_ keys are excluded."""
-        config = {"_meta_": {"source": "file.yaml"}, "real_key": 42}
-        formatted = format_available_keys(config)
-
-        assert "_meta_" not in formatted
-        assert "real_key" in formatted
-
     def test_format_empty_config(self):
         """Test formatting empty config."""
         assert format_available_keys({}) == ""
