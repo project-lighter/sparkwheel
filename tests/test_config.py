@@ -19,6 +19,8 @@ import pytest
 import yaml
 
 from sparkwheel import Config, apply_operators
+from sparkwheel.path_patterns import split_file_and_id
+from sparkwheel.path_utils import resolve_relative_ids
 
 
 class TestConfigBasics:
@@ -177,37 +179,37 @@ class TestConfigReferences:
 
     def test_resolve_relative_ids(self):
         """Test resolve_relative_ids method."""
-        result = Config.resolve_relative_ids("parent::child", "@::sibling")
+        result = resolve_relative_ids("parent::child", "@::sibling")
         assert result == "@parent::sibling"
 
     def test_resolve_relative_ids_double_colon(self):
         """Test resolve_relative_ids with :: (up one level)."""
-        result = Config.resolve_relative_ids("parent::child", "@::::value")
+        result = resolve_relative_ids("parent::child", "@::::value")
         assert result == "@value"
 
     def test_resolve_relative_ids_triple_colon(self):
         """Test resolve_relative_ids with :::: (up two levels)."""
-        result = Config.resolve_relative_ids("a::b::c", "@::::::value")
+        result = resolve_relative_ids("a::b::c", "@::::::value")
         assert result == "@value"
 
     def test_resolve_relative_ids_equal_levels(self):
         """Test resolve_relative_ids when going up equals depth."""
-        result = Config.resolve_relative_ids("a::b", "@::::value")
+        result = resolve_relative_ids("a::b", "@::::value")
         assert result == "@value"
 
     def test_resolve_relative_ids_out_of_range(self):
         """Test resolve_relative_ids raises error when out of range."""
-        with pytest.raises(ValueError, match="out of range"):
-            Config.resolve_relative_ids("a", "@::::value")
+        with pytest.raises(ValueError, match="attempts to go"):
+            resolve_relative_ids("a", "@::::value")
 
     def test_resolve_relative_ids_macro(self):
         """Test resolve_relative_ids with macro %."""
-        result = Config.resolve_relative_ids("parent::child", "%::sibling")
+        result = resolve_relative_ids("parent::child", "%::sibling")
         assert result == "%parent::sibling"
 
     def test_resolve_relative_ids_in_list(self):
         """Test resolve_relative_ids in list context."""
-        result = Config.resolve_relative_ids("parent::items::1", "@::0")
+        result = resolve_relative_ids("parent::items::1", "@::0")
         assert result == "@parent::items::0"
 
 
@@ -252,22 +254,22 @@ class TestConfigMacros:
         assert parser["copy"] is not parser["original"]
 
     def test_do_resolve_macro_from_config(self):
-        """Test _do_resolve with macro referencing same config."""
+        """Test preprocessing with macro referencing same config."""
         parser = Config({"template": {"a": 1, "b": 2}, "copy": "%template"})
-        parser._resolve_macros_and_relative_ids()
+        parser._parse()
         assert parser["copy"] == {"a": 1, "b": 2}
         parser["copy"]["a"] = 99
         assert parser["template"]["a"] == 1
 
     def test_do_resolve_macro_load(self):
-        """Test _do_resolve with macro from file."""
+        """Test preprocessing with macro from file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.safe_dump({"external": {"value": 42}}, f)
             filepath = f.name
 
         try:
             parser = Config({"local": f"%{filepath}::external"})
-            parser._resolve_macros_and_relative_ids()
+            parser._parse()
             assert parser["local"] == {"value": 42}
         finally:
             Path(filepath).unlink()
@@ -363,19 +365,19 @@ class TestConfigFileOperations:
 
     def test_split_path_id_with_path(self):
         """Test split_path_id with file path and id."""
-        path, ids = Config.split_path_id("/path/to/config.yaml::key::subkey")
+        path, ids = split_file_and_id("/path/to/config.yaml::key::subkey")
         assert path == "/path/to/config.yaml"
         assert ids == "key::subkey"
 
     def test_split_path_id_with_path_no_id(self):
         """Test split_path_id with file path but no id."""
-        path, ids = Config.split_path_id("/path/to/config.yml")
+        path, ids = split_file_and_id("/path/to/config.yml")
         assert path == "/path/to/config.yml"
         assert ids == ""
 
     def test_split_path_id_no_path(self):
         """Test split_path_id with only id."""
-        path, ids = Config.split_path_id("key::subkey")
+        path, ids = split_file_and_id("key::subkey")
         assert path == ""
         assert ids == "key::subkey"
 

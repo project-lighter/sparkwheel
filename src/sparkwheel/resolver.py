@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import re
 import warnings
 from collections.abc import Iterator
 from typing import Any
 
 from .items import Component, Expression, Item
+from .path_utils import normalize_id, scan_references, replace_references
 from .utils import allow_missing_reference, look_up_option
 from .utils.constants import ID_REF_KEY, ID_SEP_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
@@ -44,7 +44,6 @@ class Resolver:
     _vars = "__local_refs"  # Variable name for resolved refs in expression evaluation
     sep = ID_SEP_KEY  # Separator for nested key access
     ref = ID_REF_KEY  # Reference prefix (@)
-    id_matcher = re.compile(rf"{ref}(?:\w*)(?:{sep}\w*)*")  # Match @id::key patterns
     allow_missing_reference = allow_missing_reference
     max_resolution_depth = 100  # Prevent DoS from deeply nested references
 
@@ -336,18 +335,8 @@ class Resolver:
         Returns:
             Dict mapping reference IDs to occurrence counts
         """
-        refs: dict[str, int] = {}
-        value = cls.normalize_id(value)
-        result = cls.id_matcher.findall(value)
-        value_is_expr = Expression.is_expression(value)
-
-        for item in result:
-            if value_is_expr or value == item:
-                # Only match in expressions or when entire value is a reference
-                id = item[len(cls.ref) :]
-                refs[id] = refs.get(id, 0) + 1
-
-        return refs
+        value = normalize_id(value)
+        return scan_references(value)
 
     @classmethod
     def update_refs_pattern(cls, value: str, refs: dict) -> str:
@@ -360,30 +349,19 @@ class Resolver:
         Returns:
             String with references replaced
         """
-        value = cls.normalize_id(value)
-        result = cls.id_matcher.findall(value)
-        # Sort by length (longest first) to handle substring cases
-        result.sort(key=len, reverse=True)
-        value_is_expr = Expression.is_expression(value)
+        value = normalize_id(value)
 
-        for item in result:
-            if value_is_expr or value == item:
-                ref_id = item[len(cls.ref) :]
-                if ref_id not in refs:
-                    msg = f"can not find expected ID '{ref_id}' in the references."
-                    if not cls.allow_missing_reference:
-                        raise KeyError(msg)
-                    warnings.warn(msg, stacklevel=2)
-                    continue
-
-                if value_is_expr:
-                    # Replace with local variable access for expressions
-                    value = value.replace(item, f"{cls._vars}['{ref_id}']")
-                elif value == item:
-                    # Entire value is a reference - replace with resolved value
-                    value = refs[ref_id]
-
-        return value
+        try:
+            return replace_references(value, refs, cls._vars)
+        except KeyError as e:
+            # Extract reference ID from error message
+            # The error message format is: "Reference '@ref_id' not found in resolved references"
+            ref_id = str(e).split("'")[1].lstrip('@')
+            msg = f"can not find expected ID '{ref_id}' in the references."
+            if not cls.allow_missing_reference:
+                raise KeyError(msg) from e
+            warnings.warn(msg, stacklevel=2)
+            return value
 
     @classmethod
     def find_refs_in_config(cls, config: Any, id: str, refs: dict[str, int] | None = None) -> dict[str, int]:

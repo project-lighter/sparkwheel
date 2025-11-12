@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 import yaml
 
 from .metadata import MetadataRegistry
+from .path_patterns import is_yaml_file
 from .utils import CheckKeyDuplicatesYamlLoader, PathLike
 from .utils.constants import ID_SEP_KEY
 from .utils.exceptions import SourceLocation
@@ -123,9 +123,6 @@ class Loader:
         ```
     """
 
-    suffixes = ("yaml", "yml")
-    path_pattern = re.compile(r".*\.(yaml|yml)$", re.IGNORECASE)
-
     def load_file(self, filepath: PathLike) -> tuple[dict, MetadataRegistry]:
         """Load a single YAML file with metadata tracking.
 
@@ -144,7 +141,7 @@ class Loader:
         filepath_str = str(Path(filepath))
 
         # Validate YAML extension
-        if not self.path_pattern.match(filepath_str):
+        if not is_yaml_file(filepath_str):
             raise ValueError(f'Unknown file input: "{filepath}", must be a YAML file (.yaml or .yml)')
 
         # Resolve path (detect potential path traversal)

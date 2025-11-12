@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +10,11 @@ from .loader import Loader
 from .metadata import MetadataRegistry
 from .operators import _validate_delete_operator, apply_operators
 from .parser import Parser
+from .path_utils import split_id
+from .preprocessor import Preprocessor
 from .resolver import Resolver
 from .utils import PathLike, ensure_tuple, look_up_option, optional_import
-from .utils.constants import DELETE_KEY, ID_REF_KEY, ID_SEP_KEY, MACRO_KEY, MERGE_KEY
+from .utils.constants import DELETE_KEY, ID_SEP_KEY, MERGE_KEY
 from .utils.exceptions import ConfigKeyError
 
 __all__ = ["Config"]
@@ -60,15 +60,6 @@ class Config:
         globals: Pre-imported packages for expressions (e.g., {"torch": "torch"})
     """
 
-    # Patterns for file path parsing
-    suffixes = ("yaml", "yml")
-    suffix_match = r".*\." + f"({'|'.join(suffixes)})"
-    path_match = f"({suffix_match}$)"
-    path_match_compiled = re.compile(path_match, re.IGNORECASE)
-    split_path_compiled = re.compile(f"({suffix_match}(?=(?:{ID_SEP_KEY}.*)|$))", re.IGNORECASE)
-    # Match relative ID prefixes: @::, @::::, %::, etc.
-    relative_id_prefix = re.compile(rf"(?:{ID_REF_KEY}|{MACRO_KEY}){ID_SEP_KEY}+")
-
     def __init__(self, data: dict | None = None, globals: dict[str, Any] | None = None):
         """Initialize Config (use Config.load() instead for most cases).
 
@@ -88,6 +79,7 @@ class Config:
                 self._globals[k] = optional_import(v)[0] if isinstance(v, str) else v
 
         self._loader = Loader()
+        self._preprocessor = Preprocessor(self._loader, self._globals)
 
     @classmethod
     def load(
@@ -275,7 +267,7 @@ class Config:
             self._invalidate_resolution()
             return
 
-        keys = self.split_id(id)
+        keys = split_id(id)
 
         # Ensure root is dict
         if not isinstance(self._data, dict):
@@ -401,7 +393,7 @@ class Config:
     def _delete_nested_key(self, key: str) -> None:
         """Delete a key, supporting nested paths with ::."""
         if ID_SEP_KEY in key:
-            keys = self.split_id(key)
+            keys = split_id(key)
             parent_id = ID_SEP_KEY.join(keys[:-1])
             parent = self[parent_id] if parent_id else self._data
             if isinstance(parent, dict) and keys[-1] in parent:
@@ -492,91 +484,18 @@ class Config:
         if reset:
             self._resolver.reset()
 
-        # Resolve macros and relative IDs first
-        self._resolve_macros_and_relative_ids()
+        # Stage 1: Preprocess (% macros, @:: relative IDs)
+        self._data = self._preprocessor.process(self._data, self._data, id="")
 
-        # Parse config tree to create Items
+        # Stage 2: Parse config tree to create Items
         parser = Parser(globals=self._globals, metadata=self._metadata)
         items = parser.parse(self._data)
 
-        # Add items to resolver
+        # Stage 3: Add items to resolver
         self._resolver.add_items(items)
 
         self._is_parsed = True
 
-    def _resolve_macros_and_relative_ids(self) -> None:
-        """Resolve macro references (%) and relative IDs (@::, @::::).
-
-        Macros allow referencing config from other files: %file.yaml::key
-        Relative IDs allow relative references: @:: (same level), @:::: (parent level)
-        """
-        self._data = self._do_resolve_macros(self._data, id="")
-
-    def _do_resolve_macros(
-        self,
-        config: Any,
-        id: str = "",
-        _macro_stack: set[str] | None = None,
-    ) -> Any:
-        """Recursively resolve macros and relative IDs.
-
-        Args:
-            config: Config to process
-            id: Current ID path
-            _macro_stack: Set of macros being resolved (for cycle detection)
-
-        Returns:
-            Config with macros and relative IDs resolved
-        """
-        if _macro_stack is None:
-            _macro_stack = set()
-
-        # Recursively process nested structures
-        if isinstance(config, dict):
-            for k in list(config.keys()):
-                sub_id = f"{id}{ID_SEP_KEY}{k}" if id else str(k)
-                config[k] = self._do_resolve_macros(config[k], sub_id, _macro_stack)
-        elif isinstance(config, list):
-            for idx in range(len(config)):
-                sub_id = f"{id}{ID_SEP_KEY}{idx}" if id else str(idx)
-                config[idx] = self._do_resolve_macros(config[idx], sub_id, _macro_stack)
-
-        # Process string values
-        if isinstance(config, str):
-            # Resolve relative IDs (@::, @::::)
-            config = self.resolve_relative_ids(id, config)
-
-            # Resolve macros (%id, %file.yaml::id)
-            if config.startswith(MACRO_KEY):
-                # Check for circular references
-                if config in _macro_stack:
-                    raise ValueError(
-                        f"Circular macro reference detected: {config} is already being resolved. "
-                        f"Macro chain: {' -> '.join(sorted(_macro_stack))} -> {config}"
-                    )
-
-                path, ids = self.split_path_id(config[len(MACRO_KEY) :])
-                _macro_stack.add(config)
-
-                try:
-                    if not path:
-                        # Local macro reference
-                        loaded_config = self._data
-                    else:
-                        # External file macro reference
-                        loaded_config, _ = self._loader.load_file(path)
-
-                    # Create temporary Config to resolve the macro content
-                    temp_config = Config(data=loaded_config, globals=self._globals)
-                    result = temp_config._get_by_id(ids)
-                    result = temp_config._do_resolve_macros(result, ids, _macro_stack)
-
-                    # Deep copy to ensure independence
-                    return deepcopy(result)
-                finally:
-                    _macro_stack.discard(config)
-
-        return config
 
     def _get_by_id(self, id: str) -> Any:
         """Get config value by ID path.
@@ -594,7 +513,7 @@ class Config:
             return self._data
 
         config = self._data
-        for k in self.split_id(id):
+        for k in split_id(id):
             if not isinstance(config, (dict, list)):
                 raise ValueError(f"Config must be dict or list for key `{k}`, but got {type(config)}: {config}")
             try:
@@ -656,90 +575,6 @@ class Config:
     def __repr__(self) -> str:
         """String representation of config."""
         return f"Config({self._data})"
-
-    # Utility class methods (from old ConfigParser)
-
-    @classmethod
-    def split_path_id(cls, src: str) -> tuple[str, str]:
-        """Split string into file path and config ID.
-
-        Args:
-            src: String like "config.yaml::model::lr"
-
-        Returns:
-            Tuple of (filepath, config_id)
-        """
-        src = cls.normalize_id(src)
-        result = cls.split_path_compiled.findall(src)
-
-        if not result:
-            return "", src  # Pure ID, no path
-
-        path_name = result[0][0]
-        _, ids = src.rsplit(path_name, 1)
-        return path_name, ids[len(ID_SEP_KEY) :] if ids.startswith(ID_SEP_KEY) else ""
-
-    @classmethod
-    def resolve_relative_ids(cls, id: str, value: str) -> str:
-        """Resolve relative ID references (@::, @::::) to absolute IDs.
-
-        Args:
-            id: Current config ID path
-            value: String value that may contain relative references
-
-        Returns:
-            String with relative references resolved to absolute
-
-        Example:
-            >>> # In context of "model::optimizer"
-            >>> Config.resolve_relative_ids("model::optimizer", "@::lr")
-            "@model::lr"
-            >>> Config.resolve_relative_ids("model::optimizer", "@::::lr")
-            "@lr"
-        """
-        value = cls.normalize_id(value)
-        prefixes = sorted(set().union(cls.relative_id_prefix.findall(value)), reverse=True)
-        current_id = id.split(ID_SEP_KEY)
-
-        for p in prefixes:
-            sym = ID_REF_KEY if ID_REF_KEY in p else MACRO_KEY
-            length = p[len(sym) :].count(ID_SEP_KEY)
-
-            if length > len(current_id):
-                raise ValueError(f"Relative ID in `{value}` is out of range of config content")
-
-            if length == len(current_id):
-                new = ""  # Root level
-            else:
-                new = ID_SEP_KEY.join(current_id[:-length]) + ID_SEP_KEY
-
-            value = value.replace(p, sym + new)
-
-        return value
-
-    @classmethod
-    def split_id(cls, id: str | int) -> list[str]:
-        """Split ID string by separator.
-
-        Args:
-            id: ID to split
-
-        Returns:
-            List of ID components
-        """
-        return cls.normalize_id(id).split(ID_SEP_KEY)
-
-    @classmethod
-    def normalize_id(cls, id: str | int) -> str:
-        """Normalize ID to string.
-
-        Args:
-            id: ID to normalize
-
-        Returns:
-            String ID
-        """
-        return str(id)
 
     @staticmethod
     def export_config_file(config: dict, filepath: PathLike, **kwargs: Any) -> None:
