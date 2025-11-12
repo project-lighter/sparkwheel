@@ -119,28 +119,22 @@ class TestParseOverrides:
 
     def test_parse_multiple(self):
         """Test parsing multiple overrides."""
-        overrides = parse_overrides([
-            "model::lr=0.001",
-            "trainer::max_epochs=100",
-            "trainer::devices=[0,1]"
-        ])
+        overrides = parse_overrides(["model::lr=0.001", "trainer::max_epochs=100", "trainer::devices=[0,1]"])
 
-        assert overrides == {
-            "model::lr": 0.001,
-            "trainer::max_epochs": 100,
-            "trainer::devices": [0, 1]
-        }
+        assert overrides == {"model::lr": 0.001, "trainer::max_epochs": 100, "trainer::devices": [0, 1]}
 
     def test_parse_mixed_types(self):
         """Test parsing various types in one call."""
-        overrides = parse_overrides([
-            "model::name=resnet50",
-            "model::layers=[64,128,256]",
-            "trainer::devices=[0,1]",
-            "debug=True",
-            "model::lr=0.001",
-            "scheduler=None"
-        ])
+        overrides = parse_overrides(
+            [
+                "model::name=resnet50",
+                "model::layers=[64,128,256]",
+                "trainer::devices=[0,1]",
+                "debug=True",
+                "model::lr=0.001",
+                "scheduler=None",
+            ]
+        )
 
         assert overrides == {
             "model::name": "resnet50",
@@ -148,7 +142,7 @@ class TestParseOverrides:
             "trainer::devices": [0, 1],
             "debug": True,
             "model::lr": 0.001,
-            "scheduler": None
+            "scheduler": None,
         }
 
     def test_parse_empty_list(self):
@@ -163,10 +157,12 @@ class TestParseOverrides:
 
     def test_duplicate_keys_last_wins(self):
         """Test that last value wins for duplicate keys."""
-        overrides = parse_overrides([
-            "model::lr=0.001",
-            "model::lr=0.01"  # Overwrites previous
-        ])
+        overrides = parse_overrides(
+            [
+                "model::lr=0.001",
+                "model::lr=0.01",  # Overwrites previous
+            ]
+        )
         assert overrides == {"model::lr": 0.01}
 
 
@@ -175,15 +171,9 @@ class TestConfigFromCLI:
 
     def test_from_cli_basic(self):
         """Test basic loading with CLI overrides."""
-        base_config = {
-            "model": {"lr": 0.01, "hidden_size": 256},
-            "trainer": {"max_epochs": 10}
-        }
+        base_config = {"model": {"lr": 0.01, "hidden_size": 256}, "trainer": {"max_epochs": 10}}
 
-        config = Config.from_cli(
-            base_config,
-            ["model::lr=0.001", "trainer::max_epochs=100"]
-        )
+        config = Config.from_cli(base_config, ["model::lr=0.001", "trainer::max_epochs=100"])
 
         assert config["model::lr"] == 0.001
         assert config["model::hidden_size"] == 256  # Unchanged
@@ -199,20 +189,14 @@ class TestConfigFromCLI:
 
     def test_from_cli_empty_overrides_list(self):
         """Test with empty overrides list."""
-        config = Config.from_cli(
-            {"value": 42},
-            []
-        )
+        config = Config.from_cli({"value": 42}, [])
         assert config["value"] == 42
 
     def test_from_cli_new_keys(self):
         """Test adding new keys via CLI overrides."""
         base_config = {"model": {"lr": 0.01}}
 
-        config = Config.from_cli(
-            base_config,
-            ["model::dropout=0.1", "trainer::max_epochs=100"]
-        )
+        config = Config.from_cli(base_config, ["model::dropout=0.1", "trainer::max_epochs=100"])
 
         assert config["model::lr"] == 0.01
         assert config["model::dropout"] == 0.1
@@ -222,11 +206,7 @@ class TestConfigFromCLI:
         """Test CLI overrides with complex types."""
         config = Config.from_cli(
             {"model": {}},
-            [
-                "model::layers=[128,256,512]",
-                "model::config={'dropout':0.1,'activation':'relu'}",
-                "trainer::devices=[0,1,2,3]"
-            ]
+            ["model::layers=[128,256,512]", "model::config={'dropout':0.1,'activation':'relu'}", "trainer::devices=[0,1,2,3]"],
         )
 
         assert config["model::layers"] == [128, 256, 512]
@@ -241,17 +221,14 @@ class TestConfigFromCLI:
         class SimpleSchema:
             value: int
 
-        config = Config.from_cli(
-            {"value": 42},
-            ["value=100"],
-            schema=SimpleSchema
-        )
+        config = Config.from_cli({"value": 42}, ["value=100"], schema=SimpleSchema)
 
         assert config["value"] == 100
 
     def test_from_cli_schema_validation_fails(self):
         """Test that invalid override fails schema validation."""
         from dataclasses import dataclass
+
         from sparkwheel import ValidationError
 
         @dataclass
@@ -262,14 +239,14 @@ class TestConfigFromCLI:
             Config.from_cli(
                 {"value": 42},
                 ["value=not_an_int"],  # Type error!
-                schema=SimpleSchema
+                schema=SimpleSchema,
             )
 
     def test_from_cli_multiple_files(self):
         """Test loading from multiple files with overrides."""
         # Create temp config files
-        import tempfile
         import os
+        import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             base_file = os.path.join(tmpdir, "base.yaml")
@@ -281,10 +258,7 @@ class TestConfigFromCLI:
             with open(override_file, "w") as f:
                 f.write("+model:\n  lr: 0.001\n")
 
-            config = Config.from_cli(
-                [base_file, override_file],
-                ["model::dropout=0.1"]
-            )
+            config = Config.from_cli([base_file, override_file], ["model::dropout=0.1"])
 
             assert config["model::lr"] == 0.001  # From override file
             assert config["model::hidden_size"] == 256  # From base
@@ -292,18 +266,9 @@ class TestConfigFromCLI:
 
     def test_from_cli_with_references(self):
         """Test that references work with CLI overrides."""
-        base_config = {
-            "base_lr": 0.01,
-            "model": {
-                "lr": "@base_lr",
-                "dropout": 0.1
-            }
-        }
+        base_config = {"base_lr": 0.01, "model": {"lr": "@base_lr", "dropout": 0.1}}
 
-        config = Config.from_cli(
-            base_config,
-            ["base_lr=0.001", "model::dropout=0.2"]
-        )
+        config = Config.from_cli(base_config, ["base_lr=0.001", "model::dropout=0.2"])
 
         # Test raw values
         assert config.get("base_lr") == 0.001
@@ -319,7 +284,7 @@ class TestConfigFromCLI:
         config = Config.from_cli(
             {"expr": "$len([1,2,3])"},
             [],
-            globals={}  # Empty but should still work
+            globals={},  # Empty but should still work
         )
 
         resolved = config.resolve()
@@ -332,21 +297,9 @@ class TestCLIIntegration:
     def test_realistic_ml_config(self):
         """Test realistic machine learning configuration."""
         base_config = {
-            "model": {
-                "name": "resnet50",
-                "pretrained": True,
-                "num_classes": 1000
-            },
-            "training": {
-                "batch_size": 32,
-                "epochs": 100,
-                "lr": 0.001,
-                "optimizer": "adam"
-            },
-            "data": {
-                "train_path": "/data/train",
-                "val_path": "/data/val"
-            }
+            "model": {"name": "resnet50", "pretrained": True, "num_classes": 1000},
+            "training": {"batch_size": 32, "epochs": 100, "lr": 0.001, "optimizer": "adam"},
+            "data": {"train_path": "/data/train", "val_path": "/data/val"},
         }
 
         config = Config.from_cli(
@@ -356,8 +309,8 @@ class TestCLIIntegration:
                 "model::num_classes=10",
                 "training::batch_size=64",
                 "training::lr=0.0001",
-                "training::epochs=50"
-            ]
+                "training::epochs=50",
+            ],
         )
 
         # Check overrides applied
@@ -374,12 +327,7 @@ class TestCLIIntegration:
     def test_override_with_expressions(self):
         """Test CLI overrides with expressions."""
         config = Config.from_cli(
-            {
-                "batch_size": 32,
-                "num_batches": 100,
-                "total_samples": "$@batch_size * @num_batches"
-            },
-            ["batch_size=64"]
+            {"batch_size": 32, "num_batches": 100, "total_samples": "$@batch_size * @num_batches"}, ["batch_size=64"]
         )
 
         resolved = config.resolve()

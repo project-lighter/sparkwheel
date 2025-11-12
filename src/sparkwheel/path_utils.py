@@ -7,7 +7,7 @@ the regex patterns from path_patterns.py.
 from typing import Any
 
 from .path_patterns import PathPatterns
-from .utils.constants import ID_REF_KEY, ID_SEP_KEY, MACRO_KEY
+from .utils.constants import ID_SEP_KEY
 
 __all__ = [
     "split_id",
@@ -144,8 +144,8 @@ def scan_references(text: str) -> dict[str, int]:
     refs: dict[str, int] = {}
 
     # Only process expressions or pure references
-    is_expr = text.startswith('$')
-    is_pure_ref = text.startswith('@')
+    is_expr = text.startswith("$")
+    is_pure_ref = text.startswith("@")
 
     if not (is_expr or is_pure_ref):
         return refs
@@ -160,11 +160,7 @@ def scan_references(text: str) -> dict[str, int]:
     return refs
 
 
-def replace_references(
-    text: str,
-    resolved_refs: dict[str, Any],
-    local_var_name: str = "__local_refs"
-) -> str | Any:
+def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name: str = "__local_refs") -> str | Any:
     """Replace @ references with resolved values.
 
     For pure references: Returns the resolved value directly
@@ -193,8 +189,8 @@ def replace_references(
     Raises:
         KeyError: If a referenced ID is not in resolved_refs
     """
-    is_expr = text.startswith('$')
-    is_pure_ref = text.startswith('@') and '@' not in text[1:]
+    is_expr = text.startswith("$")
+    is_pure_ref = text.startswith("@") and "@" not in text[1:]
 
     if is_pure_ref:
         # Entire value is a single reference - return resolved value

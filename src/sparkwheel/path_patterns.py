@@ -15,7 +15,7 @@ for easier maintenance, testing, and documentation.
 
 import re
 
-from .utils.constants import ID_REF_KEY, ID_SEP_KEY, MACRO_KEY
+from .utils.constants import ID_REF_KEY, MACRO_KEY
 
 __all__ = [
     "PathPatterns",
@@ -43,7 +43,7 @@ def is_yaml_file(filepath: str) -> bool:
         False
     """
     lower = filepath.lower()
-    return lower.endswith('.yaml') or lower.endswith('.yml')
+    return lower.endswith(".yaml") or lower.endswith(".yml")
 
 
 class PathPatterns:
@@ -56,10 +56,7 @@ class PathPatterns:
     # File path and config ID splitting
     # Example: "config.yaml::model::lr" -> captures "config.yaml"
     # Uses lookahead (?=...) to find extension without consuming :: separator
-    FILE_AND_ID = re.compile(
-        r"(.*\.(yaml|yml))(?=(?:::.*)|$)",
-        re.IGNORECASE
-    )
+    FILE_AND_ID = re.compile(r"(.*\.(yaml|yml))(?=(?:::.*)|$)", re.IGNORECASE)
     """Split combined file path and config ID.
 
     The pattern uses lookahead to find the file extension without consuming
@@ -80,9 +77,7 @@ class PathPatterns:
         - Absolute paths: "/etc/config.yaml::key" works
     """
 
-    RELATIVE_REFERENCE = re.compile(
-        rf"(?:{ID_REF_KEY}|{MACRO_KEY})(::)+"
-    )
+    RELATIVE_REFERENCE = re.compile(rf"(?:{ID_REF_KEY}|{MACRO_KEY})(::)+")
     """Match relative reference prefixes: @::, @::::, %::, etc.
 
     Used to find relative navigation patterns in config references.
@@ -103,9 +98,7 @@ class PathPatterns:
         - (::)+ -> one or more :: pairs (captured)
     """
 
-    ABSOLUTE_REFERENCE = re.compile(
-        rf"{ID_REF_KEY}(\w+(?:::\w+)*)"
-    )
+    ABSOLUTE_REFERENCE = re.compile(rf"{ID_REF_KEY}(\w+(?:::\w+)*)")
     r"""Match absolute reference patterns: @id::path::to::value
 
     Finds @ references in config values and expressions. Handles nested
@@ -153,10 +146,10 @@ class PathPatterns:
             return "", src  # Pure ID, no file path
 
         filepath = match.group(1)
-        remainder = src[match.end():]
+        remainder = src[match.end() :]
 
         # Strip leading :: from config ID part
-        config_id = remainder[2:] if remainder.startswith('::') else remainder
+        config_id = remainder[2:] if remainder.startswith("::") else remainder
 
         return filepath, config_id
 
@@ -199,8 +192,8 @@ class PathPatterns:
             >>> PathPatterns.find_absolute_references("normal text")
             []
         """
-        is_expr = text.startswith('$')
-        is_pure_ref = text.startswith('@')
+        is_expr = text.startswith("$")
+        is_pure_ref = text.startswith("@")
 
         if not (is_expr or is_pure_ref):
             return []
@@ -209,6 +202,7 @@ class PathPatterns:
 
 
 # Utility functions that delegate to PathPatterns
+
 
 def split_file_and_id(src: str) -> tuple[str, str]:
     """Convenience function wrapping PathPatterns.split_file_and_id()."""

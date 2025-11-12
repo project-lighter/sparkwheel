@@ -209,7 +209,7 @@ class Component(Item, Instantiable):
         Returns:
             A helpful suggestion string, or None if no good suggestions found.
         """
-        if not isinstance(target, str) or '.' not in target:
+        if not isinstance(target, str) or "." not in target:
             return None
 
         try:
@@ -218,7 +218,7 @@ class Component(Item, Instantiable):
             from .utils import damerau_levenshtein_distance
 
             # Split into module path and attribute name
-            parts = target.rsplit('.', 1)
+            parts = target.rsplit(".", 1)
             base_module, attr_name = parts[0], parts[1]
 
             # Try to import the base module
@@ -229,7 +229,7 @@ class Component(Item, Instantiable):
             # Find similar attribute names in the module
             similar = []
             for name in dir(base):
-                if name.startswith('_'):
+                if name.startswith("_"):
                     continue
                 distance = damerau_levenshtein_distance(name, attr_name)
                 if distance <= 2:  # Allow up to 2 character edits
@@ -337,7 +337,7 @@ class Expression(Item):
                 return eval(value[len(self.prefix) :], globals_, locals)
             except Exception as e:
                 raise EvaluationError(
-                    f"Failed to evaluate expression: '{value[len(self.prefix):]}'",
+                    f"Failed to evaluate expression: '{value[len(self.prefix) :]}'",
                     source_location=self.source_location,
                 ) from e
         warnings.warn(

@@ -135,6 +135,7 @@ class TestConfigBasics:
     def test_init_with_globals_callable(self):
         """Test Config init with globals containing callables."""
         from collections import Counter
+
         parser = Config({}, globals={"Counter": Counter})
         assert parser._globals["Counter"] is Counter
 
@@ -158,13 +159,7 @@ class TestConfigReferences:
 
     def test_complex_nested_reference(self):
         """Test complex nested reference resolution."""
-        config = {
-            "data": {
-                "values": [1, 2, 3],
-                "metadata": {"count": "$len(@data::values)"}
-            },
-            "ref": "@data::metadata::count"
-        }
+        config = {"data": {"values": [1, 2, 3], "metadata": {"count": "$len(@data::values)"}}, "ref": "@data::metadata::count"}
         parser = Config(config)
         parser._parse()
         result = parser.resolve("ref")
@@ -232,10 +227,7 @@ class TestExpressions:
 
     def test_expression_with_reference_to_component(self):
         """Test expression referencing an instantiated component."""
-        config = {
-            "mydict": {"_target_": "dict", "a": 1, "b": 2},
-            "value": "$@mydict['a']"
-        }
+        config = {"mydict": {"_target_": "dict", "a": 1, "b": 2}, "value": "$@mydict['a']"}
         parser = Config(config)
         parser._parse()
         result = parser.resolve("value")
@@ -293,10 +285,7 @@ class TestComponents:
     def test_disabled_component_in_dict(self):
         """Test disabled component doesn't appear in parent dict."""
         config = {
-            "components": {
-                "enabled": {"_target_": "dict", "a": 1},
-                "disabled": {"_target_": "dict", "_disabled_": True}
-            }
+            "components": {"enabled": {"_target_": "dict", "a": 1}, "disabled": {"_target_": "dict", "_disabled_": True}}
         }
         parser = Config(config)
         parser._parse()
@@ -408,19 +397,8 @@ class TestConfigMerging:
 
     def test_nested_merge_directive(self):
         """Test nested + directive with implicit propagation."""
-        base = {
-            "model": {
-                "lr": 0.001,
-                "hidden_size": 512,
-                "optimizer": {"type": "adam", "nested": {"a": 1}}
-            }
-        }
-        override = {
-            "model": {
-                "dropout": 0.1,
-                "optimizer": {"+nested": {"b": 2}, "~type": None}
-            }
-        }
+        base = {"model": {"lr": 0.001, "hidden_size": 512, "optimizer": {"type": "adam", "nested": {"a": 1}}}}
+        override = {"model": {"dropout": 0.1, "optimizer": {"+nested": {"b": 2}, "~type": None}}}
         result = apply_operators(base, override)
 
         assert result["model"]["lr"] == 0.001
@@ -488,10 +466,7 @@ class TestConfigMerging:
     def test_merge_config_from_cli(self):
         """Test merging a Config loaded with from_cli()."""
         base_config = Config.load({"model": {"lr": 0.01, "hidden_size": 256}})
-        cli_config = Config.from_cli(
-            {"trainer": {"max_epochs": 100}},
-            ["trainer::max_epochs=50"]
-        )
+        cli_config = Config.from_cli({"trainer": {"max_epochs": 100}}, ["trainer::max_epochs=50"])
 
         base_config.update(cli_config)
 
@@ -573,12 +548,14 @@ class TestConfigMerging:
     def test_merge_combined_directives(self):
         """Test combining +, ~, and normal updates with merge."""
         parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}, "c": 3})
-        parser.update({
-            "a": 10,
-            "+b": {"z": 3},
-            "~c": None,
-            "d": 4,
-        })
+        parser.update(
+            {
+                "a": 10,
+                "+b": {"z": 3},
+                "~c": None,
+                "d": 4,
+            }
+        )
         assert parser["a"] == 10
         assert parser["b"] == {"x": 1, "y": 2, "z": 3}
         assert "c" not in parser
@@ -684,30 +661,15 @@ class TestConfigMerging:
         When a nested key has ~, parent keys should automatically merge
         instead of replace, just like with + directive.
         """
-        base = {
-            "model": {
-                "dropout": 0.1,
-                "lr": 0.001,
-                "hidden_size": 512
-            }
-        }
+        base = {"model": {"dropout": 0.1, "lr": 0.001, "hidden_size": 512}}
 
         # Without explicit +, the delete directive should trigger implicit merge
-        override = {
-            "model": {
-                "~dropout": None
-            }
-        }
+        override = {"model": {"~dropout": None}}
 
         result = apply_operators(base, override)
 
         # Expected: model dict is merged (not replaced), dropout deleted, other keys preserved
-        assert result == {
-            "model": {
-                "lr": 0.001,
-                "hidden_size": 512
-            }
-        }
+        assert result == {"model": {"lr": 0.001, "hidden_size": 512}}
         # dropout should be deleted, lr and hidden_size should be preserved
 
     def test_merge_lists_appends(self):
@@ -823,17 +785,14 @@ class TestConfigAdvanced:
         parser = Config({})
         parser._parse()
         from sparkwheel import Item
+
         default = Item({"default": True}, id="default")
         result = parser.resolve("missing", default=default)
         assert result == {"default": True}
 
     def test_do_parse_nested(self):
         """Test _do_parse with nested structures."""
-        config = {
-            "comp": {"_target_": "dict", "a": 1},
-            "expr": "$1 + 1",
-            "plain": "value"
-        }
+        config = {"comp": {"_target_": "dict", "a": 1}, "expr": "$1 + 1", "plain": "value"}
         parser = Config(config)
         parser._parse()
         assert "comp" in parser._resolver._items

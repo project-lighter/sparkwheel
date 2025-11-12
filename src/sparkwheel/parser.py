@@ -97,8 +97,6 @@ class Parser:
         if Component.is_instantiable(config):
             items.append(Component(config=config, id=id, source_location=source_location))
         elif Expression.is_expression(config):
-            items.append(
-                Expression(config=config, id=id, globals=self._globals, source_location=source_location)
-            )
+            items.append(Expression(config=config, id=id, globals=self._globals, source_location=source_location))
         else:
             items.append(Item(config=config, id=id, source_location=source_location))

@@ -3,7 +3,18 @@
 import os
 import sys
 
-__all__ = ["enable_colors", "format_error", "format_suggestion", "format_code", "RED", "YELLOW", "GREEN", "BLUE", "GRAY", "RESET"]
+__all__ = [
+    "enable_colors",
+    "format_error",
+    "format_suggestion",
+    "format_code",
+    "RED",
+    "YELLOW",
+    "GREEN",
+    "BLUE",
+    "GRAY",
+    "RESET",
+]
 
 # ANSI color codes
 RED = "\033[31m"

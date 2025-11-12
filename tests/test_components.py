@@ -16,8 +16,8 @@ import pytest
 from sparkwheel import (
     Component,
     Expression,
-    Item,
     Instantiable,
+    Item,
     Resolver,
 )
 
@@ -92,6 +92,7 @@ class TestComponent:
     def test_resolve_module_name_callable(self):
         """Test resolve_module_name with callable target."""
         from collections import Counter
+
         config = {"_target_": Counter}
         component = Component(config, id="test")
         assert component.resolve_module_name() is Counter
@@ -173,11 +174,7 @@ class TestComponent:
 
     def test_instantiate_callable_mode(self):
         """Test instantiate with callable mode."""
-        config = {
-            "_target_": "collections.Counter",
-            "_mode_": "callable",
-            "iterable": [1, 2]
-        }
+        config = {"_target_": "collections.Counter", "_mode_": "callable", "iterable": [1, 2]}
         component = Component(config, id="test")
         result = component.instantiate()
         assert callable(result)
@@ -262,6 +259,7 @@ class TestExpression:
         expr = Expression("$from pathlib import Path", id="test")
         result = expr.evaluate()
         from pathlib import Path
+
         assert result is Path
 
     def test_evaluate_import(self):
@@ -269,6 +267,7 @@ class TestExpression:
         expr = Expression("$import os", id="test")
         result = expr.evaluate()
         import os as expected_os
+
         assert result is expected_os
 
     def test_evaluate_import_as(self):
@@ -280,6 +279,7 @@ class TestExpression:
     def test_evaluate_import_from_as(self):
         """Test evaluate with 'from ... import ... as' statement."""
         from collections import Counter
+
         expr = Expression("$from collections import Counter as C", id="test")
         result = expr.evaluate()
         assert result is Counter
@@ -293,6 +293,7 @@ class TestExpression:
     def test_evaluate_error_handling(self):
         """Test evaluate error handling."""
         from sparkwheel.utils.exceptions import EvaluationError
+
         expr = Expression("$undefined_variable", id="test")
         with pytest.raises(EvaluationError, match="Failed to evaluate"):
             expr.evaluate()
@@ -300,6 +301,7 @@ class TestExpression:
     def test_parse_import_string_from_import(self):
         """Test _parse_import_string with from import."""
         from collections import Counter
+
         expr = Expression("$from collections import Counter", id="test")
         result = expr._parse_import_string("from collections import Counter")
         assert result is Counter
@@ -310,6 +312,7 @@ class TestExpression:
         expr = Expression("$import json", id="test")
         result = expr._parse_import_string("import json")
         import json as expected_json
+
         assert result is expected_json
         assert "json" in expr.globals
 
@@ -321,9 +324,7 @@ class TestExpression:
 
     def test_parse_import_string_multiple_imports_warning(self):
         """Test _parse_import_string warns on multiple imports."""
-        expr = Expression(
-            "$from collections import Counter, defaultdict", id="test"
-        )
+        expr = Expression("$from collections import Counter, defaultdict", id="test")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             expr._parse_import_string("from collections import Counter, defaultdict")
@@ -349,21 +350,26 @@ class TestInstantiable:
     def test_is_disabled_not_implemented(self):
         """Test is_disabled must be implemented."""
         with pytest.raises(TypeError, match="abstract"):
+
             class TestInstantiableImpl(Instantiable):
                 def instantiate(self):
                     pass
+
             TestInstantiableImpl()
 
     def test_instantiate_not_implemented(self):
         """Test instantiate must be implemented."""
         with pytest.raises(TypeError, match="abstract"):
+
             class TestInstantiableImpl(Instantiable):
                 def is_disabled(self):
                     return False
+
             TestInstantiableImpl()
 
     def test_abstract_method_direct_call(self):
         """Test calling abstract methods directly raises NotImplementedError."""
+
         class Impl(Instantiable):
             def is_disabled(self):
                 return False
@@ -739,6 +745,7 @@ class TestResolver:
         resolver.add_item(Expression("$@imp", id="use_imp"))
         result = resolver._resolve_one_item("use_imp")
         import os as expected_os
+
         assert result is expected_os
 
     def test_resolve_one_item_cached(self):
@@ -774,7 +781,6 @@ class TestResolver:
         resolver._items["test"] = {"direct": "value"}
         result = resolver._resolve_one_item("test")
         assert result == {"direct": "value"}
-
 
 
 if __name__ == "__main__":

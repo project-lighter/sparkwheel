@@ -100,16 +100,12 @@ class Preprocessor:
         if isinstance(config, dict):
             for key in list(config.keys()):
                 sub_id = f"{id}{ID_SEP_KEY}{key}" if id else str(key)
-                config[key] = self._process_recursive(
-                    config[key], base_data, sub_id, macro_stack
-                )
+                config[key] = self._process_recursive(config[key], base_data, sub_id, macro_stack)
 
         elif isinstance(config, list):
             for idx in range(len(config)):
                 sub_id = f"{id}{ID_SEP_KEY}{idx}" if id else str(idx)
-                config[idx] = self._process_recursive(
-                    config[idx], base_data, sub_id, macro_stack
-                )
+                config[idx] = self._process_recursive(config[idx], base_data, sub_id, macro_stack)
 
         # Process string values
         if isinstance(config, str):
@@ -122,12 +118,7 @@ class Preprocessor:
 
         return config
 
-    def _expand_macro(
-        self,
-        macro_ref: str,
-        base_data: dict,
-        macro_stack: set[str]
-    ) -> Any:
+    def _expand_macro(self, macro_ref: str, base_data: dict, macro_stack: set[str]) -> Any:
         """Expand a single macro reference by loading external file.
 
         Args:
@@ -143,14 +134,11 @@ class Preprocessor:
         """
         # Circular reference check
         if macro_ref in macro_stack:
-            chain = ' -> '.join(sorted(macro_stack))
-            raise ValueError(
-                f"Circular macro reference detected: '{macro_ref}'\n"
-                f"Macro chain: {chain} -> {macro_ref}"
-            )
+            chain = " -> ".join(sorted(macro_stack))
+            raise ValueError(f"Circular macro reference detected: '{macro_ref}'\nMacro chain: {chain} -> {macro_ref}")
 
         # Parse: "%file.yaml::key" → ("file.yaml", "key")
-        path, ids = split_file_and_id(macro_ref[len(MACRO_KEY):])
+        path, ids = split_file_and_id(macro_ref[len(MACRO_KEY) :])
 
         macro_stack.add(macro_ref)
 
@@ -198,9 +186,6 @@ class Preprocessor:
             elif isinstance(current, list):
                 current = current[int(key)]
             else:
-                raise TypeError(
-                    f"Cannot index {type(current).__name__} with key '{key}' "
-                    f"at path '{id}'"
-                )
+                raise TypeError(f"Cannot index {type(current).__name__} with key '{key}' at path '{id}'")
 
         return current

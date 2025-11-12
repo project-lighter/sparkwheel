@@ -87,10 +87,7 @@ def parse_override(arg: str) -> tuple[str, Any]:
             ('system::model::optimizer::lr', 0.001)
     """
     if "=" not in arg:
-        raise ValueError(
-            f"Invalid override format: '{arg}'. "
-            "Expected format: 'key::path=value'"
-        )
+        raise ValueError(f"Invalid override format: '{arg}'. Expected format: 'key::path=value'")
 
     # Split on first = only (value might contain =)
     key, value_str = arg.split("=", 1)

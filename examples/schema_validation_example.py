@@ -10,7 +10,6 @@ from typing import Optional
 
 from sparkwheel import Config, ValidationError
 
-
 # =============================================================================
 # Example 1: Basic Schema Validation
 # =============================================================================

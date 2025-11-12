@@ -358,10 +358,7 @@ class Config:
 
     def _uses_nested_paths(self, source: dict) -> bool:
         """Check if dict uses :: path syntax."""
-        return any(
-            ID_SEP_KEY in str(k).lstrip(MERGE_KEY).lstrip(DELETE_KEY)
-            for k in source.keys()
-        )
+        return any(ID_SEP_KEY in str(k).lstrip(MERGE_KEY).lstrip(DELETE_KEY) for k in source.keys())
 
     def _apply_path_updates(self, source: dict) -> None:
         """Apply nested path updates (e.g., model::lr=value, ~old::param=null)."""
@@ -467,6 +464,7 @@ class Config:
             if default is not None:
                 # If default is an Item, return its config
                 from .items import Item
+
                 if isinstance(default, Item):
                     return default.get_config()
                 return default
@@ -495,7 +493,6 @@ class Config:
         self._resolver.add_items(items)
 
         self._is_parsed = True
-
 
     def _get_by_id(self, id: str) -> Any:
         """Get config value by ID path.

@@ -36,7 +36,7 @@ Example:
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Optional, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 from .utils.exceptions import BaseError, SourceLocation
 
@@ -80,7 +80,7 @@ class ValidationError(BaseError):
         if field_path:
             full_message = f"Validation error at '{field_path}': {message}"
         if expected_type is not None:
-            type_name = getattr(expected_type, '__name__', str(expected_type))
+            type_name = getattr(expected_type, "__name__", str(expected_type))
             full_message += f"\n  Expected type: {type_name}"
         if actual_value is not None:
             actual_type = type(actual_value).__name__
@@ -150,8 +150,7 @@ def validate(
         # Check if field is missing
         if field_name not in config:
             # Field has default or default_factory -> optional
-            if field_info.default is not dataclasses.MISSING or \
-               field_info.default_factory is not dataclasses.MISSING:  # type: ignore
+            if field_info.default is not dataclasses.MISSING or field_info.default_factory is not dataclasses.MISSING:  # type: ignore
                 continue
             # No default -> required
             source_loc = _get_source_location(metadata, field_path) if metadata else None
@@ -233,7 +232,7 @@ def _validate_field(
                         continue  # Try next type
                 # None worked
                 raise ValidationError(
-                    f"Value doesn't match any type in Union",
+                    "Value doesn't match any type in Union",
                     field_path=field_path,
                     expected_type=expected_type,
                     actual_value=value,
@@ -248,7 +247,7 @@ def _validate_field(
                 except ValidationError:
                     continue
             raise ValidationError(
-                f"Value doesn't match any type in Union",
+                "Value doesn't match any type in Union",
                 field_path=field_path,
                 expected_type=expected_type,
                 actual_value=value,
@@ -292,7 +291,7 @@ def _validate_field(
                 # Validate key type
                 if not isinstance(k, key_type):
                     raise ValidationError(
-                        f"Dict key has wrong type",
+                        "Dict key has wrong type",
                         field_path=f"{field_path}[{k!r}]",
                         expected_type=key_type,
                         actual_value=k,

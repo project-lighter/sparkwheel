@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from .items import Component, Expression, Item
-from .path_utils import normalize_id, scan_references, replace_references
+from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
 from .utils.constants import ID_REF_KEY, ID_SEP_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
@@ -274,9 +274,7 @@ class Resolver:
         if isinstance(item, Component):
             self._resolved[id] = item.instantiate() if instantiate else item
         elif isinstance(item, Expression):
-            self._resolved[id] = (
-                item.evaluate(globals={f"{self._vars}": self._resolved}) if eval_expr else item
-            )
+            self._resolved[id] = item.evaluate(globals={f"{self._vars}": self._resolved}) if eval_expr else item
         else:
             self._resolved[id] = new_config
 
@@ -356,7 +354,7 @@ class Resolver:
         except KeyError as e:
             # Extract reference ID from error message
             # The error message format is: "Reference '@ref_id' not found in resolved references"
-            ref_id = str(e).split("'")[1].lstrip('@')
+            ref_id = str(e).split("'")[1].lstrip("@")
             msg = f"can not find expected ID '{ref_id}' in the references."
             if not cls.allow_missing_reference:
                 raise KeyError(msg) from e

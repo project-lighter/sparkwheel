@@ -15,7 +15,6 @@ from functools import partial
 
 import pytest
 
-from sparkwheel.utils.exceptions import InstantiationError
 from sparkwheel.utils import (
     CheckKeyDuplicatesYamlLoader,
     check_key_duplicates,
@@ -28,6 +27,7 @@ from sparkwheel.utils import (
     optional_import,
 )
 from sparkwheel.utils.enums import CompInitMode, StrEnum
+from sparkwheel.utils.exceptions import InstantiationError
 from sparkwheel.utils.module import OptionalImportError
 
 
@@ -64,15 +64,14 @@ class TestMiscUtils:
 
     def test_first_generator(self):
         """Test first works with generator."""
+
         def gen():
             yield 1
             yield 2
 
         assert first(gen()) == 1
 
-    @pytest.mark.parametrize(
-        "value", [[1, 2, 3], (1, 2, 3), {1, 2, 3}, {"a": 1}, range(5)]
-    )
+    @pytest.mark.parametrize("value", [[1, 2, 3], (1, 2, 3), {1, 2, 3}, {"a": 1}, range(5)])
     def test_issequenceiterable_true(self, value):
         """Test issequenceiterable with iterable sequences."""
         assert issequenceiterable(value) is True
@@ -84,6 +83,7 @@ class TestMiscUtils:
 
     def test_issequenceiterable_exception_handling(self):
         """Test issequenceiterable handles exceptions from ndim."""
+
         class BadNdim:
             @property
             def ndim(self):
@@ -279,6 +279,7 @@ class TestModuleUtils:
         module, success = optional_import("os")
         assert success is True
         import os as expected_os
+
         assert module is expected_os
 
     def test_optional_import_with_name(self):

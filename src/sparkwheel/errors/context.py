@@ -128,7 +128,7 @@ def format_resolution_chain(
         if success:
             if reference:
                 status = "✓"
-                lines.append(f"  {i}. {id_str} = \"{reference}\" {status}")
+                lines.append(f'  {i}. {id_str} = "{reference}" {status}')
             else:
                 lines.append(f"  {i}. {id_str} ✓")
         else:
