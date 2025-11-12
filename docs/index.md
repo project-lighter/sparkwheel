@@ -67,12 +67,11 @@ model:
 ```
 
 ```python title="main.py"
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser()
-parser.read_config("config.yaml")
+config = Config.load("config.yaml")
 
-model = parser.get_parsed_content("model")
+model = config.resolve("model")
 ```
 
 ## Next Steps

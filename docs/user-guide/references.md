@@ -4,7 +4,7 @@ References allow you to link configuration values together using the `@` symbol,
 
 ## Basic References
 
-Use `@` followed by the key path with `#` as separator:
+Use `@` followed by the key path with `::` as separator:
 
 ```yaml
 # config.yaml
@@ -29,9 +29,6 @@ Use `::` as separator for nested keys:
 ```yaml
 value: "@section::subsection::key"
 ```
-
-!!! note "Backward Compatibility"
-    The `#` separator is also supported for backward compatibility, but `::` is the preferred separator. Both `@section::key` and `@section#key` will work, but they're internally normalized to use `::`.
 
 ### List References
 
@@ -121,7 +118,7 @@ settings:
 
 ## External File References (Macros)
 
-Use `%` to reference values from other files:
+Use `%` to reference **raw YAML values** from other files:
 
 ```yaml
 # base.yaml
@@ -134,6 +131,10 @@ training:
   lr: "%base.yaml::defaults::learning_rate"
   batch: "%base.yaml::defaults::batch_size"
 ```
+
+**Key Distinction:**
+- `@reference` - Gets the **resolved/instantiated object** from the current config
+- `%file.yaml::key` - Gets the **raw YAML definition** from another file (not instantiated)
 
 See [Advanced Features](advanced.md) for more on macros.
 

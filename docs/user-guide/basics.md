@@ -22,21 +22,10 @@ YAML provides excellent readability and native support for comments, making it i
 ### Basic Loading
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
-```
-
-### Loading from String
-
-```python
-yaml_string = """
-name: Test
-value: 42
-"""
-
-config = parser.read_config(yaml_string)
+# Load from file
+config = Config.load("config.yaml")
 ```
 
 ### Loading from Dictionary
@@ -47,32 +36,110 @@ config_dict = {
     "value": 42
 }
 
-parser = ConfigParser(config_dict)
+# Load from dict
+config = Config.load(config_dict)
+```
+
+### Loading Multiple Files
+
+```python
+# Load and merge multiple config files
+config = Config.load(["base.yaml", "override.yaml"])
 ```
 
 ## Accessing Configuration Values
 
-### Dictionary-style Access
+Sparkwheel provides two equivalent syntaxes for accessing nested configuration values:
+
+### Two Ways to Access Nested Values
 
 ```python
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+config = Config.load("config.yaml")
 
-# Direct access
+# Method 1: Standard nested dictionary access
 name = config["name"]
 debug = config["settings"]["debug"]
+lr = config["model"]["optimizer"]["lr"]
+
+# Method 2: Path notation with :: separator
+debug = config["settings::debug"]
+lr = config["model::optimizer::lr"]
+
+# Both methods work identically!
+assert config["settings"]["debug"] == config["settings::debug"]
 ```
 
-### Using get_parsed_content
+**When to use each:**
 
-For nested keys, use the `#` separator:
+- **Nested access** (`config["a"]["b"]`) - Familiar Python syntax, works like any dict
+- **Path notation** (`config["a::b"]`) - More concise for deeply nested values, easier to pass as strings
+
+### Using get() and resolve()
+
+The same two syntaxes work with `get()` and `resolve()`:
 
 ```python
-# Get nested values
-debug_mode = parser.get_parsed_content("settings#debug")
+# Method 1: Nested access
+raw_value = config.get("model")["optimizer"]["lr"]
 
-# Get with default value
-timeout = parser.get_parsed_content("settings#timeout", default=60)
+# Method 2: Path notation (more convenient)
+raw_value = config.get("model::optimizer::lr")
+
+# Both work with resolve() too
+debug_mode = config.resolve("settings::debug")
+debug_mode = config.resolve("settings")["debug"]  # Also works
+
+# Resolve entire config
+all_config = config.resolve()
+
+# Resolve specific section
+training_config = config.resolve("training")
+```
+
+**Key difference:**
+- `get()` returns raw values (references like `"@model::lr"` are not resolved)
+- `resolve()` resolves references, evaluates expressions, and instantiates objects
+
+## Choosing Between Syntaxes
+
+Both syntaxes have their place:
+
+### Use Path Notation (`::`) When:
+
+```python
+# 1. Passing paths as function arguments
+def get_param(config, path: str):
+    return config.get(path)
+
+lr = get_param(config, "model::optimizer::lr")
+
+# 2. Working with very deep nesting (more readable)
+value = config["a::b::c::d::e"]
+
+# 3. Setting values programmatically
+config.set("model::optimizer::lr", 0.001)
+
+# 4. Matching reference syntax in YAML
+# YAML: lr: "@model::optimizer::base_lr"
+base_lr = config.get("model::optimizer::base_lr")
+```
+
+### Use Standard Dict Access When:
+
+```python
+# 1. You want to work with intermediate sections
+model_config = config["model"]
+model_config["dropout"] = 0.1
+model_config["lr"] = 0.001
+
+# 2. Iterating over config sections
+for key in config["training"].keys():
+    print(key, config["training"][key])
+
+# 3. It feels more natural for your use case
+settings = config["app"]["settings"]
+if settings["debug"]:
+    print("Debug mode enabled")
 ```
 
 ## Configuration Structure
@@ -96,11 +163,16 @@ project:
     logging: true
 ```
 
-Access nested values:
+Access nested values with either syntax:
 
 ```python
-db_host = parser.get_parsed_content("project#database#host")
-username = parser.get_parsed_content("project#database#credentials#username")
+# Path notation (concise)
+db_host = config.resolve("project::database::host")
+username = config.resolve("project::database::credentials::username")
+
+# Standard dict access (also works)
+db_host = config.resolve("project")["database"]["host"]
+username = config["project"]["database"]["credentials"]["username"]
 ```
 
 ### Lists and Arrays
@@ -117,11 +189,16 @@ matrix:
   - [7, 8, 9]
 ```
 
-Access list elements:
+Access list elements with either syntax:
 
 ```python
-first_color = parser.get_parsed_content("colors#0")  # "red"
-matrix_row = parser.get_parsed_content("matrix#1")  # [4, 5, 6]
+# Path notation
+first_color = config.resolve("colors::0")  # "red"
+matrix_row = config.resolve("matrix::1")  # [4, 5, 6]
+
+# Standard list access
+first_color = config["colors"][0]  # "red"
+matrix_row = config["matrix"][1]  # [4, 5, 6]
 ```
 
 ## Configuration Sections
@@ -160,22 +237,58 @@ training:
 
 ## Configuration Validation
 
-While Sparkwheel doesn't enforce schemas by default, you can validate after loading:
+### Schema Validation with Dataclasses
+
+Sparkwheel supports automatic validation using Python dataclasses. This is the recommended approach for production code:
 
 ```python
-from sparkwheel import ConfigParser
+from dataclasses import dataclass
+from sparkwheel import Config
 
-parser = ConfigParser()
-config = parser.read_config("config.yaml")
+@dataclass
+class AppConfig:
+    name: str
+    version: str
+    port: int
+    debug: bool = False
 
-# Manual validation
+# Validate automatically on load
+config = Config.load("config.yaml", schema=AppConfig)
+
+# Or validate explicitly
+config = Config.load("config.yaml")
+config.validate(AppConfig)
+```
+
+Schema validation provides:
+- **Type checking**: Ensures values have the correct types
+- **Required fields**: Catches missing configuration
+- **Clear errors**: Points directly to the problem with helpful messages
+
+See the [Schema Validation Guide](schema-validation.md) for complete details.
+
+### Manual Validation
+
+You can also validate manually:
+
+```python
+from sparkwheel import Config
+
+# Load config
+config = Config.load("config.yaml")
+
+# Validate required keys
 required_keys = ["name", "version", "settings"]
 for key in required_keys:
     if key not in config:
         raise ValueError(f"Missing required key: {key}")
 
-# Type checking
-assert isinstance(config["version"], (int, float)), "Version must be numeric"
+# Validate by attempting resolution
+try:
+    resolved = config.resolve()
+    print("Config resolved successfully!")
+except Exception as e:
+    print(f"Config validation failed: {e}")
 ```
 
 ## Best Practices
@@ -242,31 +355,37 @@ database:
 
 ## Configuration Inheritance
 
-Load multiple config files and merge them:
+Load and merge multiple config files:
 
 ```python
-from sparkwheel import ConfigParser
+from sparkwheel import Config
 
-# Load base config
-parser = ConfigParser()
-parser.read_config("base_config.yaml")
+# Method 1: Load multiple files at once
+config = Config.load(["base_config.yaml", "prod_config.yaml"])
 
-# Update with environment-specific config
-parser.read_config("prod_config.yaml")
+# Method 2: Load then merge
+config = Config.load("base_config.yaml")
+config.update("prod_config.yaml")
+
+# Method 3: Merge Config instances
+base = Config.load("base.yaml")
+cli = Config.from_cli("override.yaml", ["model::lr=0.001"])
+base.merge(cli)  # Merge one Config into another
 
 # Later configs override earlier ones
-config = parser.get()
+resolved = config.resolve()
 ```
+
+See [Merging & Deleting](operators.md) for details on merge (`+`) and delete (`~`) operators and advanced patterns.
 
 ## Special Keys
 
 Sparkwheel reserves certain keys with special meaning:
 
 - `_target_`: Specifies a class to instantiate
-- `_args_`: Positional arguments for instantiation
 - `_disabled_`: Skip instantiation if true
 - `_requires_`: Dependencies that must be resolved first
-- `_desc_`: Documentation string
+- `_mode_`: Instantiation mode (default, callable, debug)
 
 These are covered in detail in [Instantiation Guide](instantiation.md).
 

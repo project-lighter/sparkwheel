@@ -59,17 +59,24 @@ plugins:
 
 nav:
   - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
   - User Guide:
       - Configuration Basics: user-guide/basics.md
       - References: user-guide/references.md
       - Expressions: user-guide/expressions.md
       - Instantiation: user-guide/instantiation.md
+      - Merging & Deleting: user-guide/operators.md
+      - Schema Validation: user-guide/schema-validation.md
+      - CLI Support: user-guide/cli.md
       - Advanced Features: user-guide/advanced.md
   - Examples:
       - Simple Configuration: examples/simple.md
       - Deep Learning Setup: examples/deep-learning.md
       - Custom Classes: examples/custom-classes.md
   - API Reference: reference/
+  - Contributing: contributing.md
 
 markdown_extensions:
   - pymdownx.highlight:
