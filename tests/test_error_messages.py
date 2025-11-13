@@ -501,6 +501,7 @@ class TestColorFormatting:
         # Clear environment variables that would override
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
         monkeypatch.delenv("CI", raising=False)
         monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         monkeypatch.delenv("GITLAB_CI", raising=False)
@@ -526,6 +527,7 @@ class TestColorFormatting:
         # Clear environment variables
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
         monkeypatch.delenv("CI", raising=False)
         monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
         monkeypatch.delenv("GITLAB_CI", raising=False)
