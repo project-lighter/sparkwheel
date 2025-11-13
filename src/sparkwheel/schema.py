@@ -34,11 +34,33 @@ Example:
 """
 
 import dataclasses
+import types
 from typing import Any, Union, get_args, get_origin
 
 from .utils.exceptions import BaseError, SourceLocation
 
 __all__ = ["validate", "validator", "ValidationError"]
+
+
+def _is_union_type(origin) -> bool:
+    """Check if origin is a Union type (handles both typing.Union and types.UnionType)."""
+    if origin is Union:
+        return True
+    # Python 3.10+ uses types.UnionType for X | Y syntax
+    if hasattr(types, "UnionType") and origin is types.UnionType:
+        return True
+    return False
+
+
+def _format_union_type(types_tuple: tuple) -> str:
+    """Format a tuple of types as Union[...] for error messages."""
+    type_names = []
+    for t in types_tuple:
+        if hasattr(t, "__name__"):
+            type_names.append(t.__name__)
+        else:
+            type_names.append(str(t))
+    return f"Union[{', '.join(type_names)}]"
 
 
 def validator(func):
@@ -439,7 +461,7 @@ def _validate_field(
     args = get_args(expected_type)
 
     # Handle Optional[T] (which is Union[T, None])
-    if origin is Union:
+    if _is_union_type(origin):
         # Check for discriminated union first
         has_discriminator, discriminator_field = _find_discriminator(args)
         if has_discriminator and discriminator_field:
@@ -453,10 +475,9 @@ def _validate_field(
             # Remove None from the union and validate against remaining types
             non_none_types = [t for t in args if t is not type(None)]
             if len(non_none_types) == 1:
-                # Simple Optional[T] case
-                expected_type = non_none_types[0]
-                origin = get_origin(expected_type)
-                args = get_args(expected_type)
+                # Simple Optional[T] case - recursively validate with the single type
+                _validate_field(value, non_none_types[0], field_path, metadata)
+                return
             else:
                 # Union with multiple non-None types - try each and collect errors
                 errors = []
@@ -473,10 +494,10 @@ def _validate_field(
                         errors.append(f"  Tried {type_name}: {error_msg}")
 
                 # All failed - build comprehensive error message
-                union_types = ", ".join(getattr(t, "__name__", str(t)) for t in non_none_types)
+                union_str = _format_union_type(non_none_types)
                 error_details = "\n".join(errors)
                 raise ValidationError(
-                    f"Value doesn't match any type in Union[{union_types}]\n{error_details}",
+                    f"Value doesn't match any type in {union_str}\n{error_details}",
                     field_path=field_path,
                     expected_type=expected_type,
                     actual_value=value,
@@ -498,10 +519,10 @@ def _validate_field(
                     errors.append(f"  Tried {type_name}: {error_msg}")
 
             # All failed - build comprehensive error message
-            union_types = ", ".join(getattr(t, "__name__", str(t)) for t in args)
+            union_str = _format_union_type(args)
             error_details = "\n".join(errors)
             raise ValidationError(
-                f"Value doesn't match any type in Union[{union_types}]\n{error_details}",
+                f"Value doesn't match any type in {union_str}\n{error_details}",
                 field_path=field_path,
                 expected_type=expected_type,
                 actual_value=value,
