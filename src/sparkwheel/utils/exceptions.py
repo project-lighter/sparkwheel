@@ -187,10 +187,10 @@ class ConfigKeyError(BaseError):
 class ConfigMergeError(BaseError):
     """Raised when configuration merge operation fails.
 
-    This is typically raised when using merge directives (+ or ~) incorrectly:
-    - Using + on a non-existent key
-    - Using + with type mismatch (e.g., trying to merge dict into list)
+    This is typically raised when using operators (= or ~) incorrectly:
     - Using ~ on a non-existent key
+    - Using ~ with invalid value (must be null, empty, or list)
+    - Type mismatch during merge (e.g., trying to merge dict into list)
     """
 
     pass

@@ -15,7 +15,7 @@ for easier maintenance, testing, and documentation.
 
 import re
 
-from .utils.constants import ID_REF_KEY, MACRO_KEY
+from .utils.constants import RAW_REF_KEY, RESOLVED_REF_KEY
 
 __all__ = [
     "PathPatterns",
@@ -77,17 +77,17 @@ class PathPatterns:
         - Absolute paths: "/etc/config.yaml::key" works
     """
 
-    RELATIVE_REFERENCE = re.compile(rf"(?:{ID_REF_KEY}|{MACRO_KEY})(::)+")
+    RELATIVE_REFERENCE = re.compile(rf"(?:{RESOLVED_REF_KEY}|{RAW_REF_KEY})(::)+")
     """Match relative reference prefixes: @::, @::::, %::, etc.
 
     Used to find relative navigation patterns in config references.
     The number of :: pairs indicates how many levels to go up.
 
     Matches:
-        - "@::" -> one level up (parent)
-        - "@::::" -> two levels up (grandparent)
-        - "%::" -> macro one level up
-        - "%::::" -> macro two levels up
+        - "@::" -> resolved reference one level up (parent)
+        - "@::::" -> resolved reference two levels up (grandparent)
+        - "%::" -> raw reference one level up
+        - "%::::" -> raw reference two levels up
 
     Examples in context:
         - In "model::optimizer", "@::lr" means "@model::lr"
@@ -98,10 +98,10 @@ class PathPatterns:
         - (::)+ -> one or more :: pairs (captured)
     """
 
-    ABSOLUTE_REFERENCE = re.compile(rf"{ID_REF_KEY}(\w+(?:::\w+)*)")
-    r"""Match absolute reference patterns: @id::path::to::value
+    ABSOLUTE_REFERENCE = re.compile(rf"{RESOLVED_REF_KEY}(\w+(?:::\w+)*)")
+    r"""Match absolute resolved reference patterns: @id::path::to::value
 
-    Finds @ references in config values and expressions. Handles nested
+    Finds @ resolved references in config values and expressions. Handles nested
     paths with :: separators and list indices (numbers).
 
     Matches:

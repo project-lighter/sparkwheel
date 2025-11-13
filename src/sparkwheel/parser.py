@@ -1,7 +1,5 @@
 """Parse configuration tree and create Items."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from .items import Component, Expression, Item

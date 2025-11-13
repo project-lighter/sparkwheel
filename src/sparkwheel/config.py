@@ -1,31 +1,29 @@
 """Main configuration management API."""
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from .loader import Loader
 from .metadata import MetadataRegistry
-from .operators import _validate_delete_operator, apply_operators
+from .operators import _validate_delete_operator, apply_operators, validate_operators
 from .parser import Parser
 from .path_utils import split_id
 from .preprocessor import Preprocessor
 from .resolver import Resolver
 from .utils import PathLike, ensure_tuple, look_up_option, optional_import
-from .utils.constants import DELETE_KEY, ID_SEP_KEY, MERGE_KEY
+from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
 from .utils.exceptions import ConfigKeyError
 
 __all__ = ["Config"]
 
 
 class Config:
-    """Configuration management with references, expressions, and instantiation.
+    """Configuration management with resolved references, raw references, expressions, and instantiation.
 
     Main entry point for loading, managing, and resolving configurations.
-    Supports YAML files with references (@), expressions ($), and dynamic
-    instantiation (_target_).
+    Supports YAML files with resolved references (@), raw references (%), expressions ($),
+    and dynamic instantiation (_target_).
 
     Example:
         ```python
@@ -101,10 +99,10 @@ class Config:
             New Config instance
 
         Merge Behavior:
-            Files are merged in order. Use operators to control merging:
-            - +key: value  - Merge operator: merge dict/list with existing
-            - ~key: null   - Delete operator: delete key
-            - key: value   - Replace (default)
+            Files are merged in order (composition-by-default). Use operators to control merging:
+            - key: value   - Compose (default): merge dict or extend list
+            - =key: value  - Replace operator: completely replace value
+            - ~key: null   - Remove operator: delete key (idempotent)
 
         Examples:
             >>> # Single file
@@ -140,6 +138,8 @@ class Config:
         file_list = ensure_tuple(source)
         for filepath in file_list:
             loaded_data, loaded_metadata = config._loader.load_file(filepath)
+            # Validate operators before applying
+            validate_operators(loaded_data)
             # Merge data and metadata
             config._data = apply_operators(config._data, loaded_data)
             config._metadata.merge(loaded_metadata)
@@ -235,14 +235,14 @@ class Config:
             default: Default value if id not found
 
         Returns:
-            Raw configuration value (references not resolved)
+            Raw configuration value (resolved references not resolved, raw references not expanded)
 
         Example:
             >>> config = Config.load({"model": {"lr": 0.001, "ref": "@model::lr"}})
             >>> config.get("model::lr")
             0.001
             >>> config.get("model::ref")
-            "@model::lr"  # Unresolved reference
+            "@model::lr"  # Unresolved resolved reference
         """
         try:
             return self._get_by_id(id)
@@ -315,22 +315,22 @@ class Config:
         """Update configuration with changes from another source.
 
         Applies changes using operators for fine-grained control.
-        Supports nested paths (::) and merge/delete operators (+/~).
+        Supports nested paths (::) and compose/replace/delete operators.
 
         Args:
             source: File path, dict, or Config instance to update from
 
         Operators:
-            - +key: value  - Merge operator: merge into existing key
-            - ~key: null   - Delete operator: delete key
-            - key: value   - Replace (default)
+            - key: value   - Compose (default): merge dict or extend list
+            - =key: value  - Replace operator: completely replace value
+            - ~key: null   - Remove operator: delete key (idempotent)
 
         Examples:
             >>> # Update from file
             >>> config.update("override.yaml")
 
-            >>> # Update from dict
-            >>> config.update({"+model": {"dropout": 0.1}})
+            >>> # Update from dict (merges by default)
+            >>> config.update({"model": {"dropout": 0.1}})
 
             >>> # Update from another Config instance
             >>> config1 = Config.load("base.yaml")
@@ -358,34 +358,38 @@ class Config:
 
     def _uses_nested_paths(self, source: dict) -> bool:
         """Check if dict uses :: path syntax."""
-        return any(ID_SEP_KEY in str(k).lstrip(MERGE_KEY).lstrip(DELETE_KEY) for k in source.keys())
+        return any(ID_SEP_KEY in str(k).lstrip(REPLACE_KEY).lstrip(REMOVE_KEY) for k in source.keys())
 
     def _apply_path_updates(self, source: dict) -> None:
-        """Apply nested path updates (e.g., model::lr=value, ~old::param=null)."""
+        """Apply nested path updates (e.g., model::lr=value, =model=replace, ~old::param=null)."""
         for key, value in source.items():
             if not isinstance(key, str):
                 self.set(str(key), value)
                 continue
 
-            if key.startswith(MERGE_KEY):
-                # Merge operator: +key
+            if key.startswith(REPLACE_KEY):
+                # Replace operator: =key (explicit override)
                 actual_key = key[1:]
-                if actual_key in self and isinstance(self[actual_key], dict) and isinstance(value, dict):
-                    merged = apply_operators(self[actual_key], value)
-                    self.set(actual_key, merged)
-                else:
-                    self.set(actual_key, value)
+                self.set(actual_key, value)
 
-            elif key.startswith(DELETE_KEY):
-                # Delete operator: ~key
+            elif key.startswith(REMOVE_KEY):
+                # Delete operator: ~key (idempotent)
                 actual_key = key[1:]
                 _validate_delete_operator(actual_key, value)
 
                 if actual_key in self:
                     self._delete_nested_key(actual_key)
+
             else:
-                # Normal set (handles nested paths with ::)
-                self.set(key, value)
+                # Default: compose (merge dict or extend list)
+                if key in self and isinstance(self[key], dict) and isinstance(value, dict):
+                    merged = apply_operators(self[key], value)
+                    self.set(key, merged)
+                elif key in self and isinstance(self[key], list) and isinstance(value, list):
+                    self.set(key, self[key] + value)
+                else:
+                    # Normal set (handles nested paths with ::)
+                    self.set(key, value)
 
     def _delete_nested_key(self, key: str) -> None:
         """Delete a key, supporting nested paths with ::."""
@@ -403,12 +407,14 @@ class Config:
 
     def _apply_structural_update(self, source: dict) -> None:
         """Apply structural update with operators."""
+        validate_operators(source)
         self._data = apply_operators(self._data, source)
         self._invalidate_resolution()
 
     def _update_from_file(self, source: PathLike) -> None:
         """Load and update from a file."""
         new_data, new_metadata = self._loader.load_file(source)
+        validate_operators(new_data)
         self._data = apply_operators(self._data, new_data)
         self._metadata.merge(new_metadata)
         self._invalidate_resolution()
@@ -421,10 +427,12 @@ class Config:
         lazy: bool = True,
         default: Any = None,
     ) -> Any:
-        """Resolve references and return parsed config.
+        """Resolve resolved references (@) and return parsed config.
 
-        Automatically parses config on first call. Resolves @ references,
-        evaluates $ expressions, and instantiates _target_ components.
+        Automatically parses config on first call. Resolves @ resolved references (follows
+        them to get instantiated/evaluated values), evaluates $ expressions, and
+        instantiates _target_ components. Note: % raw references are expanded during
+        preprocessing (before this stage).
 
         Args:
             id: Config path to resolve (empty string for entire config)
@@ -482,7 +490,7 @@ class Config:
         if reset:
             self._resolver.reset()
 
-        # Stage 1: Preprocess (% macros, @:: relative IDs)
+        # Stage 1: Preprocess (% raw references, @:: relative resolved IDs)
         self._data = self._preprocessor.process(self._data, self._data, id="")
 
         # Stage 2: Parse config tree to create Items

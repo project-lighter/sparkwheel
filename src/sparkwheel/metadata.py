@@ -1,7 +1,5 @@
 """Source location metadata tracking."""
 
-from __future__ import annotations
-
 from sparkwheel.utils.exceptions import SourceLocation
 
 __all__ = ["MetadataRegistry"]

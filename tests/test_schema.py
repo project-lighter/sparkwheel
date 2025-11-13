@@ -12,7 +12,7 @@ This module tests the schema validation feature, including:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal
 
 import pytest
 
@@ -151,7 +151,7 @@ class TestOptionalTypes:
 
         @dataclass
         class OptConfig:
-            maybe: Optional[int]
+            maybe: int | None
 
         validate({"maybe": 42}, OptConfig)
 
@@ -160,7 +160,7 @@ class TestOptionalTypes:
 
         @dataclass
         class OptConfig:
-            maybe: Optional[int]
+            maybe: int | None
 
         validate({"maybe": None}, OptConfig)
 
@@ -169,7 +169,7 @@ class TestOptionalTypes:
 
         @dataclass
         class OptConfig:
-            maybe: Optional[int] = None
+            maybe: int | None = None
 
         validate({}, OptConfig)  # Should not raise
 
@@ -178,7 +178,7 @@ class TestOptionalTypes:
 
         @dataclass
         class OptConfig:
-            maybe: Optional[int]
+            maybe: int | None
 
         with pytest.raises(ValidationError):
             validate({"maybe": "not int"}, OptConfig)
@@ -399,7 +399,7 @@ class TestComplexSchemas:
 
         @dataclass
         class OuterConfig:
-            maybe_inner: Optional[OptionalInner] = None
+            maybe_inner: OptionalInner | None = None
 
         validate({}, OuterConfig)
         validate({"maybe_inner": None}, OuterConfig)
@@ -650,6 +650,453 @@ class TestRealWorldSchemas:
         }
 
         validate(config, AppConfig)
+
+
+class TestImprovedUnionErrors:
+    """Test improved error messages for Union types."""
+
+    def test_union_error_shows_all_attempts(self):
+        """Test that Union errors show why each type failed."""
+
+        @dataclass
+        class Config:
+            value: int | str | float
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate({"value": []}, Config)
+
+        error_msg = str(exc_info.value)
+        assert "Union[int, str, float]" in error_msg
+        assert "Tried int:" in error_msg
+        assert "Tried str:" in error_msg
+        assert "Tried float:" in error_msg
+
+    def test_union_error_with_dataclass(self):
+        """Test Union error messages with dataclass options."""
+
+        @dataclass
+        class Inner:
+            x: int
+
+        @dataclass
+        class Config:
+            value: Inner | str
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate({"value": {"x": "not int"}}, Config)
+
+        error_msg = str(exc_info.value)
+        assert "Tried Inner:" in error_msg
+        assert "Tried str:" in error_msg
+
+    def test_optional_union_error_messages(self):
+        """Test error messages for Optional with multiple types."""
+
+        @dataclass
+        class Config:
+            value: int | str | None
+
+        with pytest.raises(ValidationError) as exc_info:
+            validate({"value": []}, Config)
+
+        error_msg = str(exc_info.value)
+        assert "Tried int:" in error_msg or "Tried str:" in error_msg
+
+
+class TestDiscriminatedUnions:
+    """Test discriminated union validation."""
+
+    def test_simple_discriminated_union(self):
+        """Test basic discriminated union."""
+
+        @dataclass
+        class SGD:
+            type: Literal["sgd"]
+            lr: float
+            momentum: float
+
+        @dataclass
+        class Adam:
+            type: Literal["adam"]
+            lr: float
+            beta1: float
+
+        @dataclass
+        class TestSchema:
+            optimizer: SGD | Adam
+
+        # SGD
+        config = Config.load({"optimizer": {"type": "sgd", "lr": 0.01, "momentum": 0.9}}, schema=TestSchema)
+        assert config["optimizer::type"] == "sgd"
+
+        # Adam
+        config = Config.load({"optimizer": {"type": "adam", "lr": 0.001, "beta1": 0.9}}, schema=TestSchema)
+        assert config["optimizer::type"] == "adam"
+
+    def test_missing_discriminator(self):
+        """Test error when discriminator is missing."""
+
+        @dataclass
+        class TypeA:
+            type: Literal["a"]
+            value: int
+
+        @dataclass
+        class TypeB:
+            type: Literal["b"]
+            value: str
+
+        @dataclass
+        class TestSchema:
+            item: TypeA | TypeB
+
+        with pytest.raises(ValidationError, match="Missing discriminator field 'type'"):
+            Config.load({"item": {"value": 42}}, schema=TestSchema)
+
+    def test_invalid_discriminator_value(self):
+        """Test error on invalid discriminator value."""
+
+        @dataclass
+        class TypeA:
+            type: Literal["a"]
+            value: int
+
+        @dataclass
+        class TypeB:
+            type: Literal["b"]
+            value: str
+
+        @dataclass
+        class TestSchema:
+            item: TypeA | TypeB
+
+        with pytest.raises(ValidationError, match="Invalid discriminator value 'c'"):
+            Config.load({"item": {"type": "c", "value": 42}}, schema=TestSchema)
+
+    def test_validates_selected_type(self):
+        """Test that the selected type is validated."""
+
+        @dataclass
+        class TypeA:
+            type: Literal["a"]
+            value: int
+
+        @dataclass
+        class TypeB:
+            type: Literal["b"]
+            value: str
+
+        @dataclass
+        class TestSchema:
+            item: TypeA | TypeB
+
+        # TypeA with wrong value type
+        with pytest.raises(ValidationError, match="item.value"):
+            Config.load({"item": {"type": "a", "value": "not int"}}, schema=TestSchema)
+
+    def test_multiple_literal_values(self):
+        """Test discriminator with multiple literal values per type."""
+
+        @dataclass
+        class Primary:
+            type: Literal["primary", "main"]
+            value: int
+
+        @dataclass
+        class Secondary:
+            type: Literal["secondary", "backup"]
+            value: int
+
+        @dataclass
+        class TestSchema:
+            item: Primary | Secondary
+
+        Config.load({"item": {"type": "primary", "value": 1}}, schema=TestSchema)
+        Config.load({"item": {"type": "main", "value": 1}}, schema=TestSchema)
+        Config.load({"item": {"type": "backup", "value": 2}}, schema=TestSchema)
+
+    def test_non_discriminated_fallback(self):
+        """Test non-discriminated unions still work."""
+
+        @dataclass
+        class TypeA:
+            x: int
+
+        @dataclass
+        class TypeB:
+            y: str
+
+        @dataclass
+        class TestSchema:
+            item: TypeA | TypeB
+
+        # No discriminator - tries both
+        Config.load({"item": {"x": 42}}, schema=TestSchema)
+        Config.load({"item": {"y": "hello"}}, schema=TestSchema)
+
+    def test_discriminated_union_with_validators(self):
+        """Test discriminated unions work with @validator."""
+        from sparkwheel import validator
+
+        @dataclass
+        class SGD:
+            type: Literal["sgd"]
+            lr: float
+
+            @validator
+            def check_lr(self):
+                if not (0 < self.lr < 1):
+                    raise ValueError("lr must be 0-1")
+
+        @dataclass
+        class Adam:
+            type: Literal["adam"]
+            lr: float
+
+            @validator
+            def check_lr(self):
+                if not (0 < self.lr < 0.1):
+                    raise ValueError("Adam lr must be 0-0.1")
+
+        @dataclass
+        class TestSchema:
+            optimizer: SGD | Adam
+
+        # SGD with valid lr
+        Config.load({"optimizer": {"type": "sgd", "lr": 0.5}}, schema=TestSchema)
+
+        # Adam with lr too high for Adam but valid for SGD
+        with pytest.raises(ValidationError, match="Adam lr must be 0-0.1"):
+            Config.load({"optimizer": {"type": "adam", "lr": 0.5}}, schema=TestSchema)
+
+
+class TestValidatorEdgeCases:
+    """Test edge cases in validator functionality."""
+
+    def test_validator_with_unresolved_references(self):
+        """Test validators are skipped when config has unresolved references."""
+        from sparkwheel import validator
+
+        @dataclass
+        class Config:
+            start: int
+            end: int
+
+            @validator
+            def check_range(self):
+                if self.end <= self.start:
+                    raise ValueError("end must be > start")
+
+        # With reference - validator should be skipped, no error
+        config = {"start": 10, "end": "@start"}
+        validate(config, Config)  # Should not raise
+
+        # With expression - validator should be skipped
+        config = {"start": 10, "end": "$5 + 5"}
+        validate(config, Config)  # Should not raise
+
+        # With macro - validator should be skipped
+        config = {"start": 10, "end": "%other::value"}
+        validate(config, Config)  # Should not raise
+
+    def test_validator_non_value_error(self):
+        """Test validators that raise non-ValueError exceptions."""
+        from sparkwheel import validator
+
+        @dataclass
+        class Config:
+            value: int
+
+            @validator
+            def bad_validator(self):
+                raise RuntimeError("Unexpected error in validator")
+
+        with pytest.raises(ValidationError, match="Validator 'bad_validator' raised RuntimeError"):
+            validate({"value": 42}, Config)
+
+    def test_validator_instance_creation_fails(self):
+        """Test validators are skipped when instance can't be created."""
+        from sparkwheel import validator
+
+        @dataclass
+        class Config:
+            required: int
+            optional: str = "default"
+
+            @validator
+            def check_value(self):
+                if self.required < 0:
+                    raise ValueError("required must be >= 0")
+
+        # Missing required field - can't create instance, validator skipped
+        config = {"optional": "value"}
+        # This will fail on missing field validation, not validator
+        with pytest.raises(ValidationError, match="Missing required field"):
+            validate(config, Config)
+
+
+class TestLiteralValidation:
+    """Test Literal type validation."""
+
+    def test_literal_valid_value(self):
+        """Test Literal with valid value."""
+
+        @dataclass
+        class Config:
+            mode: Literal["train", "test", "eval"]
+
+        validate({"mode": "train"}, Config)
+        validate({"mode": "test"}, Config)
+        validate({"mode": "eval"}, Config)
+
+    def test_literal_invalid_value(self):
+        """Test Literal with invalid value."""
+
+        @dataclass
+        class Config:
+            mode: Literal["train", "test"]
+
+        with pytest.raises(ValidationError, match="Value must be one of 'train', 'test'"):
+            validate({"mode": "invalid"}, Config)
+
+
+class TestDiscriminatedUnionEdgeCases:
+    """Test edge cases in discriminated union validation."""
+
+    def test_discriminated_union_non_dict_value(self):
+        """Test discriminated union with non-dict value."""
+
+        @dataclass
+        class TypeA:
+            type: Literal["a"]
+            value: int
+
+        @dataclass
+        class TypeB:
+            type: Literal["b"]
+            value: str
+
+        @dataclass
+        class Config:
+            item: TypeA | TypeB
+
+        with pytest.raises(ValidationError, match="Discriminated union requires dict"):
+            validate({"item": "not a dict"}, Config)
+
+    def test_discriminator_not_in_all_types(self):
+        """Test discriminator detection when field not in all types."""
+
+        @dataclass
+        class TypeA:
+            type: Literal["a"]
+            x: int
+
+        @dataclass
+        class TypeB:
+            kind: Literal["b"]  # Different field name
+            y: str
+
+        @dataclass
+        class Config:
+            item: TypeA | TypeB
+
+        # No common discriminator, falls back to trying each type
+        validate({"item": {"type": "a", "x": 42}}, Config)
+        validate({"item": {"kind": "b", "y": "hello"}}, Config)
+
+    def test_discriminator_with_duplicate_values(self):
+        """Test discriminator detection when values overlap."""
+
+        @dataclass
+        class TypeA:
+            type: Literal["shared", "a"]  # "shared" appears in both
+            x: int
+
+        @dataclass
+        class TypeB:
+            type: Literal["shared", "b"]  # "shared" appears in both
+            y: str
+
+        @dataclass
+        class Config:
+            item: TypeA | TypeB
+
+        # Overlapping values mean it's not a valid discriminator
+        # Falls back to non-discriminated union
+        validate({"item": {"type": "shared", "x": 42}}, Config)
+
+
+class TestNonDictForDataclass:
+    """Test validation error when dict expected for dataclass."""
+
+    def test_dataclass_field_non_dict(self):
+        """Test error when non-dict provided for nested dataclass field."""
+
+        @dataclass
+        class Inner:
+            value: int
+
+        @dataclass
+        class Outer:
+            inner: Inner
+
+        with pytest.raises(ValidationError, match="Expected dict for dataclass Inner"):
+            validate({"inner": "not a dict"}, Outer)
+
+
+class TestPropertyDescriptors:
+    """Test handling of property descriptors in validators."""
+
+    def test_property_in_class_with_validators(self):
+        """Test that properties don't interfere with validator detection."""
+        from sparkwheel import validator
+
+        @dataclass
+        class Config:
+            value: int
+
+            @property
+            def computed(self):
+                return self.value * 2
+
+            @validator
+            def check_value(self):
+                if self.value < 0:
+                    raise ValueError("value must be >= 0")
+
+        validate({"value": 42}, Config)
+        with pytest.raises(ValidationError, match="value must be >= 0"):
+            validate({"value": -1}, Config)
+
+
+class TestListWithoutTypeArgs:
+    """Test list validation without type arguments."""
+
+    def test_list_without_args(self):
+        """Test plain list (no type args) validation."""
+
+        @dataclass
+        class Config:
+            items: list  # No type args
+
+        # Should accept any list
+        validate({"items": []}, Config)
+        validate({"items": [1, "two", 3.0, None]}, Config)
+
+
+class TestDictWithoutTypeArgs:
+    """Test dict validation without type arguments."""
+
+    def test_dict_without_args(self):
+        """Test plain dict (no type args) validation."""
+
+        @dataclass
+        class Config:
+            mapping: dict  # No type args
+
+        # Should accept any dict
+        validate({"mapping": {}}, Config)
+        validate({"mapping": {"a": 1, "b": "two"}}, Config)
 
 
 if __name__ == "__main__":

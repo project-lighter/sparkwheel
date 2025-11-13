@@ -35,8 +35,8 @@ def _supports_color() -> bool:
     Checks:
     1. NO_COLOR environment variable (universal standard)
     2. SPARKWHEEL_NO_COLOR environment variable (sparkwheel-specific)
-    3. Terminal type and capabilities
-    4. CI environment detection
+    3. FORCE_COLOR to explicitly enable
+    4. Terminal TTY detection
 
     Returns:
         True if colors should be enabled, False otherwise
@@ -49,21 +49,13 @@ def _supports_color() -> bool:
     if os.environ.get("SPARKWHEEL_NO_COLOR"):
         return False
 
+    # Respect explicit enable
+    if os.environ.get("FORCE_COLOR"):
+        return True
+
     # Check if stdout is a TTY
     if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
         return False
-
-    # Check TERM environment variable
-    term = os.environ.get("TERM", "")
-    if term == "dumb":
-        return False
-
-    # Common CI environments - disable colors unless explicitly enabled
-    ci_vars = ["CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI"]
-    if any(os.environ.get(var) for var in ci_vars):
-        # Unless explicitly requested with FORCE_COLOR
-        if not os.environ.get("FORCE_COLOR"):
-            return False
 
     # Default: enable colors
     return True
@@ -103,7 +95,7 @@ def _get_colors_enabled() -> bool:
     if _COLORS_ENABLED is None:
         enable_colors()  # Auto-detect
 
-    return _COLORS_ENABLED  # type: ignore
+    return _COLORS_ENABLED  # type: ignore[return-value]
 
 
 def _colorize(text: str, color: str) -> str:

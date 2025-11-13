@@ -1,6 +1,6 @@
 """Smart suggestions for typos and common mistakes using Levenshtein distance."""
 
-from typing import Sequence
+from collections.abc import Sequence
 
 __all__ = ["get_suggestions", "levenshtein_distance"]
 

@@ -3,22 +3,22 @@
     --md-accent-fg-color:           #fe6702;
     --md-typeset-a-color:           #fe6702;
     color:                          #4b585a;
-    /* Code block colors */
-    --md-code-fg-color:             #657b83;
-    --md-code-bg-color:             #f2f6f6;
-    --md-code-hl-color:             #fff5f2;
+    /* Code block colors - improved for readability */
+    --md-code-fg-color:             #2d3748;
+    --md-code-bg-color:             #f7fafc;
+    --md-code-hl-color:             #fff4ed;
     --md-code-hl-number-color:      #d97706;
-    --md-code-hl-special-color:     #ea580c;
-    --md-code-hl-function-color:    #ca8a04;
-    --md-code-hl-constant-color:    #dc2626;
-    --md-code-hl-keyword-color:     #e55b00;
-    --md-code-hl-string-color:      #15803d;
-    --md-code-hl-name-color:        #c2410c;
-    --md-code-hl-operator-color:    #657b83;
-    --md-code-hl-punctuation-color: #657b83;
-    --md-code-hl-comment-color:     #78716c;
-    --md-code-hl-generic-color:     #78716c;
-    --md-code-hl-variable-color:    #57534e;
+    --md-code-hl-special-color:     #dc2626;
+    --md-code-hl-function-color:    #0369a1;
+    --md-code-hl-constant-color:    #7c2d12;
+    --md-code-hl-keyword-color:     #c2410c;
+    --md-code-hl-string-color:      #166534;
+    --md-code-hl-name-color:        #0369a1;
+    --md-code-hl-operator-color:    #374151;
+    --md-code-hl-punctuation-color: #6b7280;
+    --md-code-hl-comment-color:     #9ca3af;
+    --md-code-hl-generic-color:     #6b7280;
+    --md-code-hl-variable-color:    #1f2937;
 }
 
 [data-md-color-scheme="slate"] {
@@ -27,22 +27,22 @@
     --md-default-bg-color:          #14181e;
     --md-typeset-a-color:           #fe6702;
     color:                          #ced6dd;
-    /* Code block colors */
-    --md-code-fg-color:             #ced6dd;
-    --md-code-bg-color:             #28303d;
-    --md-code-hl-color:             #3d2820;
+    /* Code block colors - improved for readability */
+    --md-code-fg-color:             #e2e8f0;
+    --md-code-bg-color:             #1e293b;
+    --md-code-hl-color:             rgba(254, 103, 2, 0.15);
     --md-code-hl-number-color:      #fbbf24;
-    --md-code-hl-special-color:     #fb923c;
-    --md-code-hl-function-color:    #fcd34d;
-    --md-code-hl-constant-color:    #fca5a5;
-    --md-code-hl-keyword-color:     #fe6702;
+    --md-code-hl-special-color:     #f87171;
+    --md-code-hl-function-color:    #60a5fa;
+    --md-code-hl-constant-color:    #fb923c;
+    --md-code-hl-keyword-color:     #fb923c;
     --md-code-hl-string-color:      #86efac;
-    --md-code-hl-name-color:        #ff7d1a;
-    --md-code-hl-operator-color:    #ff9342;
-    --md-code-hl-punctuation-color: #ced6dd;
-    --md-code-hl-comment-color:     #94a3b8;
+    --md-code-hl-name-color:        #7dd3fc;
+    --md-code-hl-operator-color:    #cbd5e1;
+    --md-code-hl-punctuation-color: #94a3b8;
+    --md-code-hl-comment-color:     #64748b;
     --md-code-hl-generic-color:     #94a3b8;
-    --md-code-hl-variable-color:    #e2e8f0;
+    --md-code-hl-variable-color:    #f1f5f9;
 }
 
 .md-main {
@@ -89,4 +89,33 @@ md-tabs__link:hover {
 .highlight .hll {
     background-color: rgba(254, 103, 2, 0.1);
     box-shadow: 2px 0 0 0 rgba(254, 103, 2, 1) inset;
+}
+
+/* Landing page styles */
+.md-typeset .hero-section {
+    text-align: center;
+    padding: 2rem 0;
+    margin-bottom: 1rem;
+}
+
+.md-typeset .hero-section img {
+    max-width: 100%;
+    width: 65%;
+    height: auto;
+}
+
+.md-typeset .install-section {
+    width: 65%;
+    margin: 2rem auto;
+    text-align: center;
+}
+
+@media screen and (max-width: 768px) {
+    .md-typeset .hero-section img {
+        width: 90%;
+    }
+
+    .md-typeset .install-section {
+        width: 90%;
+    }
 }

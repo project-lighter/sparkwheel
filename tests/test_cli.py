@@ -256,7 +256,7 @@ class TestConfigFromCLI:
                 f.write("model:\n  lr: 0.01\n  hidden_size: 256\n")
 
             with open(override_file, "w") as f:
-                f.write("+model:\n  lr: 0.001\n")
+                f.write("model:\n  lr: 0.001\n")  # Merges by default now!
 
             config = Config.from_cli([base_file, override_file], ["model::dropout=0.1"])
 

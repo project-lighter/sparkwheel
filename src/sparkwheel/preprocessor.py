@@ -1,7 +1,7 @@
 """Configuration preprocessing before parsing.
 
 Handles transformations on raw config dicts before Items are created:
-- Macro expansion (% references to external files)
+- Raw reference expansion (% references to external files or local YAML)
 - Relative ID resolution (@::, @:::: → absolute paths)
 """
 
@@ -10,7 +10,7 @@ from typing import Any
 
 from .path_patterns import split_file_and_id
 from .path_utils import resolve_relative_ids, split_id
-from .utils.constants import ID_SEP_KEY, MACRO_KEY
+from .utils.constants import ID_SEP_KEY, RAW_REF_KEY
 
 __all__ = ["Preprocessor"]
 
@@ -21,7 +21,7 @@ class Preprocessor:
     Pipeline: Raw YAML dict → Preprocessor → Parser → Resolver → Final values
 
     This is the first processing stage after loading YAML:
-    - Expands % macros (loads external files and copies values)
+    - Expands % raw references (loads external files or local YAML and copies values)
     - Converts relative IDs (@::, @::::) to absolute paths (@)
 
     Operates on raw Python dicts/lists, not on Item objects.
@@ -32,9 +32,9 @@ class Preprocessor:
         >>>
         >>> raw_config = {
         ...     "lr": 0.001,
-        ...     "base": "%defaults.yaml::learning_rate",  # Macro
+        ...     "base": "%defaults.yaml::learning_rate",  # Raw reference (external)
         ...     "model": {
-        ...         "lr": "@::lr"  # Relative reference
+        ...         "lr": "@::lr"  # Relative resolved reference
         ...     }
         ... }
         >>>
@@ -53,7 +53,7 @@ class Preprocessor:
         """Initialize preprocessor.
 
         Args:
-            loader: Loader instance for loading external macro files
+            loader: Loader instance for loading external raw reference files
             globals: Global context (unused here, kept for API consistency)
         """
         self.loader = loader
@@ -74,7 +74,7 @@ class Preprocessor:
             Preprocessed config ready for parsing
 
         Raises:
-            ValueError: If circular macro reference detected
+            ValueError: If circular raw reference detected
         """
         return self._process_recursive(config, base_data, id, set())
 
@@ -83,7 +83,7 @@ class Preprocessor:
         config: Any,
         base_data: dict,
         id: str,
-        macro_stack: set[str],
+        raw_ref_stack: set[str],
     ) -> Any:
         """Internal recursive preprocessing implementation.
 
@@ -91,7 +91,7 @@ class Preprocessor:
             config: Current config node
             base_data: Root config dict
             id: Current ID path
-            macro_stack: Circular reference detection
+            raw_ref_stack: Circular reference detection
 
         Returns:
             Preprocessed config
@@ -100,52 +100,52 @@ class Preprocessor:
         if isinstance(config, dict):
             for key in list(config.keys()):
                 sub_id = f"{id}{ID_SEP_KEY}{key}" if id else str(key)
-                config[key] = self._process_recursive(config[key], base_data, sub_id, macro_stack)
+                config[key] = self._process_recursive(config[key], base_data, sub_id, raw_ref_stack)
 
         elif isinstance(config, list):
             for idx in range(len(config)):
                 sub_id = f"{id}{ID_SEP_KEY}{idx}" if id else str(idx)
-                config[idx] = self._process_recursive(config[idx], base_data, sub_id, macro_stack)
+                config[idx] = self._process_recursive(config[idx], base_data, sub_id, raw_ref_stack)
 
         # Process string values
         if isinstance(config, str):
             # Step 1: Resolve relative IDs (@::, @::::) to absolute (@)
             config = resolve_relative_ids(id, config)
 
-            # Step 2: Expand macros (%)
-            if config.startswith(MACRO_KEY):
-                config = self._expand_macro(config, base_data, macro_stack)
+            # Step 2: Expand raw references (%)
+            if config.startswith(RAW_REF_KEY):
+                config = self._expand_raw_ref(config, base_data, raw_ref_stack)
 
         return config
 
-    def _expand_macro(self, macro_ref: str, base_data: dict, macro_stack: set[str]) -> Any:
-        """Expand a single macro reference by loading external file.
+    def _expand_raw_ref(self, raw_ref: str, base_data: dict, raw_ref_stack: set[str]) -> Any:
+        """Expand a single raw reference by loading external file or local YAML.
 
         Args:
-            macro_ref: Macro string (e.g., "%file.yaml::key")
-            base_data: Root config for local macros
-            macro_stack: Circular reference detection
+            raw_ref: Raw reference string (e.g., "%file.yaml::key" or "%key")
+            base_data: Root config for local raw references
+            raw_ref_stack: Circular reference detection
 
         Returns:
-            Value from macro (deep copied)
+            Value from raw reference (deep copied)
 
         Raises:
             ValueError: If circular reference detected
         """
         # Circular reference check
-        if macro_ref in macro_stack:
-            chain = " -> ".join(sorted(macro_stack))
-            raise ValueError(f"Circular macro reference detected: '{macro_ref}'\nMacro chain: {chain} -> {macro_ref}")
+        if raw_ref in raw_ref_stack:
+            chain = " -> ".join(sorted(raw_ref_stack))
+            raise ValueError(f"Circular raw reference detected: '{raw_ref}'\nRaw reference chain: {chain} -> {raw_ref}")
 
         # Parse: "%file.yaml::key" → ("file.yaml", "key")
-        path, ids = split_file_and_id(macro_ref[len(MACRO_KEY) :])
+        path, ids = split_file_and_id(raw_ref[len(RAW_REF_KEY) :])
 
-        macro_stack.add(macro_ref)
+        raw_ref_stack.add(raw_ref)
 
         try:
             # Load config (external file or local)
             if not path:
-                loaded_config = base_data  # Local macro: %key
+                loaded_config = base_data  # Local raw reference: %key
             else:
                 loaded_config, _ = self.loader.load_file(path)  # External: %file.yaml::key
 
@@ -153,13 +153,13 @@ class Preprocessor:
             result = self._get_by_id(loaded_config, ids)
 
             # Recursively preprocess the loaded value
-            result = self._process_recursive(result, loaded_config, ids, macro_stack)
+            result = self._process_recursive(result, loaded_config, ids, raw_ref_stack)
 
             # Deep copy for independence
             return deepcopy(result)
 
         finally:
-            macro_stack.discard(macro_ref)
+            raw_ref_stack.discard(raw_ref)
 
     @staticmethod
     def _get_by_id(config: dict, id: str) -> Any:

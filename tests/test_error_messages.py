@@ -4,10 +4,12 @@ from sparkwheel import Config
 from sparkwheel.errors import (
     enable_colors,
     format_available_keys,
+    format_resolution_chain,
     format_suggestions,
     get_suggestions,
     levenshtein_distance,
 )
+from sparkwheel.errors.context import _format_value_repr
 from sparkwheel.utils.exceptions import ConfigKeyError
 
 
@@ -155,6 +157,189 @@ class TestFormatAvailableKeys:
 
         assert "and 15 more" in formatted or "and 14 more" in formatted  # Depends on sorting
 
+    def test_format_with_empty_dict_value(self):
+        """Test formatting config with empty dict value."""
+        config = {"model": {}, "optimizer": "adam"}
+        formatted = format_available_keys(config)
+
+        assert "model: {}" in formatted
+
+    def test_format_with_empty_list_value(self):
+        """Test formatting config with empty list value."""
+        config = {"layers": [], "dropout": 0.5}
+        formatted = format_available_keys(config)
+
+        assert "layers: []" in formatted
+
+    def test_format_with_large_dict_value(self):
+        """Test formatting config with large dict (>3 items)."""
+        config = {"model": {f"param{i}": i for i in range(10)}, "optimizer": "adam"}
+        formatted = format_available_keys(config)
+
+        # Should show "{...} (N keys)" for large dicts
+        assert "model:" in formatted
+        assert "keys)" in formatted
+
+    def test_format_with_large_list_value(self):
+        """Test formatting config with large list (>3 items)."""
+        config = {"layers": [1, 2, 3, 4, 5, 6, 7, 8], "dropout": 0.5}
+        formatted = format_available_keys(config)
+
+        # Should show "[...] (N items)" for large lists
+        assert "layers:" in formatted
+        assert "items)" in formatted
+
+    def test_format_with_long_value_truncation(self):
+        """Test that very long values are truncated."""
+        long_string = "x" * 100
+        config = {"long_value": long_string}
+        formatted = format_available_keys(config)
+
+        # Should be truncated with "..."
+        assert "..." in formatted
+        assert long_string not in formatted  # Full string should not appear
+
+    def test_format_with_non_dict_input(self):
+        """Test formatting with non-dict input."""
+        assert format_available_keys(None) == ""
+        assert format_available_keys("not a dict") == ""
+        assert format_available_keys([1, 2, 3]) == ""
+
+
+class TestFormatValueRepr:
+    """Test _format_value_repr function for value formatting."""
+
+    def test_format_empty_dict(self):
+        """Test formatting empty dict."""
+        assert _format_value_repr({}) == "{}"
+
+    def test_format_empty_list(self):
+        """Test formatting empty list."""
+        assert _format_value_repr([]) == "[]"
+
+    def test_format_small_dict(self):
+        """Test formatting small dict (<=3 items)."""
+        result = _format_value_repr({"a": 1, "b": 2, "c": 3})
+        assert "{" in result
+        assert "}" in result
+        assert "a:" in result
+
+    def test_format_large_dict(self):
+        """Test formatting large dict (>3 items)."""
+        large_dict = {f"key{i}": i for i in range(10)}
+        result = _format_value_repr(large_dict)
+        assert "{...}" in result
+        assert "10 keys" in result
+
+    def test_format_small_list(self):
+        """Test formatting small list (<=3 items)."""
+        result = _format_value_repr([1, 2, 3])
+        assert "[" in result
+        assert "]" in result
+
+    def test_format_large_list(self):
+        """Test formatting large list (>3 items)."""
+        large_list = list(range(10))
+        result = _format_value_repr(large_list)
+        assert "[...]" in result
+        assert "10 items" in result
+
+    def test_format_long_string_truncation(self):
+        """Test that long strings are truncated."""
+        long_string = "x" * 100
+        result = _format_value_repr(long_string, max_length=20)
+        assert len(result) <= 20
+        assert "..." in result
+
+    def test_format_string(self):
+        """Test formatting regular string."""
+        assert _format_value_repr("hello") == '"hello"'
+
+    def test_format_int(self):
+        """Test formatting integer."""
+        assert _format_value_repr(42) == "42"
+
+    def test_format_float(self):
+        """Test formatting float."""
+        assert _format_value_repr(3.14) == "3.14"
+
+    def test_format_bool(self):
+        """Test formatting boolean."""
+        assert _format_value_repr(True) == "True"
+        assert _format_value_repr(False) == "False"
+
+    def test_format_none(self):
+        """Test formatting None."""
+        assert _format_value_repr(None) == "None"
+
+    def test_format_custom_object(self):
+        """Test formatting custom object (should show type name)."""
+
+        class CustomClass:
+            pass
+
+        obj = CustomClass()
+        result = _format_value_repr(obj)
+        assert "CustomClass" in result
+
+
+class TestFormatResolutionChain:
+    """Test format_resolution_chain function."""
+
+    def test_format_empty_chain(self):
+        """Test formatting empty resolution chain."""
+        assert format_resolution_chain([]) == ""
+
+    def test_format_chain_all_successful(self):
+        """Test formatting chain with all successful resolutions."""
+        chain = [
+            ("model::lr", "@base::lr", True),
+            ("base::lr", "", True),
+        ]
+        result = format_resolution_chain(chain)
+
+        assert "Resolution chain:" in result
+        assert "model::lr" in result
+        assert "base::lr" in result
+        assert "✓" in result
+
+    def test_format_chain_with_failure(self):
+        """Test formatting chain with failed resolution."""
+        chain = [
+            ("training::optimizer", "@optimizer", True),
+            ("optimizer::lr", "@base::learning_rate", True),
+            ("base::learning_rate", "", False),
+        ]
+        result = format_resolution_chain(chain)
+
+        assert "Resolution chain:" in result
+        assert "❌ NOT FOUND" in result
+        assert "💡" in result
+        assert "failed at step 3" in result
+
+    def test_format_chain_custom_title(self):
+        """Test formatting chain with custom title."""
+        chain = [("key", "", True)]
+        result = format_resolution_chain(chain, title="Custom Title:")
+
+        assert "Custom Title:" in result
+
+    def test_format_chain_with_reference(self):
+        """Test formatting chain entry with reference."""
+        chain = [("model::lr", "@base::lr", True)]
+        result = format_resolution_chain(chain)
+
+        assert '"@base::lr"' in result
+        assert "✓" in result
+
+    def test_format_chain_without_reference(self):
+        """Test formatting chain entry without reference (direct value)."""
+        chain = [("value", "", True)]
+        result = format_resolution_chain(chain)
+
+        assert "value" in result
+        assert "✓" in result
+
 
 class TestColorFormatting:
     """Test color formatting with auto-detection."""
@@ -191,6 +376,172 @@ class TestColorFormatting:
         # Should contain ANSI codes when enabled
         assert "\033[" in formatted
         assert "error message" in formatted
+
+    def test_format_suggestion(self):
+        """Test format_suggestion function."""
+        from sparkwheel.errors.formatters import format_suggestion
+
+        enable_colors(True)
+        result = format_suggestion("suggestion text")
+        assert "suggestion text" in result
+        assert "\033[" in result  # Contains ANSI codes
+
+        enable_colors(False)
+        result = format_suggestion("suggestion text")
+        assert result == "suggestion text"
+
+    def test_format_success(self):
+        """Test format_success function."""
+        from sparkwheel.errors.formatters import format_success
+
+        enable_colors(True)
+        result = format_success("success text")
+        assert "success text" in result
+        assert "\033[" in result  # Contains ANSI codes
+
+        enable_colors(False)
+        result = format_success("success text")
+        assert result == "success text"
+
+    def test_format_code(self):
+        """Test format_code function."""
+        from sparkwheel.errors.formatters import format_code
+
+        enable_colors(True)
+        result = format_code("code text")
+        assert "code text" in result
+        assert "\033[" in result  # Contains ANSI codes
+
+        enable_colors(False)
+        result = format_code("code text")
+        assert result == "code text"
+
+    def test_format_context(self):
+        """Test format_context function."""
+        from sparkwheel.errors.formatters import format_context
+
+        enable_colors(True)
+        result = format_context("context text")
+        assert "context text" in result
+        assert "\033[" in result  # Contains ANSI codes
+
+        enable_colors(False)
+        result = format_context("context text")
+        assert result == "context text"
+
+    def test_format_bold(self):
+        """Test format_bold function."""
+        from sparkwheel.errors.formatters import format_bold
+
+        enable_colors(True)
+        result = format_bold("bold text")
+        assert "bold text" in result
+        assert "\033[" in result  # Contains ANSI codes
+
+        enable_colors(False)
+        result = format_bold("bold text")
+        assert result == "bold text"
+
+    def test_supports_color_with_no_color_env(self, monkeypatch):
+        """Test that NO_COLOR environment variable disables colors."""
+        from sparkwheel.errors.formatters import _supports_color
+
+        monkeypatch.setenv("NO_COLOR", "1")
+        assert _supports_color() is False
+
+    def test_supports_color_with_sparkwheel_no_color_env(self, monkeypatch):
+        """Test that SPARKWHEEL_NO_COLOR environment variable disables colors."""
+        from sparkwheel.errors.formatters import _supports_color
+
+        monkeypatch.setenv("SPARKWHEEL_NO_COLOR", "1")
+        assert _supports_color() is False
+
+    def test_get_colors_enabled_lazy_init(self):
+        """Test that _get_colors_enabled initializes colors if needed."""
+        from sparkwheel.errors import formatters
+
+        # Reset global state
+        formatters._COLORS_ENABLED = None
+
+        # Should auto-detect when None
+        result = formatters._get_colors_enabled()
+        assert isinstance(result, bool)
+        assert formatters._COLORS_ENABLED is not None
+
+    def test_supports_color_with_force_color(self, monkeypatch):
+        """Test that FORCE_COLOR enables colors even without TTY."""
+        import sys
+
+        from sparkwheel.errors.formatters import _supports_color
+
+        # Clear other environment variables
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
+        monkeypatch.setenv("FORCE_COLOR", "1")
+
+        # Mock stdout without isatty
+        class MockStdout:
+            def isatty(self):
+                return False
+
+        original_stdout = sys.stdout
+        try:
+            sys.stdout = MockStdout()
+            # FORCE_COLOR should enable colors even without TTY
+            assert _supports_color() is True
+        finally:
+            sys.stdout = original_stdout
+
+    def test_supports_color_no_isatty(self, monkeypatch):
+        """Test color detection when stdout has no isatty method."""
+        import sys
+
+        from sparkwheel.errors.formatters import _supports_color
+
+        # Clear environment variables that would override
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("GITLAB_CI", raising=False)
+        monkeypatch.delenv("CIRCLECI", raising=False)
+
+        # Mock stdout without isatty
+        class MockStdout:
+            pass
+
+        original_stdout = sys.stdout
+        try:
+            sys.stdout = MockStdout()
+            assert _supports_color() is False
+        finally:
+            sys.stdout = original_stdout
+
+    def test_supports_color_isatty_false(self, monkeypatch):
+        """Test color detection when isatty returns False."""
+        import sys
+
+        from sparkwheel.errors.formatters import _supports_color
+
+        # Clear environment variables
+        monkeypatch.delenv("NO_COLOR", raising=False)
+        monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
+        monkeypatch.delenv("CI", raising=False)
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("GITLAB_CI", raising=False)
+        monkeypatch.delenv("CIRCLECI", raising=False)
+
+        # Mock stdout with isatty that returns False
+        class MockStdout:
+            def isatty(self):
+                return False
+
+        original_stdout = sys.stdout
+        try:
+            sys.stdout = MockStdout()
+            assert _supports_color() is False
+        finally:
+            sys.stdout = original_stdout
 
 
 class TestConfigKeyErrorEnhanced:
@@ -273,3 +624,79 @@ class TestErrorMessagesIntegration:
         error_msg = str(exc_info.value)
         # Should show available keys in model
         assert "lr" in error_msg or "💡" in error_msg
+
+
+class TestExceptionEdgeCases:
+    """Test edge cases in exception handling."""
+
+    def test_source_location_without_id(self):
+        """Test SourceLocation string formatting without ID."""
+        from sparkwheel.utils.exceptions import SourceLocation
+
+        loc = SourceLocation(filepath="test.yaml", line=10)
+        assert str(loc) == "test.yaml:10"
+
+    def test_base_error_without_source_location_id(self):
+        """Test BaseError formatting when source_location has no ID."""
+        from sparkwheel.utils.exceptions import BaseError, SourceLocation
+
+        loc = SourceLocation(filepath="test.yaml", line=5)
+        error = BaseError("Test error", source_location=loc)
+        msg = str(error)
+        assert "[test.yaml:5]" in msg
+        assert "Test error" in msg
+
+    def test_base_error_snippet_file_read_error(self, tmp_path):
+        """Test BaseError snippet handling when file can't be read."""
+        from sparkwheel.utils.exceptions import BaseError, SourceLocation
+
+        # Create a source location pointing to non-existent file
+        loc = SourceLocation(filepath="/nonexistent/file.yaml", line=5)
+        error = BaseError("Test error", source_location=loc)
+        # Should not raise, just skip snippet
+        msg = str(error)
+        assert "Test error" in msg
+
+    def test_config_key_error_no_suggestions(self):
+        """Test ConfigKeyError when no suggestions can be generated."""
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        # No available keys
+        error = ConfigKeyError(
+            "Key not found",
+            missing_key="unknown",
+            available_keys=[],
+        )
+        msg = str(error)
+        assert "Key not found" in msg
+
+    def test_config_key_error_with_many_keys(self):
+        """Test ConfigKeyError when too many keys to display."""
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        # More than 10 keys - should not display all
+        many_keys = [f"key{i}" for i in range(15)]
+        config = {k: "value" for k in many_keys}
+        error = ConfigKeyError(
+            "Key not found",
+            missing_key="unknown",
+            available_keys=many_keys,
+            config_context=config,
+        )
+        msg = str(error)
+        assert "Key not found" in msg
+
+    def test_config_key_error_with_suggestions_and_keys(self):
+        """Test ConfigKeyError with both suggestions and available keys."""
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        error = ConfigKeyError(
+            "Key not found",
+            missing_key="vlue",
+            available_keys=["value", "valid", "var"],
+            config_context={"value": 1, "valid": 2},
+        )
+        msg = str(error)
+        assert "Key not found" in msg
+        # Should have suggestion for "vlue" -> "value"
+        assert "💡" in msg

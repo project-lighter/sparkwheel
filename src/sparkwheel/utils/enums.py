@@ -11,7 +11,7 @@ class StrEnum(str, Enum):
 
 class CompInitMode(StrEnum):
     """
-    Component initialization mode for ConfigComponent.
+    Component initialization mode for Component.
 
     - DEFAULT: Instantiate by calling the component
     - CALLABLE: Return the callable (or partial with kwargs)

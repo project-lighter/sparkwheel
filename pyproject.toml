@@ -66,7 +66,6 @@ test = [
     "pytest-html>=3.2.0",
     "pytest-cov>=4.0.0",
     "coverage>=7.0.5",
-    "coverage-badge>=1.1.0",
     "pytest-metadata>=3.1.1",
 ]
 
@@ -115,11 +114,11 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["tests"]
+source_pkgs = ["sparkwheel"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 90
+fail_under = 95
 show_missing = true
 
 [tool.ruff]

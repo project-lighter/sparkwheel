@@ -376,7 +376,7 @@ base.merge(cli)  # Merge one Config into another
 resolved = config.resolve()
 ```
 
-See [Merging & Deleting](operators.md) for details on merge (`+`) and delete (`~`) operators and advanced patterns.
+See [Composition & Operators](operators.md) for details on composition-by-default, replace (`=`), and delete (`~`) operators.
 
 ## Special Keys
 
