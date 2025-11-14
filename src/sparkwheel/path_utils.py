@@ -90,7 +90,7 @@ def resolve_relative_ids(current_id: str, value: str) -> str:
     current_parts = current_id.split(ID_SEP_KEY) if current_id else []
 
     for pattern in patterns:
-        # Determine symbol (@ for reference, % for macro)
+        # Determine symbol (@ for resolved reference, % for raw reference)
         symbol = pattern[0]
 
         # Count :: pairs to determine how many levels to go up

@@ -50,13 +50,13 @@ buggy_component:
   param: value
 ```
 
-## Fine-Grained Merging with +/~ Directives
+## Composition & Operators
 
-Control exactly how configs merge with special prefixes:
+Sparkwheel uses **composition-by-default**: configs naturally merge (dicts) or extend (lists). Use operators for explicit control:
 
-### Merge Directive (`+`)
+### Default Behavior: Composition
 
-Use `+key` to merge a dict or append a list into existing config, preserving other keys:
+By default, configs compose naturally - no operators needed:
 
 ```yaml
 # base.yaml
@@ -68,7 +68,7 @@ model:
 
 ```yaml
 # override.yaml
-+model:  # Merge into model, don't replace
+model:  # Merges by default!
   hidden_size: 1024  # Update this
   # activation and dropout are preserved!
 ```
@@ -82,33 +82,53 @@ config.update("override.yaml")
 # Result:
 # model:
 #   hidden_size: 1024  (updated)
-#   activation: "relu"  (preserved)
-#   dropout: 0.1        (preserved)
+#   activation: "relu"  (preserved - composition!)
+#   dropout: 0.1        (preserved - composition!)
 ```
 
-**Note:** The `+` directive validates that the key exists and types match (both dicts or both lists), catching configuration errors early. See [Merging Guide](merging.md) for detailed validation behavior and list merging examples.
+### Replace Operator (`=`)
 
-### Delete Directive (`~`)
-
-Use `~key: null` to delete a key (the value must be present for valid YAML, but is ignored):
+Use `=key` when you need to completely replace instead of merge:
 
 ```yaml
 # override.yaml
-~model::dropout: null  # Remove dropout from model
+=model:  # Replace entire model dict
+  hidden_size: 1024
+  # activation and dropout are GONE!
+```
+
+See [Composition & Operators](operators.md) for full details on composition-by-default and the `=` operator.
+
+### Delete Directive (`~`)
+
+Use `~key: null` to delete a key, or `~key: [items]` to delete specific items from lists/dicts:
+
+```yaml
+# override.yaml
+~model::dropout: null  # Remove entire key
+
+# Remove specific list items by index
+~plugins: [0, 2, 4]  # Remove items at indices 0, 2, 4
+
+# Remove specific dict keys
+~dataloaders: ["train", "test"]  # Remove these keys
+
+# Negative indices work too
+~plugins: [-1]  # Remove last item
 ```
 
 ```python
 config = Config.load("base.yaml")
-config.update({"~model::dropout": None})
-
-# dropout is now removed from model config
+config.update({"~model::dropout": None})  # Remove entire key
+config.update({"~plugins": [0, 2]})  # Remove list items
+config.update({"~dataloaders": ["train", "test"]})  # Remove dict keys
 ```
 
-**Note:** The `~` directive now validates that the key exists, catching typos and config ordering issues early.
+**Note:** The `~` directive is idempotent - it doesn't error if the key doesn't exist, enabling reusable configs.
 
 ### Programmatic Updates
 
-Apply directives programmatically:
+Apply operators programmatically:
 
 ```python
 config = Config.load("config.yaml")
@@ -116,9 +136,10 @@ config = Config.load("config.yaml")
 # Set individual values
 config.set("model::hidden_size", 1024)
 
-# Merge with directives
+# Use operators
 config.update({
-    "+optimizer": {"lr": 0.01},        # Merge
+    "optimizer": {"lr": 0.01},         # Compose (merge by default)
+    "=database": {"host": "prod.db"},  # Replace
     "~training::old_param": None,      # Delete
 })
 ```

@@ -1,7 +1,5 @@
 """Resolve references between Items."""
 
-from __future__ import annotations
-
 import warnings
 from collections.abc import Iterator
 from typing import Any
@@ -9,7 +7,7 @@ from typing import Any
 from .items import Component, Expression, Item
 from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
-from .utils.constants import ID_REF_KEY, ID_SEP_KEY
+from .utils.constants import ID_SEP_KEY, RESOLVED_REF_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
 
 __all__ = ["Resolver"]
@@ -18,8 +16,9 @@ __all__ = ["Resolver"]
 class Resolver:
     """Resolve references between Items.
 
-    Manages Items and resolves reference strings (starting with @) by
-    substituting them with their corresponding resolved values.
+    Manages Items and resolves resolved reference strings (starting with @) by
+    substituting them with their corresponding resolved values (instantiated objects,
+    evaluated expressions, etc.).
 
     Example:
         ```python
@@ -36,14 +35,14 @@ class Resolver:
         print(result)  # {"lr": 0.001}
         ```
 
-    References can use :: separator for nested access:
+    Resolved references can use :: separator for nested access:
     - Dictionary keys: @config::key::subkey
     - List indices: @list::0::subitem
     """
 
     _vars = "__local_refs"  # Variable name for resolved refs in expression evaluation
     sep = ID_SEP_KEY  # Separator for nested key access
-    ref = ID_REF_KEY  # Reference prefix (@)
+    ref = RESOLVED_REF_KEY  # Resolved reference prefix (@)
     allow_missing_reference = allow_missing_reference
     max_resolution_depth = 100  # Prevent DoS from deeply nested references
 

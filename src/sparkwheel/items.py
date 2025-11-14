@@ -86,7 +86,7 @@ class Component(Item, Instantiable):
 
     Example:
         ```python
-        from sparkwheel import ConfigComponent
+        from sparkwheel import Component
         from collections import Counter
 
         config = {
@@ -94,7 +94,7 @@ class Component(Item, Instantiable):
             "iterable": [1, 2, 2, 3, 3, 3]
         }
 
-        component = ConfigComponent(config, id="counter")
+        component = Component(config, id="counter")
         counter = component.instantiate()
         print(counter)  # Counter({3: 3, 2: 2, 1: 1})
         ```
@@ -255,10 +255,10 @@ class Expression(Item):
 
     Example:
         ```python
-        from sparkwheel import ConfigExpression
+        from sparkwheel import Expression
 
         config = "$len([1, 2, 3])"
-        expression = ConfigExpression(config, id="test", globals={"len": len})
+        expression = Expression(config, id="test", globals={"len": len})
         print(expression.evaluate())  # 3
         ```
 
@@ -344,7 +344,7 @@ class Expression(Item):
             f"\n\npdb: value={value}\nSee also Debugger commands documentation: https://docs.python.org/3/library/pdb.html\n",
             stacklevel=2,
         )
-        import pdb
+        import pdb  # noqa: T100
 
         pdb.run(value[len(self.prefix) :], globals_, locals)
         return None

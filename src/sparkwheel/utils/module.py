@@ -1,6 +1,6 @@
 import enum
 import os
-import pdb
+import pdb  # noqa: T100
 import warnings
 from collections.abc import Collection, Hashable
 from functools import partial
@@ -101,7 +101,7 @@ def look_up_option(
     if isinstance(opt_str, str):
         opt_str = opt_str.strip()
     if isinstance(supported, enum.EnumMeta):
-        if isinstance(opt_str, str) and opt_str in {item.value for item in supported}:  # type: ignore
+        if isinstance(opt_str, str) and opt_str in {item.value for item in supported}:  # type: ignore[attr-defined]
             # such as: "example" in MyEnum
             return supported(opt_str)
         if isinstance(opt_str, enum.Enum) and opt_str in supported:
@@ -119,7 +119,7 @@ def look_up_option(
     # find a close match
     set_to_check: set
     if isinstance(supported, enum.EnumMeta):
-        set_to_check = {item.value for item in supported}  # type: ignore
+        set_to_check = {item.value for item in supported}  # type: ignore[attr-defined]
     else:
         set_to_check = set(supported) if supported is not None else set()
     if not set_to_check:
@@ -133,7 +133,7 @@ def look_up_option(
 
     supported_msg = f"Available options are {set_to_check}.\n" if print_all_options else ""
     if edit_dists:
-        guess_at_spelling = min(edit_dists, key=edit_dists.get)  # type: ignore
+        guess_at_spelling = min(edit_dists, key=edit_dists.get)  # type: ignore[arg-type]
         raise ValueError(
             f"By '{opt_str}', did you mean '{guess_at_spelling}'?\n" + f"'{opt_str}' is not a valid value.\n" + supported_msg
         )
@@ -231,7 +231,7 @@ def instantiate(__path: str, __mode: str, **kwargs: Any) -> Any:
                 f"See also Debugger commands documentation: https://docs.python.org/3/library/pdb.html\n",
                 stacklevel=2,
             )
-            breakpoint()
+            breakpoint()  # noqa: T100
         if not callable(component):
             warnings.warn(f"Component {component} is not callable when mode={m}.", stacklevel=2)
             return component

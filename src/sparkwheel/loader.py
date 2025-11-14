@@ -1,7 +1,5 @@
 """YAML configuration loading with source location tracking."""
 
-from __future__ import annotations
-
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
