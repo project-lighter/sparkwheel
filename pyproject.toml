@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "sparkwheel"
-version = "0.0.4"
+version = "0.0.5"
 description = "A powerful YAML-based configuration system with references, expressions, and dynamic instantiation"
 authors = [
     { name = "Project Lighter", email = "noreply@lighter.com" },
@@ -132,7 +132,7 @@ select = ["B", "E", "F", "I", "W"]
 ignore = ["E203", "E501", "N813"]
 
 [tool.bumpversion]
-current_version = "0.0.4"
+current_version = "0.0.5"
 commit = true
 tag = true
 
