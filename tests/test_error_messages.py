@@ -468,13 +468,13 @@ class TestColorFormatting:
         assert isinstance(result, bool)
         assert formatters._COLORS_ENABLED is not None
 
-    def test_supports_color_with_force_color(self, monkeypatch):
-        """Test that FORCE_COLOR enables colors even without TTY."""
+    def test_supports_color_force_color(self, monkeypatch):
+        """Test FORCE_COLOR enables colors even without TTY."""
         import sys
 
         from sparkwheel.errors.formatters import _supports_color
 
-        # Clear other environment variables
+        # Clear NO_COLOR and set FORCE_COLOR
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
         monkeypatch.setenv("FORCE_COLOR", "1")
@@ -487,8 +487,30 @@ class TestColorFormatting:
         original_stdout = sys.stdout
         try:
             sys.stdout = MockStdout()
-            # FORCE_COLOR should enable colors even without TTY
             assert _supports_color() is True
+        finally:
+            sys.stdout = original_stdout
+
+    def test_supports_color_no_color_overrides_force_color(self, monkeypatch):
+        """Test NO_COLOR takes precedence over FORCE_COLOR."""
+        import sys
+
+        from sparkwheel.errors.formatters import _supports_color
+
+        # Set both NO_COLOR and FORCE_COLOR - NO_COLOR should win
+        monkeypatch.setenv("NO_COLOR", "1")
+        monkeypatch.setenv("FORCE_COLOR", "1")
+
+        # Mock stdout with TTY
+        class MockStdout:
+            def isatty(self):
+                return True
+
+        original_stdout = sys.stdout
+        try:
+            sys.stdout = MockStdout()
+            # NO_COLOR should override both FORCE_COLOR and TTY
+            assert _supports_color() is False
         finally:
             sys.stdout = original_stdout
 
@@ -498,14 +520,8 @@ class TestColorFormatting:
 
         from sparkwheel.errors.formatters import _supports_color
 
-        # Clear environment variables that would override
-        monkeypatch.delenv("NO_COLOR", raising=False)
-        monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
-        monkeypatch.delenv("FORCE_COLOR", raising=False)
-        monkeypatch.delenv("CI", raising=False)
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        monkeypatch.delenv("GITLAB_CI", raising=False)
-        monkeypatch.delenv("CIRCLECI", raising=False)
+        # Disable colors to override any CI environment settings
+        monkeypatch.setenv("NO_COLOR", "1")
 
         # Mock stdout without isatty
         class MockStdout:
@@ -524,14 +540,8 @@ class TestColorFormatting:
 
         from sparkwheel.errors.formatters import _supports_color
 
-        # Clear environment variables
-        monkeypatch.delenv("NO_COLOR", raising=False)
-        monkeypatch.delenv("SPARKWHEEL_NO_COLOR", raising=False)
-        monkeypatch.delenv("FORCE_COLOR", raising=False)
-        monkeypatch.delenv("CI", raising=False)
-        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-        monkeypatch.delenv("GITLAB_CI", raising=False)
-        monkeypatch.delenv("CIRCLECI", raising=False)
+        # Disable colors to override any CI environment settings
+        monkeypatch.setenv("NO_COLOR", "1")
 
         # Mock stdout with isatty that returns False
         class MockStdout:

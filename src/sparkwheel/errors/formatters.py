@@ -32,16 +32,18 @@ _COLORS_ENABLED: bool | None = None
 def _supports_color() -> bool:
     """Auto-detect if the terminal supports colors.
 
-    Checks:
-    1. NO_COLOR environment variable (universal standard)
-    2. SPARKWHEEL_NO_COLOR environment variable (sparkwheel-specific)
-    3. FORCE_COLOR to explicitly enable
-    4. Terminal TTY detection
+    Follows industry standards for color detection:
+    1. NO_COLOR environment variable disables colors (https://no-color.org/)
+    2. SPARKWHEEL_NO_COLOR environment variable disables colors (sparkwheel-specific)
+    3. FORCE_COLOR environment variable enables colors (https://force-color.org/)
+    4. stdout TTY detection (auto-detect)
+    5. Default: disable colors
 
     Returns:
         True if colors should be enabled, False otherwise
     """
     # Check NO_COLOR environment variable (https://no-color.org/)
+    # Highest priority - explicit user preference to disable
     if os.environ.get("NO_COLOR"):
         return False
 
@@ -49,16 +51,17 @@ def _supports_color() -> bool:
     if os.environ.get("SPARKWHEEL_NO_COLOR"):
         return False
 
-    # Respect explicit enable
+    # Check FORCE_COLOR environment variable (https://force-color.org/)
+    # Explicit enable for CI environments, piping, etc.
     if os.environ.get("FORCE_COLOR"):
         return True
 
-    # Check if stdout is a TTY
-    if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
-        return False
+    # Auto-detect: Check if stdout is a TTY
+    if hasattr(sys.stdout, "isatty") and sys.stdout.isatty():
+        return True
 
-    # Default: enable colors
-    return True
+    # Default: disable colors
+    return False
 
 
 def enable_colors(enabled: bool | None = None) -> bool:
