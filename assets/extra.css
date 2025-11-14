@@ -1,0 +1,121 @@
+[data-md-color-scheme="default"] {
+    --md-primary-fg-color:          #fe6702;
+    --md-accent-fg-color:           #fe6702;
+    --md-typeset-a-color:           #fe6702;
+    color:                          #4b585a;
+    /* Code block colors - improved for readability */
+    --md-code-fg-color:             #2d3748;
+    --md-code-bg-color:             #f7fafc;
+    --md-code-hl-color:             #fff4ed;
+    --md-code-hl-number-color:      #d97706;
+    --md-code-hl-special-color:     #dc2626;
+    --md-code-hl-function-color:    #0369a1;
+    --md-code-hl-constant-color:    #7c2d12;
+    --md-code-hl-keyword-color:     #c2410c;
+    --md-code-hl-string-color:      #166534;
+    --md-code-hl-name-color:        #0369a1;
+    --md-code-hl-operator-color:    #374151;
+    --md-code-hl-punctuation-color: #6b7280;
+    --md-code-hl-comment-color:     #9ca3af;
+    --md-code-hl-generic-color:     #6b7280;
+    --md-code-hl-variable-color:    #1f2937;
+}
+
+[data-md-color-scheme="slate"] {
+    --md-primary-fg-color:          #fe6702;
+    --md-accent-fg-color:           #fe6702;
+    --md-default-bg-color:          #14181e;
+    --md-typeset-a-color:           #fe6702;
+    color:                          #ced6dd;
+    /* Code block colors - improved for readability */
+    --md-code-fg-color:             #e2e8f0;
+    --md-code-bg-color:             #1e293b;
+    --md-code-hl-color:             rgba(254, 103, 2, 0.15);
+    --md-code-hl-number-color:      #fbbf24;
+    --md-code-hl-special-color:     #f87171;
+    --md-code-hl-function-color:    #60a5fa;
+    --md-code-hl-constant-color:    #fb923c;
+    --md-code-hl-keyword-color:     #fb923c;
+    --md-code-hl-string-color:      #86efac;
+    --md-code-hl-name-color:        #7dd3fc;
+    --md-code-hl-operator-color:    #cbd5e1;
+    --md-code-hl-punctuation-color: #94a3b8;
+    --md-code-hl-comment-color:     #64748b;
+    --md-code-hl-generic-color:     #94a3b8;
+    --md-code-hl-variable-color:    #f1f5f9;
+}
+
+.md-main {
+    --md-typeset-a-color: #fe6702;
+}
+
+h1 {
+    color: #fe6702;
+}
+
+.md-nav__link:hover,
+a:hover {
+    color: #ff7d1a;
+}
+
+md-tabs__link:hover {
+    color: #fff;
+}
+
+
+[data-md-color-scheme="slate"] .md-annotation__index::before {
+    background-color: #28303d;
+}
+
+
+.md-admonition {
+    background-color: #fe6702;
+}
+
+.md-typeset .admonition.note,
+.md-typeset details.note {
+    border-color: #fe6702;
+}
+
+.md-typeset .note>.admonition-title:before, .md-typeset .note>summary:before {
+    background-color: #fe6702;
+}
+
+.md-typeset .note > .admonition-title,
+.md-typeset .note > summary {
+    background-color: #fe67023d
+}
+
+.highlight .hll {
+    background-color: rgba(254, 103, 2, 0.1);
+    box-shadow: 2px 0 0 0 rgba(254, 103, 2, 1) inset;
+}
+
+/* Landing page styles */
+.md-typeset .hero-section {
+    text-align: center;
+    padding: 2rem 0;
+    margin-bottom: 1rem;
+}
+
+.md-typeset .hero-section img {
+    max-width: 100%;
+    width: 65%;
+    height: auto;
+}
+
+.md-typeset .install-section {
+    width: 65%;
+    margin: 2rem auto;
+    text-align: center;
+}
+
+@media screen and (max-width: 768px) {
+    .md-typeset .hero-section img {
+        width: 90%;
+    }
+
+    .md-typeset .install-section {
+        width: 90%;
+    }
+}
