@@ -269,7 +269,7 @@ Sparkwheel has two types of references with distinct purposes:
 
 ## About
 
-Sparkwheel is a hard fork of [MONAI](https://github.com/Project-MONAI/MONAI)'s configuration system, refined and expanded for general-purpose use. We're deeply grateful to the MONAI team for their excellent foundation.
+Sparkwheel is a hard fork of [MONAI Bundle](https://github.com/Project-MONAI/MONAI/tree/dev/monai/bundle)'s configuration system, refined and expanded for general-purpose use. We're deeply grateful to the MONAI team for their excellent foundation.
 
 Sparkwheel powers [Lighter](https://project-lighter.github.io/lighter/), a configuration-driven deep learning framework built on PyTorch Lightning.
 
