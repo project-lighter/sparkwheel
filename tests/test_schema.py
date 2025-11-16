@@ -12,7 +12,7 @@ This module tests the schema validation feature, including:
 """
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -445,19 +445,19 @@ class TestConfigIntegration:
     """Test integration with Config class."""
 
     def test_config_load_with_schema(self):
-        """Test Config.load with schema validation."""
+        """Test Config with schema validation."""
 
         @dataclass
         class AppConfig:
             name: str
             port: int
 
-        config = Config.load({"name": "myapp", "port": 8080}, schema=AppConfig)
+        config = Config(schema=AppConfig).update({"name": "myapp", "port": 8080})
         assert config["name"] == "myapp"
         assert config["port"] == 8080
 
     def test_config_load_with_schema_invalid(self):
-        """Test Config.load fails with invalid schema."""
+        """Test Config fails with invalid schema."""
 
         @dataclass
         class AppConfig:
@@ -465,7 +465,7 @@ class TestConfigIntegration:
             port: int
 
         with pytest.raises(ValidationError):
-            Config.load({"name": "myapp", "port": "not int"}, schema=AppConfig)
+            Config(schema=AppConfig).update({"name": "myapp", "port": "not int"})
 
     def test_config_validate_method(self):
         """Test Config.validate method."""
@@ -474,7 +474,7 @@ class TestConfigIntegration:
         class Schema:
             value: int
 
-        config = Config.load({"value": 42})
+        config = Config().update({"value": 42})
         config.validate(Schema)  # Should not raise
 
     def test_config_validate_method_invalid(self):
@@ -484,7 +484,7 @@ class TestConfigIntegration:
         class Schema:
             value: int
 
-        config = Config.load({"value": "not int"})
+        config = Config().update({"value": "not int"})
         with pytest.raises(ValidationError):
             config.validate(Schema)
 
@@ -494,7 +494,7 @@ class TestConfigIntegration:
         class NotADataclass:
             pass
 
-        config = Config.load({"value": 42})
+        config = Config().update({"value": 42})
         with pytest.raises(TypeError, match="Schema must be a dataclass"):
             config.validate(NotADataclass)
 
@@ -726,11 +726,11 @@ class TestDiscriminatedUnions:
             optimizer: SGD | Adam
 
         # SGD
-        config = Config.load({"optimizer": {"type": "sgd", "lr": 0.01, "momentum": 0.9}}, schema=TestSchema)
+        config = Config(schema=TestSchema).update({"optimizer": {"type": "sgd", "lr": 0.01, "momentum": 0.9}})
         assert config["optimizer::type"] == "sgd"
 
         # Adam
-        config = Config.load({"optimizer": {"type": "adam", "lr": 0.001, "beta1": 0.9}}, schema=TestSchema)
+        config = Config(schema=TestSchema).update({"optimizer": {"type": "adam", "lr": 0.001, "beta1": 0.9}})
         assert config["optimizer::type"] == "adam"
 
     def test_missing_discriminator(self):
@@ -751,7 +751,7 @@ class TestDiscriminatedUnions:
             item: TypeA | TypeB
 
         with pytest.raises(ValidationError, match="Missing discriminator field 'type'"):
-            Config.load({"item": {"value": 42}}, schema=TestSchema)
+            Config(schema=TestSchema).update({"item": {"value": 42}})
 
     def test_invalid_discriminator_value(self):
         """Test error on invalid discriminator value."""
@@ -771,7 +771,7 @@ class TestDiscriminatedUnions:
             item: TypeA | TypeB
 
         with pytest.raises(ValidationError, match="Invalid discriminator value 'c'"):
-            Config.load({"item": {"type": "c", "value": 42}}, schema=TestSchema)
+            Config(schema=TestSchema).update({"item": {"type": "c", "value": 42}})
 
     def test_validates_selected_type(self):
         """Test that the selected type is validated."""
@@ -792,7 +792,7 @@ class TestDiscriminatedUnions:
 
         # TypeA with wrong value type
         with pytest.raises(ValidationError, match="item.value"):
-            Config.load({"item": {"type": "a", "value": "not int"}}, schema=TestSchema)
+            Config(schema=TestSchema).update({"item": {"type": "a", "value": "not int"}})
 
     def test_multiple_literal_values(self):
         """Test discriminator with multiple literal values per type."""
@@ -811,9 +811,9 @@ class TestDiscriminatedUnions:
         class TestSchema:
             item: Primary | Secondary
 
-        Config.load({"item": {"type": "primary", "value": 1}}, schema=TestSchema)
-        Config.load({"item": {"type": "main", "value": 1}}, schema=TestSchema)
-        Config.load({"item": {"type": "backup", "value": 2}}, schema=TestSchema)
+        Config(schema=TestSchema).update({"item": {"type": "primary", "value": 1}})
+        Config(schema=TestSchema).update({"item": {"type": "main", "value": 1}})
+        Config(schema=TestSchema).update({"item": {"type": "backup", "value": 2}})
 
     def test_non_discriminated_fallback(self):
         """Test non-discriminated unions still work."""
@@ -831,8 +831,8 @@ class TestDiscriminatedUnions:
             item: TypeA | TypeB
 
         # No discriminator - tries both
-        Config.load({"item": {"x": 42}}, schema=TestSchema)
-        Config.load({"item": {"y": "hello"}}, schema=TestSchema)
+        Config(schema=TestSchema).update({"item": {"x": 42}})
+        Config(schema=TestSchema).update({"item": {"y": "hello"}})
 
     def test_discriminated_union_with_validators(self):
         """Test discriminated unions work with @validator."""
@@ -863,11 +863,11 @@ class TestDiscriminatedUnions:
             optimizer: SGD | Adam
 
         # SGD with valid lr
-        Config.load({"optimizer": {"type": "sgd", "lr": 0.5}}, schema=TestSchema)
+        Config(schema=TestSchema).update({"optimizer": {"type": "sgd", "lr": 0.5}})
 
         # Adam with lr too high for Adam but valid for SGD
         with pytest.raises(ValidationError, match="Adam lr must be 0-0.1"):
-            Config.load({"optimizer": {"type": "adam", "lr": 0.5}}, schema=TestSchema)
+            Config(schema=TestSchema).update({"optimizer": {"type": "adam", "lr": 0.5}})
 
 
 class TestValidatorEdgeCases:
@@ -1097,6 +1097,84 @@ class TestDictWithoutTypeArgs:
         # Should accept any dict
         validate({"mapping": {}}, Config)
         validate({"mapping": {"a": 1, "b": "two"}}, Config)
+
+
+class TestMissingSentinel:
+    """Test _MissingSentinel class."""
+
+    def test_missing_repr(self):
+        """Test __repr__ method."""
+        from sparkwheel.schema import MISSING
+
+        assert repr(MISSING) == "MISSING"
+
+    def test_missing_bool(self):
+        """Test __bool__ method."""
+        from sparkwheel.schema import MISSING
+
+        assert bool(MISSING) is False
+        assert not MISSING
+
+    def test_missing_in_conditionals(self):
+        """Test MISSING in conditional expressions."""
+        from sparkwheel.schema import MISSING
+
+        if MISSING:
+            pytest.fail("MISSING should be falsy")
+        else:
+            pass  # Expected
+
+
+class TestDictWithAny:
+    """Test Dict[K, Any] validation."""
+
+    def test_dict_str_any(self):
+        """Test Dict[str, Any] validation."""
+
+        @dataclass
+        class Config:
+            data: dict[str, Any]
+
+        # Should validate keys but allow any values
+        validate({"data": {"a": 1, "b": "two", "c": [1, 2, 3]}}, Config)
+
+    def test_dict_str_any_wrong_key_type(self):
+        """Test Dict[str, Any] with wrong key type."""
+
+        @dataclass
+        class Config:
+            data: dict[str, Any]
+
+        # Should fail on wrong key type
+        with pytest.raises(ValidationError, match="Dict key has wrong type"):
+            validate({"data": {1: "value"}}, Config)
+
+
+class TestMissingValueHandling:
+    """Test MISSING value handling in validation."""
+
+    def test_missing_value_not_allowed(self):
+        """Test MISSING value when not allowed."""
+        from sparkwheel.schema import MISSING
+
+        @dataclass
+        class Config:
+            value: int
+
+        # MISSING not allowed by default
+        with pytest.raises(ValidationError, match="MISSING value but MISSING not allowed"):
+            validate({"value": MISSING}, Config, allow_missing=False)
+
+    def test_missing_value_allowed(self):
+        """Test MISSING value when allowed."""
+        from sparkwheel.schema import MISSING
+
+        @dataclass
+        class Config:
+            value: int
+
+        # Should be OK with allow_missing=True
+        validate({"value": MISSING}, Config, allow_missing=True)
 
 
 if __name__ == "__main__":

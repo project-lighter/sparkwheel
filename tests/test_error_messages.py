@@ -594,7 +594,7 @@ class TestConfigKeyErrorEnhanced:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("model:\n  learning_rate: 0.001\n  batch_size: 32\nvalue: 10\nref: '@valu'")
 
-        parser = Config.load(str(config_file))
+        parser = Config().update(str(config_file))
 
         # Try to access reference with typo - should get suggestion
         with pytest.raises(ConfigKeyError) as exc_info:
@@ -613,7 +613,7 @@ class TestErrorMessagesIntegration:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("value: 10\nref: '@vlue'")
 
-        parser = Config.load(str(config_file))
+        parser = Config().update(str(config_file))
 
         with pytest.raises(ConfigKeyError) as exc_info:
             parser.resolve("ref")
@@ -628,7 +628,7 @@ class TestErrorMessagesIntegration:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("model:\n  lr: 0.001")
 
-        parser = Config.load(str(config_file))
+        parser = Config().update(str(config_file))
 
         with pytest.raises(ConfigKeyError) as exc_info:
             _ = parser.resolve("model::optimizer")

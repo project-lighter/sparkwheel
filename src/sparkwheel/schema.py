@@ -39,7 +39,21 @@ from typing import Any, Union, get_args, get_origin
 
 from .utils.exceptions import BaseError, SourceLocation
 
-__all__ = ["validate", "validator", "ValidationError"]
+__all__ = ["validate", "validator", "ValidationError", "MISSING"]
+
+
+class _MissingSentinel:
+    """Sentinel for required-but-not-yet-set config values."""
+
+    def __repr__(self) -> str:
+        return "MISSING"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+# Singleton instance
+MISSING = _MissingSentinel()
 
 
 def _is_union_type(origin) -> bool:
@@ -211,6 +225,8 @@ def validate(
     schema: type,
     field_path: str = "",
     metadata: Any = None,
+    allow_missing: bool = False,
+    strict: bool = True,
 ) -> None:
     """Validate configuration against a dataclass schema.
 
@@ -222,6 +238,8 @@ def validate(
         schema: Dataclass type defining the expected structure
         field_path: Internal parameter for tracking nested field paths
         metadata: Optional metadata registry for source locations
+        allow_missing: If True, allow MISSING sentinel values for partial configs
+        strict: If True, reject unexpected fields. If False, ignore them.
 
     Raises:
         ValidationError: If validation fails
@@ -239,7 +257,7 @@ def validate(
             port: int
             debug: bool = False
 
-        config = Config.load("app.yaml")
+        config = Config().update("app.yaml")
         validate(config.get(), AppConfig)
         ```
     """
@@ -283,23 +301,25 @@ def validate(
             field_info.type,
             current_path,
             metadata,
+            allow_missing=allow_missing,
         )
 
-    # Check for unexpected fields
-    unexpected_fields = set(config.keys()) - set(schema_fields.keys())
-    # Filter out sparkwheel special keys
-    special_keys = {"_target_", "_disabled_", "_requires_", "_mode_"}
-    unexpected_fields = unexpected_fields - special_keys
+    # Check for unexpected fields - only if strict mode
+    if strict:
+        unexpected_fields = set(config.keys()) - set(schema_fields.keys())
+        # Filter out sparkwheel special keys
+        special_keys = {"_target_", "_disabled_", "_requires_", "_mode_"}
+        unexpected_fields = unexpected_fields - special_keys
 
-    if unexpected_fields:
-        first_unexpected = sorted(unexpected_fields)[0]
-        current_path = f"{field_path}.{first_unexpected}" if field_path else first_unexpected
-        source_loc = _get_source_location(metadata, current_path) if metadata else None
-        raise ValidationError(
-            f"Unexpected field '{first_unexpected}' not in schema {schema.__name__}",
-            field_path=current_path,
-            source_location=source_loc,
-        )
+        if unexpected_fields:
+            first_unexpected = sorted(unexpected_fields)[0]
+            current_path = f"{field_path}.{first_unexpected}" if field_path else first_unexpected
+            source_loc = _get_source_location(metadata, current_path) if metadata else None
+            raise ValidationError(
+                f"Unexpected field '{first_unexpected}' not in schema {schema.__name__}",
+                field_path=current_path,
+                source_location=source_loc,
+            )
 
     # Run custom validators
     _run_validators(config, schema, field_path, metadata)
@@ -434,7 +454,7 @@ def _validate_discriminated_union(
         )
 
     # Validate against the selected type
-    validate(value, matching_type, field_path, metadata)
+    validate(value, matching_type, field_path, metadata, allow_missing=False, strict=True)
 
 
 def _validate_field(
@@ -442,6 +462,7 @@ def _validate_field(
     expected_type: type,
     field_path: str,
     metadata: Any = None,
+    allow_missing: bool = False,
 ) -> None:
     """Validate a single field value against its expected type.
 
@@ -450,11 +471,25 @@ def _validate_field(
         expected_type: The expected type (may be generic like list[int])
         field_path: Dot-separated path to this field
         metadata: Optional metadata registry for source locations
+        allow_missing: If True, allow MISSING sentinel values for partial configs
 
     Raises:
         ValidationError: If validation fails
     """
     source_loc = _get_source_location(metadata, field_path) if metadata else None
+
+    # Handle MISSING values
+    if isinstance(value, _MissingSentinel):
+        if allow_missing:
+            return  # OK for partial configs
+        else:
+            raise ValidationError(
+                "Field has MISSING value but MISSING not allowed",
+                field_path=field_path,
+                expected_type=expected_type,
+                actual_value=value,
+                source_location=source_loc,
+            )
 
     # Handle None values
     origin = get_origin(expected_type)
@@ -476,14 +511,14 @@ def _validate_field(
             non_none_types = [t for t in args if t is not type(None)]
             if len(non_none_types) == 1:
                 # Simple Optional[T] case - recursively validate with the single type
-                _validate_field(value, non_none_types[0], field_path, metadata)
+                _validate_field(value, non_none_types[0], field_path, metadata, allow_missing)
                 return
             else:
                 # Union with multiple non-None types - try each and collect errors
                 errors = []
                 for union_type in non_none_types:
                     try:
-                        _validate_field(value, union_type, field_path, metadata)
+                        _validate_field(value, union_type, field_path, metadata, allow_missing)
                         return  # Validation succeeded
                     except ValidationError as e:
                         type_name = getattr(union_type, "__name__", str(union_type))
@@ -508,7 +543,7 @@ def _validate_field(
             errors = []
             for union_type in args:
                 try:
-                    _validate_field(value, union_type, field_path, metadata)
+                    _validate_field(value, union_type, field_path, metadata, allow_missing)
                     return  # Validation succeeded
                 except ValidationError as e:
                     type_name = getattr(union_type, "__name__", str(union_type))
@@ -541,13 +576,16 @@ def _validate_field(
             )
         if args:
             item_type = args[0]
-            for i, item in enumerate(value):
-                _validate_field(
-                    item,
-                    item_type,
-                    f"{field_path}[{i}]",
-                    metadata,
-                )
+            # Skip validation for List[Any] - accept any item types
+            if item_type is not Any:
+                for i, item in enumerate(value):
+                    _validate_field(
+                        item,
+                        item_type,
+                        f"{field_path}[{i}]",
+                        metadata,
+                        allow_missing,
+                    )
         return
 
     # Handle dict[K, V]
@@ -562,6 +600,19 @@ def _validate_field(
             )
         if args and len(args) == 2:
             key_type, value_type = args
+            # For Dict[K, Any], only validate keys and allow arbitrary values
+            if value_type is Any:
+                for k in value.keys():
+                    if not isinstance(k, key_type):
+                        raise ValidationError(
+                            "Dict key has wrong type",
+                            field_path=f"{field_path}[{k!r}]",
+                            expected_type=key_type,
+                            actual_value=k,
+                            source_location=source_loc,
+                        )
+                return
+            # Otherwise validate both keys and values
             for k, v in value.items():
                 # Validate key type
                 if not isinstance(k, key_type):
@@ -578,12 +629,13 @@ def _validate_field(
                     value_type,
                     f"{field_path}[{k!r}]",
                     metadata,
+                    allow_missing,
                 )
         return
 
     # Handle nested dataclasses
     if dataclasses.is_dataclass(expected_type):
-        validate(value, expected_type, field_path, metadata)
+        validate(value, expected_type, field_path, metadata, allow_missing, strict=True)
         return
 
     # Handle Literal types
@@ -599,6 +651,10 @@ def _validate_field(
                 actual_value=value,
                 source_location=source_loc,
             )
+        return
+
+    # Handle Any type - accept any value
+    if expected_type is Any:
         return
 
     # Handle basic types (int, str, float, bool, etc.)

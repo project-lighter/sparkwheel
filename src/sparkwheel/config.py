@@ -1,6 +1,5 @@
 """Main configuration management API."""
 
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -11,15 +10,15 @@ from .parser import Parser
 from .path_utils import split_id
 from .preprocessor import Preprocessor
 from .resolver import Resolver
-from .utils import PathLike, ensure_tuple, look_up_option, optional_import
+from .utils import PathLike, look_up_option, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
 from .utils.exceptions import ConfigKeyError
 
-__all__ = ["Config"]
+__all__ = ["Config", "parse_overrides"]
 
 
 class Config:
-    """Configuration management with resolved references, raw references, expressions, and instantiation.
+    """Configuration management with continuous validation, coercion, resolved references, and instantiation.
 
     Main entry point for loading, managing, and resolving configurations.
     Supports YAML files with resolved references (@), raw references (%), expressions ($),
@@ -29,24 +28,23 @@ class Config:
         ```python
         from sparkwheel import Config
 
-        # Load from file
-        config = Config.load("config.yaml")
+        # Create and load from file
+        config = Config(schema=MySchema).update("config.yaml")
 
-        # Load from dict
-        config = Config.load({"model": {"lr": 0.001}})
-
-        # Load multiple files (merged in order)
-        config = Config.load(["base.yaml", "override.yaml"])
+        # Or chain multiple sources
+        config = (Config(schema=MySchema)
+                  .update("base.yaml")
+                  .update("override.yaml")
+                  .update({"model::lr": 0.001}))
 
         # Access raw values
         lr = config.get("model::lr")
 
-        # Set values
+        # Set values (validates automatically if schema provided)
         config.set("model::dropout", 0.1)
 
-        # Update with additional config
-        config.update("experiment.yaml")
-        config.update({"model::lr": 0.01})
+        # Freeze to prevent modifications
+        config.freeze()
 
         # Resolve references and instantiate
         model = config.resolve("model")
@@ -54,21 +52,53 @@ class Config:
         ```
 
     Args:
-        data: Initial configuration data
         globals: Pre-imported packages for expressions (e.g., {"torch": "torch"})
+        schema: Dataclass schema for continuous validation
+        coerce: Auto-convert compatible types (default: True)
+        strict: Reject fields not in schema (default: True)
+        allow_missing: Allow MISSING sentinel values (default: False)
     """
 
-    def __init__(self, data: dict | None = None, globals: dict[str, Any] | None = None):
-        """Initialize Config (use Config.load() instead for most cases).
+    def __init__(
+        self,
+        data: dict | None = None,  # Internal/testing use only
+        *,  # Rest are keyword-only
+        globals: dict[str, Any] | None = None,
+        schema: type | None = None,
+        coerce: bool = True,
+        strict: bool = True,
+        allow_missing: bool = False,
+    ):
+        """Initialize Config container.
+
+        Normally starts empty - use update() to load data.
 
         Args:
-            data: Initial configuration dictionary
-            globals: Global variables for expression evaluation
+            data: Initial data (internal/testing use only, not validated)
+            globals: Pre-imported packages for expression evaluation
+            schema: Dataclass schema for continuous validation
+            coerce: Auto-convert compatible types
+            strict: Reject fields not in schema
+            allow_missing: Allow MISSING sentinel values
+
+        Examples:
+            >>> config = Config(schema=MySchema)
+            >>> config.update("config.yaml")
+
+            >>> # Chaining
+            >>> config = Config(schema=MySchema).update("config.yaml")
         """
-        self._data: dict = data or {}
+        self._data: dict = data or {}  # Start with provided data or empty
         self._metadata = MetadataRegistry()
         self._resolver = Resolver()
         self._is_parsed = False
+        self._frozen = False  # Set via freeze() method later
+
+        # Schema validation state
+        self._schema: type | None = schema
+        self._coerce: bool = coerce
+        self._strict: bool = strict
+        self._allow_missing: bool = allow_missing
 
         # Process globals (import string module paths)
         self._globals: dict[str, Any] = {}
@@ -78,153 +108,6 @@ class Config:
 
         self._loader = Loader()
         self._preprocessor = Preprocessor(self._loader, self._globals)
-
-    @classmethod
-    def load(
-        cls,
-        source: PathLike | Sequence[PathLike] | dict,
-        globals: dict[str, Any] | None = None,
-        schema: type | None = None,
-    ) -> "Config":
-        """Load configuration from file(s) or dict.
-
-        Primary method for creating Config instances.
-
-        Args:
-            source: File path, list of paths, or config dict
-            globals: Pre-imported packages for expressions
-            schema: Optional dataclass schema for validation
-
-        Returns:
-            New Config instance
-
-        Merge Behavior:
-            Files are merged in order (composition-by-default). Use operators to control merging:
-            - key: value   - Compose (default): merge dict or extend list
-            - =key: value  - Replace operator: completely replace value
-            - ~key: null   - Remove operator: delete key (idempotent)
-
-        Examples:
-            >>> # Single file
-            >>> config = Config.load("config.yaml")
-
-            >>> # Multiple files (merged)
-            >>> config = Config.load(["base.yaml", "override.yaml"])
-
-            >>> # From dict
-            >>> config = Config.load({"model": {"lr": 0.001}})
-
-            >>> # With globals for expressions
-            >>> config = Config.load("config.yaml", globals={"torch": "torch"})
-
-            >>> # With schema validation
-            >>> from dataclasses import dataclass
-            >>> @dataclass
-            ... class MySchema:
-            ...     name: str
-            ...     value: int
-            >>> config = Config.load("config.yaml", schema=MySchema)
-        """
-        config = cls(globals=globals)
-
-        # Handle dict input
-        if isinstance(source, dict):
-            config._data = source
-            if schema is not None:
-                config.validate(schema)
-            return config
-
-        # Handle file(s) input
-        file_list = ensure_tuple(source)
-        for filepath in file_list:
-            loaded_data, loaded_metadata = config._loader.load_file(filepath)
-            # Validate operators before applying
-            validate_operators(loaded_data)
-            # Merge data and metadata
-            config._data = apply_operators(config._data, loaded_data)
-            config._metadata.merge(loaded_metadata)
-
-        # Validate against schema if provided
-        if schema is not None:
-            config.validate(schema)
-
-        return config
-
-    @classmethod
-    def from_cli(
-        cls,
-        source: PathLike | Sequence[PathLike] | dict,
-        cli_overrides: list[str],
-        globals: dict[str, Any] | None = None,
-        schema: type | None = None,
-    ) -> "Config":
-        """Load configuration with CLI overrides applied.
-
-        Convenience method for loading configs with command-line overrides.
-        First loads the base config, then applies CLI overrides in the format
-        "key::path=value", and optionally validates against a schema.
-
-        Args:
-            source: File path, list of paths, or config dict
-            cli_overrides: List of override strings in format "key::path=value"
-            globals: Pre-imported packages for expressions
-            schema: Optional dataclass schema for validation
-
-        Returns:
-            New Config instance with CLI overrides applied
-
-        Examples:
-            >>> # Load with CLI overrides
-            >>> config = Config.from_cli(
-            ...     "config.yaml",
-            ...     ["model::lr=0.001", "trainer::max_epochs=100"]
-            ... )
-
-            >>> # Multiple files with overrides
-            >>> config = Config.from_cli(
-            ...     ["base.yaml", "experiment.yaml"],
-            ...     ["model::lr=0.001"]
-            ... )
-
-            >>> # With schema validation
-            >>> from dataclasses import dataclass
-            >>> @dataclass
-            ... class TrainingConfig:
-            ...     model: dict
-            ...     trainer: dict
-            >>> config = Config.from_cli(
-            ...     "config.yaml",
-            ...     ["model::lr=0.001"],
-            ...     schema=TrainingConfig
-            ... )
-
-            >>> # Complex overrides
-            >>> config = Config.from_cli(
-            ...     "config.yaml",
-            ...     [
-            ...         "model::lr=0.001",
-            ...         "trainer::devices=[0,1,2]",
-            ...         "model::layers=[128,256,512]",
-            ...         "debug=True"
-            ...     ]
-            ... )
-        """
-        from .cli import parse_overrides
-
-        # Load base configuration
-        config = cls.load(source, globals=globals, schema=schema)
-
-        # Apply CLI overrides
-        if cli_overrides:
-            overrides = parse_overrides(cli_overrides)
-            for key, value in overrides.items():
-                config.set(key, value)
-
-            # Re-validate after overrides if schema provided
-            if schema is not None:
-                config.validate(schema)
-
-        return config
 
     def get(self, id: str = "", default: Any = None) -> Any:
         """Get raw config value (unresolved).
@@ -256,12 +139,21 @@ class Config:
             id: Configuration path (use :: for nesting)
             value: Value to set
 
+        Raises:
+            FrozenConfigError: If config is frozen
+
         Example:
-            >>> config = Config.load({})
+            >>> config = Config()
             >>> config.set("model::lr", 0.001)
             >>> config.get("model::lr")
             0.001
         """
+        from .utils.exceptions import FrozenConfigError
+
+        # Check frozen state
+        if self._frozen:
+            raise FrozenConfigError("Cannot modify frozen config", field_path=id)
+
         if id == "":
             self._data = value
             self._invalidate_resolution()
@@ -311,35 +203,85 @@ class Config:
 
         validate_schema(self._data, schema, metadata=self._metadata)
 
-    def update(self, source: PathLike | dict | "Config") -> None:
+    def freeze(self) -> None:
+        """Freeze config to prevent further modifications.
+
+        After freezing:
+        - set() raises FrozenConfigError
+        - update() raises FrozenConfigError
+        - resolve() still works (read-only)
+        - get() still works (read-only)
+
+        Example:
+            >>> config = Config(schema=MySchema).update("config.yaml")
+            >>> config.freeze()
+            >>> config.set("model::lr", 0.001)  # Raises FrozenConfigError
+        """
+        self._frozen = True
+
+    def unfreeze(self) -> None:
+        """Unfreeze config to allow modifications."""
+        self._frozen = False
+
+    def is_frozen(self) -> bool:
+        """Check if config is frozen.
+
+        Returns:
+            True if frozen, False otherwise
+        """
+        return self._frozen
+
+    def update(self, source: PathLike | dict | "Config" | str) -> "Config":
         """Update configuration with changes from another source.
 
-        Applies changes using operators for fine-grained control.
-        Supports nested paths (::) and compose/replace/delete operators.
+        Auto-detects strings as either file paths or CLI overrides:
+        - Strings with '=' are parsed as overrides (e.g., "key=value", "=key=value", "~key")
+        - Strings without '=' are treated as file paths
+        - Dicts and Config instances work as before
 
         Args:
-            source: File path, dict, or Config instance to update from
+            source: File path, override string, dict, or Config instance to update from
+
+        Returns:
+            self (for chaining)
 
         Operators:
-            - key: value   - Compose (default): merge dict or extend list
-            - =key: value  - Replace operator: completely replace value
-            - ~key: null   - Remove operator: delete key (idempotent)
+            - key=value      - Compose (default): merge dict or extend list
+            - =key=value     - Replace operator: completely replace value
+            - ~key           - Remove operator: delete key (idempotent)
 
         Examples:
             >>> # Update from file
-            >>> config.update("override.yaml")
+            >>> config.update("base.yaml")
 
-            >>> # Update from dict (merges by default)
+            >>> # Update from override string (auto-detected)
+            >>> config.update("model::lr=0.001")
+
+            >>> # Chain multiple updates (mixed files and overrides)
+            >>> config = (Config(schema=MySchema)
+            ...           .update("base.yaml")
+            ...           .update("exp.yaml")
+            ...           .update("optimizer::lr=0.01")
+            ...           .update("=model={'_target_': 'MyModel'}")
+            ...           .update("~debug"))
+
+            >>> # Update from dict
             >>> config.update({"model": {"dropout": 0.1}})
 
             >>> # Update from another Config instance
-            >>> config1 = Config.load("base.yaml")
-            >>> config2 = Config.from_cli("override.yaml", ["model::lr=0.001"])
+            >>> config1 = Config()
+            >>> config2 = Config().update({"model::lr": 0.001})
             >>> config1.update(config2)
 
-            >>> # Nested path updates
-            >>> config.update({"model::lr": 0.001, "~old_param": None})
+            >>> # CLI integration pattern (just loop!)
+            >>> for item in cli_args:
+            ...     config.update(item)
         """
+        from .utils.exceptions import FrozenConfigError
+
+        if self._frozen:
+            raise FrozenConfigError("Cannot update frozen config")
+
         if isinstance(source, Config):
             self._update_from_config(source)
         elif isinstance(source, dict):
@@ -347,8 +289,25 @@ class Config:
                 self._apply_path_updates(source)
             else:
                 self._apply_structural_update(source)
+        elif isinstance(source, str) and ("=" in source or source.startswith("~")):
+            # Auto-detect override string (key=value, =key=value, ~key)
+            self._update_from_override_string(source)
         else:
             self._update_from_file(source)
+
+        # Validate after update if schema exists
+        if self._schema:
+            from .schema import validate as validate_schema
+
+            validate_schema(
+                self._data,
+                self._schema,
+                metadata=self._metadata,
+                allow_missing=self._allow_missing,
+                strict=self._strict,
+            )
+
+        return self  # Enable chaining
 
     def _update_from_config(self, source: "Config") -> None:
         """Update from another Config instance."""
@@ -418,6 +377,11 @@ class Config:
         self._data = apply_operators(self._data, new_data)
         self._metadata.merge(new_metadata)
         self._invalidate_resolution()
+
+    def _update_from_override_string(self, override: str) -> None:
+        """Parse and apply a single override string (e.g., 'key=value', '=key=value', '~key')."""
+        overrides_dict = parse_overrides([override])
+        self._apply_path_updates(overrides_dict)
 
     def resolve(
         self,
@@ -595,3 +559,76 @@ class Config:
         filepath_str = str(Path(filepath))
         with open(filepath_str, "w") as f:
             yaml.safe_dump(config, f, **kwargs)
+
+
+def parse_overrides(args: list[str]) -> dict[str, Any]:
+    """Parse CLI argument overrides with automatic type inference.
+
+    Supports only key=value syntax with operator prefixes.
+    Types are automatically inferred using ast.literal_eval().
+
+    Args:
+        args: List of argument strings to parse (e.g., from argparse)
+
+    Returns:
+        Dictionary of parsed key-value pairs with inferred types.
+        Keys may have operator prefixes (=key for replace, ~key for delete).
+
+    Operators:
+        - key=value    - Normal assignment (composes/merges)
+        - =key=value   - Replace operator (completely replaces key)
+        - ~key         - Delete operator (removes key)
+
+    Examples:
+        >>> # Basic overrides (compose/merge)
+        >>> parse_overrides(["model::lr=0.001", "debug=True"])
+        {"model::lr": 0.001, "debug": True}
+
+        >>> # With operators
+        >>> parse_overrides(["=model={'_target_': 'ResNet'}", "~old_param"])
+        {"=model": {'_target_': 'ResNet'}, "~old_param": None}
+
+        >>> # Nested paths with operators
+        >>> parse_overrides(["=optimizer::lr=0.01", "~model::old_param"])
+        {"=optimizer::lr": 0.01, "~model::old_param": None}
+
+    Note:
+        The '=' character serves dual purpose:
+        - In 'key=value' → assignment operator (CLI syntax)
+        - In '=key=value' → replace operator prefix (config operator)
+    """
+    import ast
+
+    overrides = {}
+
+    for arg in args:
+        # Handle delete operator: ~key
+        if arg.startswith("~"):
+            key = arg  # Keep the ~ prefix
+            overrides[key] = None
+            continue
+
+        # Handle replace operator: =key=value
+        if arg.startswith("=") and "=" in arg[1:]:
+            # Remove the = prefix, then split on first =
+            rest = arg[1:]  # Remove leading =
+            key, value = rest.split("=", 1)
+            key = "=" + key  # Add back the = prefix to the key
+            try:
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                pass  # Keep as string
+            overrides[key] = value
+            continue
+
+        # Handle normal assignment: key=value
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+            try:
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                pass  # Keep as string
+            overrides[key] = value
+            continue
+
+    return overrides
