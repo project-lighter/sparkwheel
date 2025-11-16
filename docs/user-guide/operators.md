@@ -2,6 +2,32 @@
 
 Sparkwheel uses **composition-by-default**: configs merge naturally with just 2 operators (`=`, `~`) for explicit control.
 
+## Composition Decision Flow
+
+!!! abstract "How Sparkwheel Merges Configs"
+
+    When merging two configs, Sparkwheel follows this decision tree:
+
+    **1. Key exists in both configs?**
+
+    - ❌ **No** → Simply add the new key-value pair
+    - ✅ **Yes** → Continue to step 2
+
+    **2. Does the key have an operator?**
+
+    - **`~key`** → 🗑️ Delete the key (highest priority)
+    - **`=key`** → 🔄 Replace completely (overwrite everything)
+    - **No operator** → Continue to step 3
+
+    **3. What's the value type?** (Default behavior)
+
+    - **Dict** → ✅ **Merge recursively** (combine keys)
+    - **List** → ✅ **Extend** (append items)
+    - **Other** → Replace with new value
+
+!!! tip "Priority Order"
+    Delete (`~`) > Replace (`=`) > Type-based default (merge/extend)
+
 ## Composition by Default
 
 By default, configs compose naturally - dicts merge, lists extend:
@@ -24,7 +50,9 @@ model:
 ```
 
 ```python
-config = Config.load(["base.yaml", "override.yaml"])
+config = (Config()
+          .update("base.yaml")
+          .update("override.yaml"))
 # Result:
 # model:
 #   hidden_size: 1024   (updated)
@@ -62,7 +90,9 @@ When you need to completely replace something, use `=key`:
 ```
 
 ```python
-config = Config.load(["base.yaml", "override.yaml"])
+config = (Config()
+          .update("base.yaml")
+          .update("override.yaml"))
 # Result:
 # model:
 #   hidden_size: 1024  (only this remains)
@@ -259,7 +289,8 @@ Apply operators in Python:
 ```python
 from sparkwheel import Config
 
-config = Config.load("base.yaml")
+config = Config()
+config.update("base.yaml")
 
 # Compose (merge dict) - default behavior
 config.update({"model": {"hidden_size": 1024}})
@@ -296,8 +327,10 @@ config.update({"~dataloaders": ["train", "test"]})
 Configs compose when merged:
 
 ```python
-base = Config.load("base.yaml")
-override = Config.load("override.yaml")
+base = Config()
+base.update("base.yaml")
+override = Config()
+override.update("override.yaml")
 
 # Merge one Config into another (composes by default!)
 base.update(override)
@@ -363,11 +396,12 @@ plugins:
 
 ```python
 # Build configs in layers (all compose naturally!)
-config = Config.load("defaults.yaml")
-config.update("models/resnet50.yaml")
-config.update("datasets/imagenet.yaml")
-config.update("experiments/exp_042.yaml")
-config.update("env/production.yaml")
+config = (Config()
+          .update("defaults.yaml")
+          .update("models/resnet50.yaml")
+          .update("datasets/imagenet.yaml")
+          .update("experiments/exp_042.yaml")
+          .update("env/production.yaml"))
 ```
 
 ## Best Practices

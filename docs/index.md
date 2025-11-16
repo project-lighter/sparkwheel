@@ -57,7 +57,7 @@ pip install sparkwheel
 
     ---
 
-    Validate configs with Python dataclasses. Catch errors early with type checking and required field validation.
+    Validate configs with Python dataclasses. Continuous validation catches errors immediately at mutation time with type checking, coercion, and required field validation.
 
 -   :material-console:{ .lg .middle } __CLI Overrides__
 
@@ -99,7 +99,8 @@ If you're tired of **hardcoding parameters** and want **configuration-driven wor
     from sparkwheel import Config
 
     # Load config (or multiple configs!)
-    config = Config.load("config.yaml")
+    config = Config()
+    config.update("config.yaml")
 
     # Access raw values
     batch_size = config["dataset::batch_size"]  # 32
@@ -126,14 +127,27 @@ If you're tired of **hardcoding parameters** and want **configuration-driven wor
     ```
 
     ```python
-    # Load base + experiment (composes automatically!)
-    config = Config.load(["config.yaml", "experiment_large.yaml"])
+    from sparkwheel import Config
+    import sys
 
-    # Or override from CLI
-    config = Config.from_cli(
-        "config.yaml",
-        ["training::learning_rate=0.01", "dataset::batch_size=64"]
-    )
+    # Load base + experiment (composes automatically!)
+    config = (Config()
+              .update("config.yaml")
+              .update("experiment_large.yaml"))
+
+    # Or override from CLI (parse args yourself)
+    config = Config()
+    config.update("config.yaml")
+    for arg in sys.argv[1:]:
+        if "=" in arg:
+            key, value = arg.split("=", 1)
+            # Simple parsing - use ast.literal_eval for type conversion
+            try:
+                import ast
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                pass  # Keep as string
+            config.set(key, value)
     ```
 
 ## Understanding References

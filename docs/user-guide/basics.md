@@ -25,7 +25,8 @@ YAML provides excellent readability and native support for comments, making it i
 from sparkwheel import Config
 
 # Load from file
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 ```
 
 ### Loading from Dictionary
@@ -37,14 +38,17 @@ config_dict = {
 }
 
 # Load from dict
-config = Config.load(config_dict)
+config = Config()
+config.update(config_dict)
 ```
 
 ### Loading Multiple Files
 
 ```python
-# Load and merge multiple config files
-config = Config.load(["base.yaml", "override.yaml"])
+# Load and merge multiple config files (method chaining!)
+config = (Config()
+          .update("base.yaml")
+          .update("override.yaml"))
 ```
 
 ## Accessing Configuration Values
@@ -54,7 +58,8 @@ Sparkwheel provides two equivalent syntaxes for accessing nested configuration v
 ### Two Ways to Access Nested Values
 
 ```python
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 
 # Method 1: Standard nested dictionary access
 name = config["name"]
@@ -239,7 +244,7 @@ training:
 
 ### Schema Validation with Dataclasses
 
-Sparkwheel supports automatic validation using Python dataclasses. This is the recommended approach for production code:
+Sparkwheel supports automatic validation using Python dataclasses with **continuous validation** - errors are caught immediately when you mutate the config:
 
 ```python
 from dataclasses import dataclass
@@ -252,16 +257,23 @@ class AppConfig:
     port: int
     debug: bool = False
 
-# Validate automatically on load
-config = Config.load("config.yaml", schema=AppConfig)
+# Continuous validation - validates on every update/set!
+config = Config(schema=AppConfig)
+config.update("config.yaml")
 
-# Or validate explicitly
-config = Config.load("config.yaml")
+# This will raise ValidationError immediately
+config.set("port", "not a number")  # ✗ Error caught at mutation time!
+
+# Or validate explicitly after mutations
+config = Config()
+config.update("config.yaml")
 config.validate(AppConfig)
 ```
 
 Schema validation provides:
+- **Continuous validation**: Errors caught immediately at mutation time (when schema provided to `Config()`)
 - **Type checking**: Ensures values have the correct types
+- **Type coercion**: Automatically converts compatible types (e.g., `"8080"` → `8080`)
 - **Required fields**: Catches missing configuration
 - **Clear errors**: Points directly to the problem with helpful messages
 
@@ -275,7 +287,8 @@ You can also validate manually:
 from sparkwheel import Config
 
 # Load config
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 
 # Validate required keys
 required_keys = ["name", "version", "settings"]
@@ -359,18 +372,30 @@ Load and merge multiple config files:
 
 ```python
 from sparkwheel import Config
+import ast
 
-# Method 1: Load multiple files at once
-config = Config.load(["base_config.yaml", "prod_config.yaml"])
+# Method 1: Chain updates (recommended!)
+config = (Config()
+          .update("base_config.yaml")
+          .update("prod_config.yaml"))
 
-# Method 2: Load then merge
-config = Config.load("base_config.yaml")
+# Method 2: Sequential updates
+config = Config()
+config.update("base_config.yaml")
 config.update("prod_config.yaml")
 
-# Method 3: Merge Config instances
-base = Config.load("base.yaml")
-cli = Config.from_cli("override.yaml", ["model::lr=0.001"])
-base.merge(cli)  # Merge one Config into another
+# Method 3: With CLI overrides (manual parsing)
+config = Config()
+config.update("override.yaml")
+# Parse CLI args yourself - simple!
+for arg in ["model::lr=0.001"]:
+    if "=" in arg:
+        key, value = arg.split("=", 1)
+        try:
+            value = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            pass
+        config.set(key, value)
 
 # Later configs override earlier ones
 resolved = config.resolve()

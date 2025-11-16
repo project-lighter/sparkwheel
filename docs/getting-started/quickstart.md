@@ -36,7 +36,8 @@ Load and use it in Python:
 from sparkwheel import Config
 
 # Load the config
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 
 # Access values with path notation
 batch_size = config["dataset::batch_size"]  # 32
@@ -81,7 +82,9 @@ training:
 Load both configs:
 
 ```python
-config = Config.load(["config.yaml", "experiment_large.yaml"])
+config = (Config()
+          .update("config.yaml")
+          .update("experiment_large.yaml"))
 
 model = config.resolve("model")  # Linear(1568, 10) - merged automatically!
 lr = config["training::learning_rate"]  # 0.0001
@@ -98,8 +101,20 @@ Override values from the command line without editing files:
 # train.py
 from sparkwheel import Config
 import sys
+import ast
 
-config = Config.from_cli("config.yaml", sys.argv[1:])
+config = Config()
+config.update("config.yaml")
+
+# Parse CLI overrides (simple 3-line pattern)
+for arg in sys.argv[1:]:
+    if "=" in arg:
+        key, value = arg.split("=", 1)
+        try:
+            value = ast.literal_eval(value)  # Parse numbers, lists, etc.
+        except (ValueError, SyntaxError):
+            pass  # Keep as string
+        config.set(key, value)
 # ... use config ...
 ```
 
