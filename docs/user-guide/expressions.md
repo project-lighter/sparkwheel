@@ -248,4 +248,3 @@ except Exception as e:
 
 - [Instantiation](instantiation.md) - Create objects with expressions
 - [Advanced Features](advanced.md) - Complex expression patterns
-- [Examples](../examples/deep-learning.md) - Real-world expression usage

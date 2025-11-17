@@ -129,6 +129,5 @@ python train.py training::learning_rate=0.01 dataset::batch_size=64
 Now that you've seen the basics:
 
 - **[Core Concepts](../user-guide/basics.md)** - Learn more about references, expressions, and instantiation
-- **[Examples](../examples/simple.md)** - See complete real-world examples
 - **[Composition & Operators](../user-guide/operators.md)** - Master config composition with `=` and `~`
 - **[Schema Validation](../user-guide/schema-validation.md)** - Validate configs with dataclasses

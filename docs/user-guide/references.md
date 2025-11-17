@@ -10,12 +10,60 @@ Sparkwheel provides two types of references for linking configuration values:
 | Feature | `@ref` (Resolved) | `%ref` (Raw) | `$expr` (Expression) |
 |---------|-------------------|--------------|----------------------|
 | **Returns** | Final computed value | Raw YAML content | Evaluated expression result |
+| **When processed** | Lazy (`resolve()`) | Eager (`update()`) | Lazy (`resolve()`) |
 | **Instantiates objects** | ✅ Yes | ❌ No | ✅ Yes (if referenced) |
 | **Evaluates expressions** | ✅ Yes | ❌ No | ✅ Yes |
 | **Use in dataclass validation** | ✅ Yes | ⚠️ Limited | ✅ Yes |
 | **CLI override compatible** | ✅ Yes | ✅ Yes | ❌ No |
 | **Cross-file references** | ✅ Yes | ✅ Yes | ❌ No |
 | **When to use** | Get computed results | Copy config structures | Compute new values |
+
+## Two-Stage Processing Model
+
+Sparkwheel processes references at different times to enable safe config composition:
+
+!!! abstract "When References Are Processed"
+
+    **Stage 1: Eager Processing (during `update()`)**
+
+    - **Raw References (`%`)** are expanded immediately when configs are merged
+    - Enables safe config composition and pruning workflows
+    - External file references resolved at load time
+
+    **Stage 2: Lazy Processing (during `resolve()`)**
+
+    - **Resolved References (`@`)** are processed on-demand
+    - **Expressions (`$`)** are evaluated when needed
+    - **Components (`_target_`)** are instantiated only when requested
+    - Supports complex dependency graphs and deferred instantiation
+
+**Why two stages?**
+
+This separation enables powerful workflows like config pruning:
+
+```yaml
+# base.yaml
+system:
+  lr: 0.001
+  batch_size: 32
+
+experiment:
+  model:
+    optimizer:
+      lr: "%system::lr"  # Copies raw value 0.001 eagerly
+
+~system: null  # Delete system section after copying
+```
+
+```python
+config = Config()
+config.update("base.yaml")
+# % references already expanded during update()
+# ~system deletion applied after expansion
+# Result: experiment::model::optimizer::lr = 0.001 (system deleted safely)
+```
+
+With `@` references, this would fail because they resolve lazily after deletion.
 
 ## Resolution Flow
 
@@ -25,10 +73,10 @@ Sparkwheel provides two types of references for linking configuration values:
 
     **Step 2: Determine Type**
 
-    - **`@key`** → Proceed to dependency resolution
-    - **`%key`** → Return raw YAML immediately ✅
+    - **`%key`** → Expanded eagerly during `update()` ✅
+    - **`@key`** → Proceed to dependency resolution (lazy)
 
-    **Step 3: Resolve Dependencies** (for `@` references)
+    **Step 3: Resolve Dependencies** (for `@` references during `resolve()`)
 
     - Check for circular references → ❌ **Error if found**
     - Resolve all dependencies first
