@@ -49,7 +49,7 @@ class Preprocessor:
         >>> # }
     """
 
-    def __init__(self, loader, globals: dict[str, Any] | None = None):
+    def __init__(self, loader, globals: dict[str, Any] | None = None):  # type: ignore[no-untyped-def]
         """Initialize preprocessor.
 
         Args:
@@ -59,7 +59,7 @@ class Preprocessor:
         self.loader = loader
         self.globals = globals or {}
 
-    def process(self, config: Any, base_data: dict, id: str = "") -> Any:
+    def process(self, config: Any, base_data: dict[str, Any], id: str = "") -> Any:
         """Preprocess entire config tree.
 
         Main entry point - walks config tree recursively and applies
@@ -81,7 +81,7 @@ class Preprocessor:
     def _process_recursive(
         self,
         config: Any,
-        base_data: dict,
+        base_data: dict[str, Any],
         id: str,
         raw_ref_stack: set[str],
     ) -> Any:
@@ -118,7 +118,7 @@ class Preprocessor:
 
         return config
 
-    def _expand_raw_ref(self, raw_ref: str, base_data: dict, raw_ref_stack: set[str]) -> Any:
+    def _expand_raw_ref(self, raw_ref: str, base_data: dict[str, Any], raw_ref_stack: set[str]) -> Any:
         """Expand a single raw reference by loading external file or local YAML.
 
         Args:
@@ -162,7 +162,7 @@ class Preprocessor:
             raw_ref_stack.discard(raw_ref)
 
     @staticmethod
-    def _get_by_id(config: dict, id: str) -> Any:
+    def _get_by_id(config: dict[str, Any], id: str) -> Any:
         """Navigate config dict by ID path.
 
         Args:
@@ -183,7 +183,7 @@ class Preprocessor:
         for key in split_id(id):
             if isinstance(current, dict):
                 current = current[key]
-            elif isinstance(current, list):
+            elif isinstance(current, list):  # type: ignore[unreachable]
                 current = current[int(key)]
             else:
                 raise TypeError(f"Cannot index {type(current).__name__} with key '{key}' at path '{id}'")

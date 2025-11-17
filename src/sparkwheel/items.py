@@ -278,7 +278,7 @@ class Expression(Item):
         self,
         config: Any,
         id: str = "",
-        globals: dict | None = None,
+        globals: dict[str, Any] | None = None,
         source_location: SourceLocation | None = None,
     ) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
@@ -301,9 +301,9 @@ class Expression(Item):
         if isinstance(node, ast.Import):
             self.globals[asname], _ = optional_import(f"{name}")
             return self.globals[asname]
-        return None
+        return None  # type: ignore[unreachable]
 
-    def evaluate(self, globals: dict | None = None, locals: dict | None = None) -> str | Any | None:
+    def evaluate(self, globals: dict[str, Any] | None = None, locals: dict[str, Any] | None = None) -> str | Any | None:
         """Evaluate the expression and return the result.
 
         Uses Python's `eval()` to execute the expression string.
@@ -350,7 +350,7 @@ class Expression(Item):
         return None
 
     @classmethod
-    def is_expression(cls, config: dict | list | str) -> bool:
+    def is_expression(cls, config: dict[str, Any] | list[Any] | str) -> bool:
         """
         Check whether the config is an executable expression string.
         Currently, a string starts with ``"$"`` character is interpreted as an expression.
@@ -361,7 +361,7 @@ class Expression(Item):
         return isinstance(config, str) and config.startswith(cls.prefix)
 
     @classmethod
-    def is_import_statement(cls, config: dict | list | str) -> bool:
+    def is_import_statement(cls, config: dict[str, Any] | list[Any] | str) -> bool:
         """
         Check whether the config is an import statement (a special case of expression).
 
@@ -372,4 +372,4 @@ class Expression(Item):
             return False
         if "import" not in config:
             return False
-        return isinstance(first(ast.iter_child_nodes(ast.parse(f"{config[len(cls.prefix) :]}"))), (ast.Import, ast.ImportFrom))
+        return isinstance(first(ast.iter_child_nodes(ast.parse(f"{config[len(cls.prefix) :]}"))), (ast.Import, ast.ImportFrom))  # type: ignore[index]

@@ -7,7 +7,7 @@ from typing import Any, Union, get_args, get_origin
 __all__ = ["coerce_value", "can_coerce"]
 
 
-def _is_union_type(origin) -> bool:
+def _is_union_type(origin: Any) -> bool:
     """Check if origin is a Union type."""
     if origin is Union:
         return True
@@ -103,6 +103,8 @@ def coerce_value(value: Any, target_type: type, field_path: str = "") -> Any:
             if field_name in schema_fields:
                 field_info = schema_fields[field_name]
                 field_path_full = f"{field_path}.{field_name}" if field_path else field_name
+                # field_info.type can be str in some edge cases, but for our use it's always type
+                assert isinstance(field_info.type, type)
                 coerced[field_name] = coerce_value(field_value, field_info.type, field_path_full)
             else:
                 # Keep unknown fields as-is (strict mode will catch them)

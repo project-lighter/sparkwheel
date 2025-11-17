@@ -3,7 +3,7 @@ import warnings
 from collections.abc import Iterable
 from typing import Any, TypeVar
 
-from yaml import SafeLoader
+from yaml import SafeLoader  # type: ignore[import-untyped]
 
 __all__ = [
     "first",
@@ -38,7 +38,7 @@ def issequenceiterable(obj: Any) -> bool:
     return isinstance(obj, Iterable) and not isinstance(obj, (str, bytes))
 
 
-def ensure_tuple(vals: Any) -> tuple:
+def ensure_tuple(vals: Any) -> tuple[Any, ...]:
     """
     Returns a tuple of `vals`.
 

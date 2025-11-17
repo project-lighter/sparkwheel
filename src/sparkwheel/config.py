@@ -61,7 +61,7 @@ class Config:
 
     def __init__(
         self,
-        data: dict | None = None,  # Internal/testing use only
+        data: dict[str, Any] | None = None,  # Internal/testing use only
         *,  # Rest are keyword-only
         globals: dict[str, Any] | None = None,
         schema: type | None = None,
@@ -88,7 +88,7 @@ class Config:
             >>> # Chaining
             >>> config = Config(schema=MySchema).update("config.yaml")
         """
-        self._data: dict = data or {}  # Start with provided data or empty
+        self._data: dict[str, Any] = data or {}  # Start with provided data or empty
         self._metadata = MetadataRegistry()
         self._resolver = Resolver()
         self._is_parsed = False
@@ -163,7 +163,7 @@ class Config:
 
         # Ensure root is dict
         if not isinstance(self._data, dict):
-            self._data = {}
+            self._data = {}  # type: ignore[unreachable]
 
         # Create missing intermediate paths
         current = self._data
@@ -231,7 +231,7 @@ class Config:
         """
         return self._frozen
 
-    def update(self, source: PathLike | dict | "Config" | str) -> "Config":
+    def update(self, source: PathLike | dict[str, Any] | "Config" | str) -> "Config":
         """Update configuration with changes from another source.
 
         Auto-detects strings as either file paths or CLI overrides:
@@ -315,15 +315,15 @@ class Config:
         self._metadata.merge(source._metadata)
         self._invalidate_resolution()
 
-    def _uses_nested_paths(self, source: dict) -> bool:
+    def _uses_nested_paths(self, source: dict[str, Any]) -> bool:
         """Check if dict uses :: path syntax."""
         return any(ID_SEP_KEY in str(k).lstrip(REPLACE_KEY).lstrip(REMOVE_KEY) for k in source.keys())
 
-    def _apply_path_updates(self, source: dict) -> None:
+    def _apply_path_updates(self, source: dict[str, Any]) -> None:
         """Apply nested path updates (e.g., model::lr=value, =model=replace, ~old::param=null)."""
         for key, value in source.items():
             if not isinstance(key, str):
-                self.set(str(key), value)
+                self.set(str(key), value)  # type: ignore[unreachable]
                 continue
 
             if key.startswith(REPLACE_KEY):
@@ -364,7 +364,7 @@ class Config:
                 del self._data[key]
         self._invalidate_resolution()
 
-    def _apply_structural_update(self, source: dict) -> None:
+    def _apply_structural_update(self, source: dict[str, Any]) -> None:
         """Apply structural update with operators."""
         validate_operators(source)
         self._data = apply_operators(self._data, source)
@@ -546,7 +546,7 @@ class Config:
         return f"Config({self._data})"
 
     @staticmethod
-    def export_config_file(config: dict, filepath: PathLike, **kwargs: Any) -> None:
+    def export_config_file(config: dict[str, Any], filepath: PathLike, **kwargs: Any) -> None:
         """Export config to YAML file.
 
         Args:
@@ -554,7 +554,7 @@ class Config:
             filepath: Target file path
             kwargs: Additional arguments for yaml.safe_dump
         """
-        import yaml
+        import yaml  # type: ignore[import-untyped]
 
         filepath_str = str(Path(filepath))
         with open(filepath_str, "w") as f:
@@ -599,7 +599,7 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
     """
     import ast
 
-    overrides = {}
+    overrides: dict[str, Any] = {}
 
     for arg in args:
         # Handle delete operator: ~key
