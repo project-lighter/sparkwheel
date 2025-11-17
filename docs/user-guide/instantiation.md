@@ -14,7 +14,8 @@ model:
 ```python
 from sparkwheel import Config
 
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 
 # Instantiate the object
 model = config.resolve("model")

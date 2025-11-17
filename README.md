@@ -34,7 +34,8 @@ dataset:
 ```python
 from sparkwheel import Config
 
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 model = config.resolve("model")  # Actual torch.nn.Linear(784, 10) instance!
 ```
 
