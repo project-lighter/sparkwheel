@@ -3,7 +3,7 @@
 import pytest
 
 from sparkwheel.items import Component, Expression, Item
-from sparkwheel.utils.exceptions import EvaluationError, InstantiationError, ModuleNotFoundError
+from sparkwheel.utils.exceptions import EvaluationError, InstantiationError, TargetNotFoundError
 
 
 class TestItem:
@@ -126,20 +126,20 @@ class TestComponent:
         assert result is None
 
     def test_instantiate_module_not_found(self):
-        """Test instantiate raises ModuleNotFoundError for missing module."""
+        """Test instantiate raises TargetNotFoundError for missing module."""
         config = {"_target_": "nonexistent.module.Class"}
         component = Component(config=config)
 
-        with pytest.raises(ModuleNotFoundError, match="Cannot locate class or function"):
+        with pytest.raises(TargetNotFoundError, match="Cannot locate class or function"):
             component.instantiate()
 
     def test_instantiate_with_suggestions(self):
-        """Test ModuleNotFoundError includes suggestions for typos."""
+        """Test TargetNotFoundError includes suggestions for typos."""
         # Use a real module with a typo
         config = {"_target_": "collections.Counterfeit"}  # Should suggest "Counter"
         component = Component(config=config)
 
-        with pytest.raises(ModuleNotFoundError) as exc_info:
+        with pytest.raises(TargetNotFoundError) as exc_info:
             component.instantiate()
 
         error_msg = str(exc_info.value)
@@ -387,7 +387,7 @@ class TestItemWithSourceLocation:
         config = {"_target_": "nonexistent.Module"}
         component = Component(config=config, id="model", source_location=location)
 
-        with pytest.raises(ModuleNotFoundError) as exc_info:
+        with pytest.raises(TargetNotFoundError) as exc_info:
             component.instantiate()
 
         error = exc_info.value
@@ -416,7 +416,7 @@ class TestItemsEdgeCases:
         component = Component(config={"_target_": "nonexistent.BadModule"}, id="test")
 
         # Instantiate should fail, but suggestion generation shouldn't crash
-        with pytest.raises(ModuleNotFoundError):
+        with pytest.raises(TargetNotFoundError):
             component.instantiate()
 
     def test_expression_multiple_import_aliases(self):

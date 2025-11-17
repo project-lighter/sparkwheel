@@ -332,9 +332,9 @@ class TestModuleUtils:
 
     def test_instantiate_not_found(self):
         """Test instantiate raises error for non-existent path."""
-        from sparkwheel.utils.exceptions import ModuleNotFoundError
+        from sparkwheel.utils.exceptions import TargetNotFoundError
 
-        with pytest.raises(ModuleNotFoundError, match="Cannot locate"):
+        with pytest.raises(TargetNotFoundError, match="Cannot locate"):
             instantiate("nonexistent.module.Class", "default")
 
     def test_instantiate_not_callable_warning(self):
