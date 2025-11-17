@@ -33,10 +33,10 @@ def levenshtein_distance(s1: str, s2: str) -> int:
         return len(s1)
 
     # Create distance matrix
-    previous_row = range(len(s2) + 1)
+    previous_row: list[int] = list(range(len(s2) + 1))
 
     for i, c1 in enumerate(s1):
-        current_row = [i + 1]
+        current_row: list[int] = [i + 1]
         for j, c2 in enumerate(s2):
             # Cost of insertions, deletions, or substitutions
             insertions = previous_row[j + 1] + 1

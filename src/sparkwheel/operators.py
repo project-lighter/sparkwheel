@@ -54,7 +54,7 @@ def _validate_delete_operator(key: str, value: Any) -> None:
         )
 
 
-def validate_operators(config: dict, parent_key: str = "") -> None:
+def validate_operators(config: dict[str, Any], parent_key: str = "") -> None:
     """Validate operator usage in config tree.
 
     With composition-by-default, validation is simpler:
@@ -70,11 +70,11 @@ def validate_operators(config: dict, parent_key: str = "") -> None:
         ConfigMergeError: If operator usage is invalid
     """
     if not isinstance(config, dict):
-        return
+        return  # type: ignore[unreachable]
 
     for key, value in config.items():
         if not isinstance(key, str):
-            continue
+            continue  # type: ignore[unreachable]
 
         actual_key = key
         operator = None
@@ -98,7 +98,7 @@ def validate_operators(config: dict, parent_key: str = "") -> None:
             validate_operators(value, full_key)
 
 
-def apply_operators(base: dict, override: dict) -> dict:
+def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Apply configuration changes with composition-by-default semantics.
 
     Default behavior: Compose (merge dicts, extend lists)
@@ -150,13 +150,13 @@ def apply_operators(base: dict, override: dict) -> dict:
         {"a": 1, "b": 5}
     """
     if not isinstance(base, dict) or not isinstance(override, dict):
-        return deepcopy(override)
+        return deepcopy(override)  # type: ignore[unreachable]
 
     result = deepcopy(base)
 
     for key, value in override.items():
         if not isinstance(key, str):
-            result[key] = deepcopy(value)
+            result[key] = deepcopy(value)  # type: ignore[unreachable]
             continue
 
         # Process replace operator (=key)

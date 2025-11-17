@@ -63,7 +63,7 @@ def damerau_levenshtein_distance(s1: str, s2: str) -> int:
 
 def look_up_option(
     opt_str: Hashable,
-    supported: Collection | enum.EnumMeta,
+    supported: Collection[Any] | enum.EnumMeta,
     default: Any = "no_default",
     print_all_options: bool = True,
 ) -> Any:
@@ -101,7 +101,7 @@ def look_up_option(
     if isinstance(opt_str, str):
         opt_str = opt_str.strip()
     if isinstance(supported, enum.EnumMeta):
-        if isinstance(opt_str, str) and opt_str in {item.value for item in supported}:  # type: ignore[attr-defined]
+        if isinstance(opt_str, str) and opt_str in {item.value for item in supported}:  # type: ignore[var-annotated]
             # such as: "example" in MyEnum
             return supported(opt_str)
         if isinstance(opt_str, enum.Enum) and opt_str in supported:
@@ -117,9 +117,9 @@ def look_up_option(
         return default
 
     # find a close match
-    set_to_check: set
+    set_to_check: set[Any]
     if isinstance(supported, enum.EnumMeta):
-        set_to_check = {item.value for item in supported}  # type: ignore[attr-defined]
+        set_to_check = {item.value for item in supported}  # type: ignore[var-annotated]
     else:
         set_to_check = set(supported) if supported is not None else set()
     if not set_to_check:

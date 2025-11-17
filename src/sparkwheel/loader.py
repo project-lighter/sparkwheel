@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from .metadata import MetadataRegistry
 from .path_patterns import is_yaml_file
@@ -23,7 +23,7 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
     this loader populates a separate MetadataRegistry during loading.
     """
 
-    def __init__(self, stream, filepath: str, registry: MetadataRegistry):
+    def __init__(self, stream, filepath: str, registry: MetadataRegistry):  # type: ignore[no-untyped-def]
         super().__init__(stream)
         self.filepath = filepath
         self.registry = registry
@@ -121,7 +121,7 @@ class Loader:
         ```
     """
 
-    def load_file(self, filepath: PathLike) -> tuple[dict, MetadataRegistry]:
+    def load_file(self, filepath: PathLike) -> tuple[dict[str, Any], MetadataRegistry]:
         """Load a single YAML file with metadata tracking.
 
         Args:
@@ -163,7 +163,7 @@ class Loader:
 
         return config, registry
 
-    def _load_yaml_with_metadata(self, stream, filepath: str, registry: MetadataRegistry) -> dict:
+    def _load_yaml_with_metadata(self, stream, filepath: str, registry: MetadataRegistry) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         """Load YAML and populate metadata registry during construction.
 
         Args:
@@ -183,7 +183,7 @@ class Loader:
         def loader_init(self, stream_arg):
             MetadataTrackingYamlLoader.__init__(self, stream_arg, filepath, registry)
 
-        TrackerLoader.__init__ = loader_init
+        TrackerLoader.__init__ = loader_init  # type: ignore[method-assign,assignment]
 
         # Load and return clean config
         config = yaml.load(stream, TrackerLoader)
@@ -206,7 +206,7 @@ class Loader:
         else:
             return config
 
-    def load_files(self, filepaths: Sequence[PathLike]) -> tuple[dict, MetadataRegistry]:
+    def load_files(self, filepaths: Sequence[PathLike]) -> tuple[dict[str, Any], MetadataRegistry]:
         """Load multiple YAML files sequentially.
 
         Files are loaded in order and merged using simple dict update

@@ -1,5 +1,100 @@
 # Advanced Features
 
+## Frozen Configs
+
+Prevent modifications after initialization:
+
+```python
+from sparkwheel import Config
+
+config = Config(schema=MySchema)
+config.update("config.yaml")
+
+# Freeze to make immutable
+config.freeze()
+
+# Mutations now raise FrozenConfigError
+try:
+    config.set("model::lr", 0.001)
+except FrozenConfigError as e:
+    print(f"Error: {e}")  # Cannot modify frozen config
+
+# Read operations still work
+value = config.get("model::lr")
+resolved = config.resolve()
+
+# Check if frozen
+if config.is_frozen():
+    print("Config is frozen!")
+
+# Unfreeze if needed
+config.unfreeze()
+config.set("model::lr", 0.001)  # Now works
+```
+
+**Use cases:**
+- Prevent accidental modifications in production
+- Ensure config consistency across app lifecycle
+- Debug configuration issues by freezing after initial setup
+
+## MISSING Sentinel
+
+Support partial configs with required-but-not-yet-set values:
+
+```python
+from sparkwheel import Config, MISSING
+from dataclasses import dataclass
+
+@dataclass
+class APIConfigSchema:
+    api_key: str
+    endpoint: str
+    timeout: int = 30
+
+# Build config incrementally with MISSING values
+config = Config(schema=APIConfigSchema, allow_missing=True)
+config.update({
+    "api_key": MISSING,  # Will be set later
+    "endpoint": "https://api.example.com",
+    "timeout": 60
+})
+
+# Fill in missing values from environment
+import os
+config.set("api_key", os.getenv("API_KEY"))
+
+# Validate that nothing is MISSING anymore
+config.validate(APIConfigSchema)  # Uses allow_missing=False by default
+
+# Freeze for production use
+config.freeze()
+```
+
+**MISSING vs None:**
+- `None` is a valid value that satisfies `Optional[T]` fields
+- `MISSING` indicates a required field that hasn't been set yet
+- `MISSING` raises ValidationError unless `allow_missing=True`
+
+**Common patterns:**
+
+```python
+# Template configs with placeholders
+base_config = {
+    "database::host": MISSING,
+    "database::port": MISSING,
+    "database::name": "myapp",
+    "api_key": MISSING
+}
+
+# Environment-specific configs fill in MISSING values
+config = Config(schema=MySchema, allow_missing=True)
+config.update(base_config)
+config.set("database::host", os.getenv("DB_HOST"))
+config.set("database::port", int(os.getenv("DB_PORT")))
+config.set("api_key", os.getenv("API_KEY"))
+config.validate(MySchema)  # Ensure complete
+```
+
 ## Macros (`%`)
 
 Load **raw YAML values** from external files using `%`:

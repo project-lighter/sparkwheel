@@ -39,19 +39,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 === "Linux"
     ```bash
-    # Using cargo
-    cargo install just
-
-    # Or download binary from GitHub releases
+    apt install just
     ```
 
 === "Windows"
     ```powershell
-    # Using cargo
-    cargo install just
-
-    # Or use scoop
-    scoop install just
+    winget install --id Casey.Just --exact
     ```
 
 ### Setup Development Environment
@@ -61,6 +54,8 @@ git clone https://github.com/project-lighter/sparkwheel.git
 cd sparkwheel
 just setup
 ```
+
+Check out the [`justfile`](https://github.com/project-lighter/sparkwheel/blob/main/justfile) for other available commands.
 
 This will:
 
@@ -76,33 +71,6 @@ Test that Sparkwheel is installed correctly:
 import sparkwheel
 print(sparkwheel.__version__)
 ```
-
-## Optional Dependencies
-
-Sparkwheel has minimal dependencies (only PyYAML). However, for certain use cases you might want:
-
-### For Deep Learning
-
-```bash
-pip install torch torchvision  # PyTorch
-# or
-pip install tensorflow  # TensorFlow
-```
-
-### For Development
-
-All development dependencies are included in the `dev` dependency group:
-
-```bash
-uv sync --all-groups
-```
-
-This includes:
-
-- Testing: pytest, pytest-cov, coverage
-- Code quality: ruff, mypy
-- Documentation: mkdocs and plugins
-- Tools: pre-commit, bump-my-version
 
 ## Next Steps
 

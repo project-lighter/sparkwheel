@@ -29,27 +29,33 @@ class TestConfigBasics:
     def test_basic_config(self):
         """Test basic configuration parsing."""
         config = {"key1": "value1", "key2": 42}
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         assert parser["key1"] == "value1"
         assert parser["key2"] == 42
 
     def test_set_and_get(self):
         """Test setting and getting config values."""
         config = {}
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         parser["new_key"] = "new_value"
         assert parser["new_key"] == "new_value"
 
     def test_nested_set(self):
         """Test setting nested config values."""
         config = {"level1": {}}
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         parser["level1::level2"] = "nested_value"
         assert parser["level1"]["level2"] == "nested_value"
 
     def test_nested_set_creates_paths(self):
         """Test that __setitem__ creates missing paths."""
-        parser = Config.load({})
+        parser = Config().update({})
         parser["model::lr"] = 0.001
         assert parser["model"]["lr"] == 0.001
 
@@ -59,7 +65,9 @@ class TestConfigBasics:
     def test_contains(self):
         """Test __contains__ method."""
         config = {"exists": True}
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         assert "exists" in parser
         assert "not_exists" not in parser
 
@@ -146,21 +154,23 @@ class TestConfigReferences:
     def test_simple_reference(self):
         """Test simple reference resolution."""
         config = {"value": 10, "reference": "@value"}
-        parser = Config.load(config)
+        parser = Config().update(config)
         result = parser.resolve("reference")
         assert result == 10
 
     def test_nested_reference(self):
         """Test nested reference with ::."""
         config = {"nested": {"value": 100}, "ref": "@nested::value"}
-        parser = Config.load(config)
+        parser = Config().update(config)
         result = parser.resolve("ref")
         assert result == 100
 
     def test_complex_nested_reference(self):
         """Test complex nested reference resolution."""
         config = {"data": {"values": [1, 2, 3], "metadata": {"count": "$len(@data::values)"}}, "ref": "@data::metadata::count"}
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         parser._parse()
         result = parser.resolve("ref")
         assert result == 3
@@ -168,7 +178,7 @@ class TestConfigReferences:
     def test_multiple_references(self):
         """Test multiple references in one expression."""
         config = {"a": 10, "b": 20, "sum": "$@a + @b"}
-        parser = Config.load(config)
+        parser = Config().update(config)
         result = parser.resolve("sum")
         assert result == 30
 
@@ -214,21 +224,23 @@ class TestExpressions:
     def test_simple_expression(self):
         """Test simple expression evaluation."""
         config = {"base": 5, "computed": "$@base * 2"}
-        parser = Config.load(config)
+        parser = Config().update(config)
         result = parser.resolve("computed")
         assert result == 10
 
     def test_expression_with_builtin(self):
         """Test expression using Python builtins."""
         config = {"items": [1, 2, 3, 4, 5], "count": "$len(@items)"}
-        parser = Config.load(config)
+        parser = Config().update(config)
         result = parser.resolve("count")
         assert result == 5
 
     def test_expression_with_reference_to_component(self):
         """Test expression referencing an instantiated component."""
         config = {"mydict": {"_target_": "dict", "a": 1, "b": 2}, "value": "$@mydict['a']"}
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         parser._parse()
         result = parser.resolve("value")
         assert result == 1
@@ -240,7 +252,7 @@ class TestConfigMacros:
     def test_basic_macro(self):
         """Test basic macro expansion with %."""
         config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
-        parser = Config.load(config)
+        parser = Config().update(config)
         parser.resolve()
         assert parser["copy"] == {"a": 1, "b": 2}
         assert parser["copy"] is not parser["original"]
@@ -278,7 +290,7 @@ class TestComponents:
                 "_disabled_": True,
             }
         }
-        parser = Config.load(config)
+        parser = Config().update(config)
         result = parser.resolve("component", instantiate=True)
         assert result is None
 
@@ -287,7 +299,9 @@ class TestComponents:
         config = {
             "components": {"enabled": {"_target_": "dict", "a": 1}, "disabled": {"_target_": "dict", "_disabled_": True}}
         }
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         parser._parse()
         result = parser.resolve("components")
         assert "enabled" in result
@@ -300,7 +314,7 @@ class TestConfigFileOperations:
     def test_load_from_dict(self):
         """Test loading from dict."""
         config = {"key": "value", "num": 42}
-        parser = Config.load(config)
+        parser = Config().update(config)
         assert parser["key"] == "value"
         assert parser["num"] == 42
 
@@ -309,7 +323,7 @@ class TestConfigFileOperations:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("key: value\nnum: 42")
 
-        parser = Config.load(str(config_file))
+        parser = Config().update(str(config_file))
         assert parser["key"] == "value"
         assert parser["num"] == 42
 
@@ -321,7 +335,8 @@ class TestConfigFileOperations:
         override_file = tmp_path / "override.yaml"
         override_file.write_text("b:\n  z: 3")  # Merges by default now!
 
-        parser = Config.load([str(base_file), str(override_file)])
+        # Chain multiple update() calls
+        parser = Config().update(str(base_file)).update(str(override_file))
         assert parser["a"] == 1
         assert parser["b"]["x"] == 1  # Preserved
         assert parser["b"]["y"] == 2  # Preserved
@@ -334,7 +349,7 @@ class TestConfigFileOperations:
             filepath = f.name
 
         try:
-            parser = Config.load(filepath)
+            parser = Config().update(filepath)
             assert parser["test"] == 1
         finally:
             Path(filepath).unlink()
@@ -347,7 +362,7 @@ class TestConfigFileOperations:
 
         try:
             Config.export_config_file(config, filepath)
-            loaded_parser = Config.load(filepath)
+            loaded_parser = Config().update(filepath)
             assert loaded_parser._data == config
         finally:
             Path(filepath).unlink()
@@ -420,7 +435,7 @@ class TestConfigMerging:
 
     def test_merge_dict(self):
         """Test merging a dict (merges by default)."""
-        parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
+        parser = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
         parser.update({"b": {"z": 3}})
 
         assert parser["a"] == 1
@@ -430,7 +445,7 @@ class TestConfigMerging:
 
     def test_merge_file(self, tmp_path):
         """Test merging from file (composition-by-default)."""
-        parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
+        parser = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
 
         override_file = tmp_path / "override.yaml"
         override_file.write_text("b:\n  z: 3")  # Merges by default!
@@ -442,8 +457,8 @@ class TestConfigMerging:
 
     def test_merge_config_instance(self):
         """Test merging another Config instance (merges by default now!)."""
-        config1 = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
-        config2 = Config.load({"b": {"z": 3}, "c": 4})
+        config1 = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
+        config2 = Config().update({"b": {"z": 3}, "c": 4})
 
         config1.update(config2)
 
@@ -456,10 +471,10 @@ class TestConfigMerging:
 
     def test_merge_config_instance_with_replace(self):
         """Test merging Config instance with = replace operator."""
-        config1 = Config.load({"a": 1, "b": {"x": 1, "y": 2}})
-        config2 = Config.load({"=b": {"z": 3}, "c": 4})
+        config1 = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
 
-        config1.update(config2)
+        # Apply replace operator at merge time, not creation time
+        config1.update({"=b": {"z": 3}, "c": 4})
 
         assert config1["a"] == 1
         # = operator replaces b entirely
@@ -467,9 +482,22 @@ class TestConfigMerging:
         assert config1["c"] == 4
 
     def test_merge_config_from_cli(self):
-        """Test merging a Config loaded with from_cli()."""
-        base_config = Config.load({"model": {"lr": 0.01, "hidden_size": 256}})
-        cli_config = Config.from_cli({"trainer": {"max_epochs": 100}}, ["trainer::max_epochs=50"])
+        """Test merging a Config with CLI overrides applied."""
+        import ast
+
+        base_config = Config().update({"model": {"lr": 0.01, "hidden_size": 256}})
+
+        # Create config with CLI overrides using manual parsing
+        cli_config = Config().update({"trainer": {"max_epochs": 100}})
+
+        # Parse CLI override manually (simple pattern from docs)
+        override = "trainer::max_epochs=50"
+        key, value = override.split("=", 1)
+        try:
+            value = ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            pass
+        cli_config.set(key, value)
 
         base_config.update(cli_config)
 
@@ -479,8 +507,8 @@ class TestConfigMerging:
 
     def test_merge_config_with_references(self):
         """Test merging Config instances with references."""
-        config1 = Config.load({"base_lr": 0.01, "model": {"lr": "@base_lr"}})
-        config2 = Config.load({"optimizer": {"lr": "@base_lr"}})
+        config1 = Config().update({"base_lr": 0.01, "model": {"lr": "@base_lr"}})
+        config2 = Config().update({"optimizer": {"lr": "@base_lr"}})
 
         config1.update(config2)
 
@@ -495,7 +523,7 @@ class TestConfigMerging:
 
     def test_merge_normal_set(self):
         """Test normal set behavior with merge."""
-        parser = Config.load({"a": 1, "b": 2})
+        parser = Config().update({"a": 1, "b": 2})
         parser.update({"a": 10, "c": 3})
         assert parser["a"] == 10
         assert parser["b"] == 2
@@ -503,7 +531,7 @@ class TestConfigMerging:
 
     def test_merge_with_delete_directive(self):
         """Test ~ remove operator."""
-        parser = Config.load({"a": 1, "b": 2, "c": 3})
+        parser = Config().update({"a": 1, "b": 2, "c": 3})
         parser.update({"~b": None})
         assert "b" not in parser
         assert parser["a"] == 1
@@ -511,7 +539,7 @@ class TestConfigMerging:
 
     def test_merge_nested_delete(self):
         """Test ~ remove operator for nested keys (works without parent operator now!)."""
-        parser = Config.load({"model": {"lr": 0.001, "dropout": 0.1}})
+        parser = Config().update({"model": {"lr": 0.001, "dropout": 0.1}})
         parser.update({"~model::dropout": None})
         assert parser["model"]["lr"] == 0.001
         assert "dropout" not in parser["model"]
@@ -520,29 +548,29 @@ class TestConfigMerging:
         """Test that Config.update() with ~key raises error when value is not null, empty, or list."""
         from sparkwheel.utils.exceptions import ConfigMergeError
 
-        parser = Config.load({"a": 1, "b": 2})
+        parser = Config().update({"a": 1, "b": 2})
 
         # Test with non-null value
         with pytest.raises(ConfigMergeError, match="Remove operator '~b' must have null, empty, or list value"):
             parser.update({"~b": {"nested": "value"}})
 
         # Test with nested path and non-null value
-        parser = Config.load({"model": {"lr": 0.001, "dropout": 0.1}})
+        parser = Config().update({"model": {"lr": 0.001, "dropout": 0.1}})
         with pytest.raises(ConfigMergeError, match="Remove operator '~model::dropout' must have null, empty, or list value"):
             parser.update({"~model::dropout": 42})
 
         # But null and empty should work
-        parser = Config.load({"a": 1, "b": 2})
+        parser = Config().update({"a": 1, "b": 2})
         parser.update({"~b": None})
         assert "b" not in parser
 
-        parser = Config.load({"a": 1, "b": 2})
+        parser = Config().update({"a": 1, "b": 2})
         parser.update({"~b": ""})
         assert "b" not in parser
 
     def test_merge_combined_operators(self):
         """Test combining composition, =, ~, and normal updates."""
-        parser = Config.load({"a": 1, "b": {"x": 1, "y": 2}, "c": 3, "d": {"old": "value"}})
+        parser = Config().update({"a": 1, "b": {"x": 1, "y": 2}, "c": 3, "d": {"old": "value"}})
         parser.update(
             {
                 "a": 10,  # Replace scalar
@@ -726,14 +754,14 @@ class TestConfigMerging:
 
     def test_delete_list_items_via_config_update(self):
         """Test deleting list items via Config.update()."""
-        config = Config.load({"plugins": ["logger", "metrics", "cache", "auth"]})
+        config = Config().update({"plugins": ["logger", "metrics", "cache", "auth"]})
         config.update({"~plugins": [0, 2]})
 
         assert config["plugins"] == ["metrics", "auth"]
 
     def test_delete_dict_keys_via_config_update(self):
         """Test deleting dict keys via Config.update()."""
-        config = Config.load({"dataloaders": {"train": {}, "val": {}, "test": {}}})
+        config = Config().update({"dataloaders": {"train": {}, "val": {}, "test": {}}})
         config.update({"~dataloaders": ["train", "test"]})
 
         assert config["dataloaders"] == {"val": {}}
@@ -745,12 +773,12 @@ class TestConfigMerging:
         the batch syntax ~plugins: [0, 2] to delete list items.
         """
         # Batch deletion - the correct way
-        config1 = Config.load({"plugins": ["a", "b", "c", "d", "e"]})
+        config1 = Config().update({"plugins": ["a", "b", "c", "d", "e"]})
         config1.update({"~plugins": [0, 2]})
         assert config1["plugins"] == ["b", "d", "e"]  # Removed "a" and "c"
 
         # Batch deletion with multiple operations - indices relative to current state
-        config2 = Config.load({"plugins": ["a", "b", "c", "d", "e"]})
+        config2 = Config().update({"plugins": ["a", "b", "c", "d", "e"]})
         config2.update({"~plugins": [0]})  # Removes "a" -> ["b", "c", "d", "e"]
         config2.update({"~plugins": [1]})  # Removes "c" (index 1 in current list)
         assert config2["plugins"] == ["b", "d", "e"]
@@ -822,7 +850,7 @@ class TestConfigAdvanced:
     def test_resolve_direct_access(self):
         """Test Config resolve() for direct access."""
         config = {"value": 10, "ref": "@value"}
-        parser = Config.load(config)
+        parser = Config().update(config)
         result = parser.resolve("ref")
         assert result == 10
 
@@ -878,7 +906,9 @@ class TestConfigAdvanced:
     def test_do_parse_nested(self):
         """Test _do_parse with nested structures."""
         config = {"comp": {"_target_": "dict", "a": 1}, "expr": "$1 + 1", "plain": "value"}
-        parser = Config(config)
+        config_obj = Config()
+        config_obj._data = config
+        parser = config_obj
         parser._parse()
         assert "comp" in parser._resolver._items
         assert "expr" in parser._resolver._items
@@ -950,6 +980,223 @@ class TestConfigEdgeCases:
         result = parser.resolve("missing_key", default=item_default)
         # Should return the config from the Item
         assert result == {"default_key": "default_value"}
+
+
+class TestConfigUpdateAutoDetection:
+    """Test auto-detection of files vs overrides in Config.update()."""
+
+    def test_update_auto_detect_file(self, tmp_path):
+        """Test that strings without '=' are treated as files."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("key: value\nnum: 42")
+
+        config = Config()
+        config.update(str(config_file))
+
+        assert config["key"] == "value"
+        assert config["num"] == 42
+
+    def test_update_auto_detect_override(self):
+        """Test that strings with '=' are treated as overrides."""
+        config = Config().update({"model": {"lr": 0.01}})
+        config.update("model::lr=0.001")
+
+        assert config["model"]["lr"] == 0.001
+
+    def test_update_auto_detect_replace_operator(self):
+        """Test auto-detection of =key=value (replace operator)."""
+        config = Config().update({"model": {"lr": 0.01, "hidden_size": 256}})
+        config.update("=model={'_target_': 'ResNet'}")
+
+        assert config["model"] == {"_target_": "ResNet"}
+        assert "hidden_size" not in config["model"]
+
+    def test_update_auto_detect_delete_operator(self):
+        """Test auto-detection of ~key (delete operator)."""
+        config = Config().update({"a": 1, "b": 2, "c": 3})
+        config.update("~b")
+
+        assert "b" not in config
+        assert config["a"] == 1
+        assert config["c"] == 3
+
+    def test_update_mixed_files_and_overrides(self, tmp_path):
+        """Test chaining files and overrides using auto-detection."""
+        base_file = tmp_path / "base.yaml"
+        base_file.write_text("model:\n  lr: 0.01\n  hidden_size: 256")
+
+        override_file = tmp_path / "override.yaml"
+        override_file.write_text("trainer:\n  epochs: 100")
+
+        config = (
+            Config()
+            .update(str(base_file))
+            .update(str(override_file))
+            .update("model::dropout=0.1")
+            .update("trainer::epochs=50")
+        )
+
+        assert config["model"]["lr"] == 0.01
+        assert config["model"]["hidden_size"] == 256
+        assert config["model"]["dropout"] == 0.1
+        assert config["trainer"]["epochs"] == 50
+
+    def test_update_cli_pattern(self):
+        """Test the CLI integration pattern (just loop!)."""
+        cli_args = [
+            "model::lr=0.001",
+            "optimizer::type=adam",
+            "=scheduler={'_target_': 'CosineScheduler'}",
+            "~debug",
+        ]
+
+        config = Config().update({"debug": True, "model": {"lr": 0.01}})
+
+        for arg in cli_args:
+            config.update(arg)
+
+        assert config["model"]["lr"] == 0.001
+        assert config["optimizer"]["type"] == "adam"
+        assert config["scheduler"] == {"_target_": "CosineScheduler"}
+        assert "debug" not in config
+
+
+class TestParseOverrides:
+    """Test parse_overrides helper function."""
+
+    def test_parse_keyvalue_style(self):
+        """Test parsing key=value style."""
+        from sparkwheel import parse_overrides
+
+        args = ["model::lr=0.001", "trainer::epochs=100"]
+        result = parse_overrides(args)
+        assert result == {"model::lr": 0.001, "trainer::epochs": 100}
+
+    def test_parse_replace_operator(self):
+        """Test parsing =key=value (replace operator)."""
+        from sparkwheel import parse_overrides
+
+        args = ["=model={'_target_': 'ResNet'}", "=optimizer::lr=0.01"]
+        result = parse_overrides(args)
+        assert result == {"=model": {"_target_": "ResNet"}, "=optimizer::lr": 0.01}
+
+    def test_parse_delete_operator(self):
+        """Test parsing ~key (delete operator)."""
+        from sparkwheel import parse_overrides
+
+        args = ["~old_param", "~model::deprecated"]
+        result = parse_overrides(args)
+        assert result == {"~old_param": None, "~model::deprecated": None}
+
+    def test_parse_type_inference(self):
+        """Test automatic type inference."""
+        from sparkwheel import parse_overrides
+
+        args = [
+            "lr=0.001",
+            "epochs=100",
+            "debug=True",
+            "name=my_model",
+            "devices=[0,1,2]",
+            "config={'lr':0.001}",
+        ]
+        result = parse_overrides(args)
+        assert result == {
+            "lr": 0.001,
+            "epochs": 100,
+            "debug": True,
+            "name": "my_model",
+            "devices": [0, 1, 2],
+            "config": {"lr": 0.001},
+        }
+
+    def test_parse_nested_paths(self):
+        """Test parsing deeply nested paths."""
+        from sparkwheel import parse_overrides
+
+        args = ["model::optimizer::lr=0.001", "model::optimizer::betas=[0.9,0.999]"]
+        result = parse_overrides(args)
+        assert result == {
+            "model::optimizer::lr": 0.001,
+            "model::optimizer::betas": [0.9, 0.999],
+        }
+
+    def test_parse_operators_with_paths(self):
+        """Test operators with nested paths."""
+        from sparkwheel import parse_overrides
+
+        args = ["=model::optimizer={'type':'sgd'}", "~model::old_param"]
+        result = parse_overrides(args)
+        assert result == {"=model::optimizer": {"type": "sgd"}, "~model::old_param": None}
+
+    def test_parse_value_with_equals(self):
+        """Test parsing values that contain equals sign."""
+        from sparkwheel import parse_overrides
+
+        args = ["equation=a=b+c"]
+        result = parse_overrides(args)
+        # Should split only on first =
+        assert result == {"equation": "a=b+c"}
+
+    def test_parse_empty_args(self):
+        """Test parsing empty args list."""
+        from sparkwheel import parse_overrides
+
+        result = parse_overrides([])
+        assert result == {}
+
+    def test_parse_with_config_update(self):
+        """Test using parse_overrides with Config.update()."""
+        from sparkwheel import Config, parse_overrides
+
+        config = Config().update({"model": {"lr": 0.01, "hidden_size": 256}})
+        overrides = parse_overrides(["model::lr=0.001", "trainer::epochs=100"])
+        config.update(overrides)
+
+        assert config["model"]["lr"] == 0.001
+        assert config["model"]["hidden_size"] == 256
+        assert config["trainer"]["epochs"] == 100
+
+
+class TestConfigFreeze:
+    """Test config freeze/unfreeze functionality."""
+
+    def test_freeze_prevents_modifications(self):
+        """Test that freeze() prevents modifications."""
+        from sparkwheel.utils.exceptions import FrozenConfigError
+
+        config = Config().update({"key": "value"})
+        config.freeze()
+
+        with pytest.raises(FrozenConfigError, match="Cannot modify frozen config"):
+            config["key"] = "new_value"
+
+        with pytest.raises(FrozenConfigError, match="Cannot modify frozen config"):
+            config["new_key"] = "value"
+
+    def test_unfreeze_allows_modifications(self):
+        """Test that unfreeze() allows modifications again."""
+        config = Config().update({"key": "value"})
+        config.freeze()
+        config.unfreeze()
+
+        # Should work now
+        config["key"] = "new_value"
+        assert config["key"] == "new_value"
+
+        config["new_key"] = "another_value"
+        assert config["new_key"] == "another_value"
+
+    def test_is_frozen(self):
+        """Test is_frozen() method."""
+        config = Config()
+        assert config.is_frozen() is False
+
+        config.freeze()
+        assert config.is_frozen() is True
+
+        config.unfreeze()
+        assert config.is_frozen() is False
 
 
 if __name__ == "__main__":

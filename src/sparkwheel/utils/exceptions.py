@@ -13,6 +13,7 @@ __all__ = [
     "ConfigKeyError",
     "ConfigMergeError",
     "EvaluationError",
+    "FrozenConfigError",
 ]
 
 
@@ -200,3 +201,19 @@ class EvaluationError(BaseError):
     """Raised when evaluating an expression fails."""
 
     pass
+
+
+class FrozenConfigError(BaseError):
+    """Raised when attempting to modify a frozen config.
+
+    Attributes:
+        message: Error description
+        field_path: Path that was attempted to modify
+    """
+
+    def __init__(self, message: str, field_path: str = ""):
+        self.field_path = field_path
+        full_message = message
+        if field_path:
+            full_message = f"Cannot modify frozen config at '{field_path}': {message}"
+        super().__init__(full_message)

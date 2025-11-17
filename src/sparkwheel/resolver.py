@@ -320,7 +320,7 @@ class Resolver:
         """
         for k, v in config.items() if isinstance(config, dict) else enumerate(config):
             sub_id = f"{id}{cls.sep}{k}" if id != "" else f"{k}"
-            yield k, sub_id, v
+            yield k, sub_id, v  # type: ignore[misc]
 
     @classmethod
     def match_refs_pattern(cls, value: str) -> dict[str, int]:
@@ -336,7 +336,7 @@ class Resolver:
         return scan_references(value)
 
     @classmethod
-    def update_refs_pattern(cls, value: str, refs: dict) -> str:
+    def update_refs_pattern(cls, value: str, refs: dict[str, Any]) -> str:
         """Replace reference patterns with resolved values.
 
         Args:
@@ -390,7 +390,7 @@ class Resolver:
         return refs_
 
     @classmethod
-    def update_config_with_refs(cls, config: Any, id: str, refs: dict | None = None) -> Any:
+    def update_config_with_refs(cls, config: Any, id: str, refs: dict[str, Any] | None = None) -> Any:
         """Update config by replacing references with resolved values.
 
         Args:
