@@ -1,4 +1,97 @@
-"""Main configuration management API."""
+"""Main configuration management API.
+
+Sparkwheel is a YAML-based configuration system with references, expressions, and dynamic instantiation.
+This module provides the main Config class for loading, managing, and resolving configurations.
+
+## Two-Stage Processing
+
+Sparkwheel uses a two-stage processing model to handle different reference types at appropriate times:
+
+### Stage 1: Eager Processing (during update())
+- **Raw References (`%`)**: Expanded immediately when configs are merged
+- **Purpose**: Enables safe config composition or deletion
+- **Example**: `%base.yaml::lr` is replaced with the actual value from base.yaml
+
+### Stage 2: Lazy Processing (during resolve())
+- **Resolved References (`@`)**: Resolved on-demand to support circular dependencies
+- **Expressions (`$`)**: Evaluated when needed using Python's eval()
+- **Components (`_target_`)**: Instantiated only when requested
+- **Purpose**: Supports deferred instantiation and complex dependency graphs
+
+## Reference Types
+
+| Symbol | Name | When Expanded | Purpose | Example |
+|--------|------|---------------|---------|---------|
+| `%` | Raw Reference | Eager (update()) | Copy/paste YAML sections | `%base.yaml::lr` |
+| `@` | Resolved Reference | Lazy (resolve()) | Reference config values | `@model::lr` |
+| `$` | Expression | Lazy (resolve()) | Compute values dynamically | `$@lr * 2` |
+
+## Key Methods
+
+- **`get(id)`**: Returns raw config value (unresolved, from `_data`)
+- **`resolve(id)`**: Follows references, evaluates expressions, instantiates components
+- **`update(source)`**: Loads and merges configuration from file, dict, or CLI string
+- **`set(id, value)`**: Sets a config value at the given path
+
+## Important: get() vs resolve()
+
+These methods serve different purposes:
+
+- `get()` always returns raw values from the internal `_data` dict
+  - Returns `"@model::lr"` (the string)
+  - Fast, no resolution or caching
+  - Always returns raw data, even after resolve() has been called
+
+- `resolve()` follows references and instantiates objects
+  - Returns `0.001` (the actual value)
+  - Uses a separate resolution cache (`_resolver._resolved`)
+  - Evaluates expressions, instantiates components
+
+Example:
+    ```python
+    config = Config()
+    config.update({"lr": 0.001, "ref": "@lr"})
+
+    config.get("ref")      # "@lr" (always raw, from _data)
+    config.resolve("ref")  # 0.001 (follows reference, from cache)
+    config.get("ref")      # Still "@lr" (get never uses cache)
+    ```
+
+This separation ensures that:
+1. Raw config structure is always accessible
+2. Resolution happens lazily and is cached separately
+3. Multiple resolve() calls are efficient (uses cache)
+4. You can inspect raw references without triggering resolution
+
+## Quick Start
+
+```python
+from sparkwheel import Config
+
+# Load and merge configs
+config = Config()
+config.update("base.yaml")
+config.update("experiment.yaml")
+
+# Get raw values
+lr = config.get("model::lr")  # Raw value (may be "@base::lr")
+
+# Resolve references and instantiate
+model = config.resolve("model")  # Actual instantiated model object
+lr_resolved = config.resolve("model::lr")  # Resolved value (e.g., 0.001)
+```
+
+## CLI Overrides
+
+```python
+# Auto-detects override syntax
+config.update("model::lr=0.001")  # Compose (merge)
+config.update("=model::lr=0.001")  # Replace
+config.update("~model::old_param")  # Delete
+```
+
+See Config class docstring for full API details.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -29,13 +122,14 @@ class Config:
         from sparkwheel import Config
 
         # Create and load from file
-        config = Config(schema=MySchema).update("config.yaml")
+        config = Config(schema=MySchema)
+        config.update("config.yaml")
 
         # Or chain multiple sources
-        config = (Config(schema=MySchema)
-                  .update("base.yaml")
-                  .update("override.yaml")
-                  .update({"model::lr": 0.001}))
+        config = Config(schema=MySchema)
+        config.update("base.yaml")
+        config.update("override.yaml")
+        config.update({"model::lr": 0.001})
 
         # Access raw values
         lr = config.get("model::lr")
@@ -112,20 +206,54 @@ class Config:
     def get(self, id: str = "", default: Any = None) -> Any:
         """Get raw config value (unresolved).
 
+        IMPORTANT: This method ALWAYS returns raw values from the internal `_data` dict,
+        even after resolve() has been called. It never uses the resolution cache.
+
+        - Returns `@` references as strings (e.g., "@model::lr")
+        - Returns `$` expressions as strings (e.g., "$@lr * 2")
+        - Returns `%` raw references already expanded (eager expansion during update())
+        - Fast, no resolution overhead
+
+        Use this when you need to:
+        - Inspect the raw config structure
+        - Check what references exist
+        - Access config before resolution
+        - Avoid triggering expensive instantiation
+
         Args:
             id: Configuration path (use :: for nesting, e.g., "model::lr")
                 Empty string returns entire config
             default: Default value if id not found
 
         Returns:
-            Raw configuration value (resolved references not resolved, raw references not expanded)
+            Raw configuration value from _data (@ and $ unresolved, % already expanded)
 
-        Example:
-            >>> config = Config.load({"model": {"lr": 0.001, "ref": "@model::lr"}})
-            >>> config.get("model::lr")
+        Examples:
+            >>> # Basic usage
+            >>> config = Config()
+            >>> config.update({"lr": 0.001, "ref": "@lr"})
+            >>> config.get("lr")
             0.001
-            >>> config.get("model::ref")
-            "@model::lr"  # Unresolved resolved reference
+            >>> config.get("ref")
+            "@lr"  # Raw @ reference string
+
+            >>> # get() vs resolve() comparison
+            >>> config = Config()
+            >>> config.update({
+            ...     "lr": 0.001,
+            ...     "doubled": "$@lr * 2",
+            ...     "ref": "@lr"
+            ... })
+            >>> config.get("doubled")
+            "$@lr * 2"  # Raw expression string
+            >>> config.resolve("doubled")
+            0.002  # Evaluated result
+            >>> config.get("doubled")  # Still raw after resolve()!
+            "$@lr * 2"
+
+            >>> # With default value
+            >>> config.get("nonexistent", default=999)
+            999
         """
         try:
             return self._get_by_id(id)
@@ -194,9 +322,9 @@ class Config:
             ... class ModelConfig:
             ...     hidden_size: int
             ...     dropout: float
-            >>> config = Config.load({"hidden_size": 512, "dropout": 0.1})
+            >>> config = Config().update({"hidden_size": 512, "dropout": 0.1})
             >>> config.validate(ModelConfig)  # Passes
-            >>> bad_config = Config.load({"hidden_size": "not an int"})
+            >>> bad_config = Config().update({"hidden_size": "not an int"})
             >>> bad_config.validate(ModelConfig)  # Raises ValidationError
         """
         from .schema import validate as validate_schema
@@ -295,7 +423,13 @@ class Config:
         else:
             self._update_from_file(source)
 
-        # Validate after update if schema exists
+        # Eagerly expand raw references (%) immediately after update
+        # This matches MONAI's behavior and allows safe pruning with delete operator (~)
+        # Must happen BEFORE validation so schema sees final structure, not raw ref strings
+        self._data = self._preprocessor.process_raw_refs(self._data, self._data, id="")
+
+        # Validate after raw ref expansion if schema exists
+        # This validates the final structure, not intermediate raw reference strings
         if self._schema:
             from .schema import validate as validate_schema
 
@@ -374,8 +508,17 @@ class Config:
         """Load and update from a file."""
         new_data, new_metadata = self._loader.load_file(source)
         validate_operators(new_data)
-        self._data = apply_operators(self._data, new_data)
-        self._metadata.merge(new_metadata)
+
+        # Check if loaded data uses :: path syntax
+        if self._uses_nested_paths(new_data):
+            # Expand nested paths using path updates
+            self._metadata.merge(new_metadata)
+            self._apply_path_updates(new_data)
+        else:
+            # Normal structural update
+            self._data = apply_operators(self._data, new_data)
+            self._metadata.merge(new_metadata)
+
         self._invalidate_resolution()
 
     def _update_from_override_string(self, override: str) -> None:
@@ -391,39 +534,73 @@ class Config:
         lazy: bool = True,
         default: Any = None,
     ) -> Any:
-        """Resolve resolved references (@) and return parsed config.
+        """Resolve references, evaluate expressions, and instantiate components.
 
-        Automatically parses config on first call. Resolves @ resolved references (follows
-        them to get instantiated/evaluated values), evaluates $ expressions, and
-        instantiates _target_ components. Note: % raw references are expanded during
-        preprocessing (before this stage).
+        This is the main method for getting fully resolved config values. It:
+        1. Follows `@` references to their target values
+        2. Evaluates `$` expressions using Python eval()
+        3. Instantiates components with `_target_` keys
+        4. Caches results in a separate resolution cache (`_resolver._resolved`)
+
+        Unlike get(), which always returns raw `_data`, resolve() performs full processing
+        and uses a separate cache for efficiency.
+
+        Processing stages:
+        - `%` raw references: Already expanded during update() (eager)
+        - `@` resolved references: Resolved now (lazy, supports circular deps)
+        - `$` expressions: Evaluated now (lazy)
+        - `_target_` components: Instantiated now (lazy)
 
         Args:
             id: Config path to resolve (empty string for entire config)
-            instantiate: Whether to instantiate components with _target_
-            eval_expr: Whether to evaluate $ expressions
-            lazy: Whether to use cached resolution
+            instantiate: Whether to instantiate components with _target_ (default: True)
+            eval_expr: Whether to evaluate $ expressions (default: True)
+            lazy: Whether to use cached resolution (default: True)
             default: Default value if id not found (returns default.get_config() if Item)
 
         Returns:
-            Resolved value (instantiated objects, evaluated expressions, etc.)
+            Resolved value (could be primitive, object, or complex structure)
 
-        Example:
-            >>> config = Config.load({
+        Examples:
+            >>> # Basic reference resolution
+            >>> config = Config()
+            >>> config.update({
             ...     "lr": 0.001,
-            ...     "doubled": "$@lr * 2",
-            ...     "optimizer": {
-            ...         "_target_": "torch.optim.Adam",
-            ...         "lr": "@lr"
-            ...     }
+            ...     "ref": "@lr"
             ... })
-            >>> config.resolve("lr")
-            0.001
+            >>> config.get("ref")
+            "@lr"  # Raw string
+            >>> config.resolve("ref")
+            0.001  # Followed reference
+
+            >>> # Expression evaluation
+            >>> config = Config()
+            >>> config.update({
+            ...     "lr": 0.001,
+            ...     "doubled": "$@lr * 2"
+            ... })
             >>> config.resolve("doubled")
             0.002
+
+            >>> # Component instantiation
+            >>> config = Config()
+            >>> config.update({
+            ...     "optimizer": {
+            ...         "_target_": "torch.optim.Adam",
+            ...         "lr": 0.001
+            ...     }
+            ... })
             >>> optimizer = config.resolve("optimizer")
             >>> type(optimizer).__name__
             'Adam'
+
+            >>> # Disable instantiation (useful for inspection)
+            >>> config.resolve("optimizer", instantiate=False)
+            {'_target_': 'torch.optim.Adam', 'lr': 0.001}
+
+            >>> # With default value
+            >>> config.resolve("nonexistent", default=None)
+            None
         """
         # Parse if needed
         if not self._is_parsed or not lazy:
@@ -446,6 +623,7 @@ class Config:
         """Parse config tree and prepare for resolution.
 
         Internal method called automatically by resolve().
+        Note: % raw references are already expanded during update().
 
         Args:
             reset: Whether to reset the resolver before parsing (default: True)
@@ -454,7 +632,8 @@ class Config:
         if reset:
             self._resolver.reset()
 
-        # Stage 1: Preprocess (% raw references, @:: relative resolved IDs)
+        # Stage 1: Preprocess (@:: relative resolved IDs)
+        # Note: % raw references were already expanded in update()
         self._data = self._preprocessor.process(self._data, self._data, id="")
 
         # Stage 2: Parse config tree to create Items
@@ -507,7 +686,7 @@ class Config:
             Config value at that path
 
         Example:
-            >>> config = Config.load({"model": {"lr": 0.001}})
+            >>> config = Config().update({"model": {"lr": 0.001}})
             >>> config["model::lr"]
             0.001
         """
@@ -521,7 +700,7 @@ class Config:
             value: Value to set
 
         Example:
-            >>> config = Config.load({})
+            >>> config = Config().update({})
             >>> config["model::lr"] = 0.001
         """
         self.set(id, value)

@@ -8,8 +8,7 @@ Handles transformations on raw config dicts before Items are created:
 from copy import deepcopy
 from typing import Any
 
-from .path_patterns import split_file_and_id
-from .path_utils import resolve_relative_ids, split_id
+from .path_utils import resolve_relative_ids, split_file_and_id, split_id
 from .utils.constants import ID_SEP_KEY, RAW_REF_KEY
 
 __all__ = ["Preprocessor"]
@@ -59,11 +58,36 @@ class Preprocessor:
         self.loader = loader
         self.globals = globals or {}
 
+    def process_raw_refs(self, config: Any, base_data: dict[str, Any], id: str = "") -> Any:
+        """Preprocess config tree - expand only % raw references.
+
+        This is the first preprocessing stage that runs eagerly during update().
+        It expands all % raw references including those with relative syntax:
+        - Local: %key
+        - External: %file.yaml::key
+        - Relative: %::key, %::::key (converted to absolute before expansion)
+
+        Leaves @ resolved references untouched (they're processed lazily during resolve()).
+
+        Args:
+            config: Raw config structure to process
+            base_data: Root config dict (for resolving local raw references)
+            id: Current ID path in tree
+
+        Returns:
+            Config with raw references expanded
+
+        Raises:
+            ValueError: If circular raw reference detected
+        """
+        return self._process_raw_refs_recursive(config, base_data, id, set())
+
     def process(self, config: Any, base_data: dict[str, Any], id: str = "") -> Any:
         """Preprocess entire config tree.
 
         Main entry point - walks config tree recursively and applies
-        all preprocessing transformations.
+        all preprocessing transformations. This is the second preprocessing stage
+        that runs lazily during resolve(), handling relative IDs and @ references.
 
         Args:
             config: Raw config structure to process
@@ -77,6 +101,57 @@ class Preprocessor:
             ValueError: If circular raw reference detected
         """
         return self._process_recursive(config, base_data, id, set())
+
+    def _process_raw_refs_recursive(
+        self,
+        config: Any,
+        base_data: dict[str, Any],
+        id: str,
+        raw_ref_stack: set[str],
+    ) -> Any:
+        """Internal recursive implementation for expanding only raw references.
+
+        This method only expands % raw references and leaves @ references untouched.
+
+        Performance optimization: Skips recursion for nodes that don't contain any
+        raw reference strings, avoiding unnecessary tree traversal.
+
+        Args:
+            config: Current config node
+            base_data: Root config dict
+            id: Current ID path
+            raw_ref_stack: Circular reference detection
+
+        Returns:
+            Config with raw references expanded
+        """
+        # Early exit optimization: Skip processing if this subtree has no raw references
+        # This avoids unnecessary recursion for large config sections without % refs
+        if not self._contains_raw_refs(config):
+            return config
+
+        # Recursively process nested structures
+        if isinstance(config, dict):
+            for key in list(config.keys()):
+                sub_id = f"{id}{ID_SEP_KEY}{key}" if id else str(key)
+                config[key] = self._process_raw_refs_recursive(config[key], base_data, sub_id, raw_ref_stack)
+
+        elif isinstance(config, list):
+            for idx in range(len(config)):
+                sub_id = f"{id}{ID_SEP_KEY}{idx}" if id else str(idx)
+                config[idx] = self._process_raw_refs_recursive(config[idx], base_data, sub_id, raw_ref_stack)
+
+        # Process string values - only expand raw references (%)
+        if isinstance(config, str):
+            # First resolve relative IDs in raw references (e.g., %::key -> %parent::key)
+            # This is necessary because raw references can use relative syntax
+            config = resolve_relative_ids(id, config)
+
+            # Then expand raw references
+            if config.startswith(RAW_REF_KEY):
+                config = self._expand_raw_ref(config, base_data, raw_ref_stack)
+
+        return config
 
     def _process_recursive(
         self,
@@ -112,7 +187,7 @@ class Preprocessor:
             # Step 1: Resolve relative IDs (@::, @::::) to absolute (@)
             config = resolve_relative_ids(id, config)
 
-            # Step 2: Expand raw references (%)
+            # Step 2: Expand raw references (%) - should already be expanded, but keep for safety
             if config.startswith(RAW_REF_KEY):
                 config = self._expand_raw_ref(config, base_data, raw_ref_stack)
 
@@ -152,14 +227,34 @@ class Preprocessor:
             # Navigate to referenced value
             result = self._get_by_id(loaded_config, ids)
 
-            # Recursively preprocess the loaded value
-            result = self._process_recursive(result, loaded_config, ids, raw_ref_stack)
+            # Recursively preprocess the loaded value (expand nested raw references only)
+            result = self._process_raw_refs_recursive(result, loaded_config, ids, raw_ref_stack)
 
             # Deep copy for independence
             return deepcopy(result)
 
         finally:
             raw_ref_stack.discard(raw_ref)
+
+    @staticmethod
+    def _contains_raw_refs(config: Any) -> bool:
+        """Check if a config node or its descendants contain any raw references.
+
+        Performance optimization to skip processing subtrees without % references.
+
+        Args:
+            config: Config node to check
+
+        Returns:
+            True if any raw references found, False otherwise
+        """
+        if isinstance(config, str):
+            return config.startswith(RAW_REF_KEY)
+        elif isinstance(config, dict):
+            return any(Preprocessor._contains_raw_refs(v) for v in config.values())
+        elif isinstance(config, list):
+            return any(Preprocessor._contains_raw_refs(item) for item in config)
+        return False
 
     @staticmethod
     def _get_by_id(config: dict[str, Any], id: str) -> Any:
