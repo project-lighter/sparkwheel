@@ -251,14 +251,14 @@ from dataclasses import dataclass
 from sparkwheel import Config
 
 @dataclass
-class AppConfig:
+class AppConfigSchema:
     name: str
     version: str
     port: int
     debug: bool = False
 
 # Continuous validation - validates on every update/set!
-config = Config(schema=AppConfig)
+config = Config(schema=AppConfigSchema)
 config.update("config.yaml")
 
 # This will raise ValidationError immediately
@@ -267,7 +267,7 @@ config.set("port", "not a number")  # ✗ Error caught at mutation time!
 # Or validate explicitly after mutations
 config = Config()
 config.update("config.yaml")
-config.validate(AppConfig)
+config.validate(AppConfigSchema)
 ```
 
 Schema validation provides:

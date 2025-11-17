@@ -25,7 +25,7 @@ Sparkwheel automatically converts compatible types when coercion is enabled (def
 !!! warning "Disable for Strict Validation"
     Set `coerce=False` for strict type checking:
     ```python
-    config = Config(schema=AppConfig, coerce=False)
+    config = Config(schema=AppConfigSchema, coerce=False)
     ```
 
 ## Quick Start
@@ -37,13 +37,13 @@ from dataclasses import dataclass
 from sparkwheel import Config
 
 @dataclass
-class AppConfig:
+class AppConfigSchema:
     name: str
     port: int
     debug: bool = False
 
 # Continuous validation - validates on every update/set!
-config = Config(schema=AppConfig)  # (1)!
+config = Config(schema=AppConfigSchema)  # (1)!
 config.update("config.yaml")
 
 # Errors caught immediately at mutation time
@@ -53,7 +53,7 @@ config.set("port", "not a number")  # (3)!
 # Or validate explicitly after loading
 config = Config()
 config.update("config.yaml")
-config.validate(AppConfig)  # (4)!
+config.validate(AppConfigSchema)  # (4)!
 ```
 
 1. ✅ Enable continuous validation - errors caught on every mutation
@@ -69,7 +69,7 @@ With **type coercion** enabled by default, compatible types are automatically co
 # port: "8080"  # String value
 # debug: "true" # String value
 
-config = Config(schema=AppConfig, coerce=True)
+config = Config(schema=AppConfigSchema, coerce=True)
 config.update("config.yaml")
 # ✓ port coerced to int(8080)
 # ✓ debug coerced to bool(True)
@@ -79,7 +79,7 @@ If validation fails, you get clear errors:
 
 ```python
 # With coercion disabled
-config = Config(schema=AppConfig, coerce=False)
+config = Config(schema=AppConfigSchema, coerce=False)
 config.update({"port": "8080"})
 # ValidationError: Validation error at 'port': Type mismatch
 #   Expected type: int
@@ -95,7 +95,7 @@ Schemas are Python dataclasses with type hints.
 
 ```python
 @dataclass
-class Config:
+class ConfigSchema:
     text: str
     count: int
     ratio: float
@@ -110,7 +110,7 @@ class Config:
 from typing import Optional
 
 @dataclass
-class Config:
+class ConfigSchema:
     required: str
     optional_with_none: Optional[int] = None
     optional_with_default: int = 42
@@ -120,14 +120,14 @@ class Config:
 
 ```python
 @dataclass
-class DatabaseConfig:
+class DatabaseConfigSchema:
     host: str
     port: int
     pool_size: int = 10
 
 @dataclass
-class AppConfig:
-    database: DatabaseConfig  # Nested
+class AppConfigSchema:
+    database: DatabaseConfigSchema  # Nested
     secret_key: str
 ```
 
@@ -146,13 +146,13 @@ secret_key: my-secret
 
 ```python
 @dataclass
-class PluginConfig:
+class PluginConfigSchema:
     name: str
     enabled: bool = True
 
 @dataclass
-class AppConfig:
-    plugins: list[PluginConfig]
+class AppConfigSchema:
+    plugins: list[PluginConfigSchema]
 ```
 
 ```yaml
@@ -168,13 +168,13 @@ plugins:
 
 ```python
 @dataclass
-class ModelConfig:
+class ModelConfigSchema:
     hidden_size: int
     dropout: float
 
 @dataclass
-class Config:
-    models: dict[str, ModelConfig]
+class ConfigSchema:
+    models: dict[str, ModelConfigSchema]
 ```
 
 ```yaml
@@ -195,7 +195,7 @@ Add validation logic with `@validator`:
 from sparkwheel import validator
 
 @dataclass
-class TrainingConfig:
+class TrainingConfigSchema:
     lr: float
     batch_size: int
 
@@ -220,7 +220,7 @@ Validators can check relationships between fields:
 
 ```python
 @dataclass
-class Config:
+class ConfigSchema:
     start_epoch: int
     end_epoch: int
     warmup_epochs: int
@@ -238,7 +238,7 @@ class Config:
 
 ```python
 @dataclass
-class Config:
+class ConfigSchema:
     value: float
     max_value: Optional[float] = None
 
@@ -259,20 +259,20 @@ Use tagged unions for type-safe variants:
 from typing import Literal, Union
 
 @dataclass
-class SGDOptimizer:
+class SGDOptimizerSchema:
     type: Literal["sgd"]  # Discriminator
     lr: float
     momentum: float = 0.9
 
 @dataclass
-class AdamOptimizer:
+class AdamOptimizerSchema:
     type: Literal["adam"]  # Discriminator
     lr: float
     beta1: float = 0.9
 
 @dataclass
-class Config:
-    optimizer: Union[SGDOptimizer, AdamOptimizer]
+class ConfigSchema:
+    optimizer: Union[SGDOptimizerSchema, AdamOptimizerSchema]
 ```
 
 YAML:
@@ -312,13 +312,13 @@ Sparkwheel automatically converts compatible types when `coerce=True` (default):
 
 ```python
 @dataclass
-class ServerConfig:
+class ServerConfigSchema:
     port: int
     timeout: float
     enabled: bool
 
 # Coercion enabled by default
-config = Config(schema=ServerConfig)
+config = Config(schema=ServerConfigSchema)
 config.update({
     "port": "8080",        # str → int
     "timeout": "30.5",     # str → float
@@ -340,7 +340,7 @@ print(config["enabled"])   # True (bool)
 **Disable coercion if needed:**
 
 ```python
-config = Config(schema=ServerConfig, coerce=False)
+config = Config(schema=ServerConfigSchema, coerce=False)
 config.update({
     "port": "8080"  # ValidationError: expected int, got str
 })
@@ -352,18 +352,18 @@ Control whether extra fields are rejected:
 
 ```python
 @dataclass
-class Schema:
+class MySchema:
     required_field: int
 
 # Strict mode (default) - rejects extra fields
-config = Config(schema=Schema, strict=True)
+config = Config(schema=MySchema, strict=True)
 config.update({
     "required_field": 42,
     "extra_field": "oops"  # ✗ ValidationError!
 })
 
 # Lenient mode - allows extra fields
-config = Config(schema=Schema, strict=False)
+config = Config(schema=MySchema, strict=False)
 config.update({
     "required_field": 42,
     "extra_field": "ok"  # ✓ Allowed
@@ -383,13 +383,13 @@ Support partial configs with required-but-not-yet-set values:
 from sparkwheel import Config, MISSING
 
 @dataclass
-class APIConfig:
+class APIConfigSchema:
     api_key: str
     endpoint: str
     timeout: int = 30
 
 # Partial config - api_key not set yet
-config = Config(schema=APIConfig, allow_missing=True)
+config = Config(schema=APIConfigSchema, allow_missing=True)
 config.update({
     "api_key": MISSING,
     "endpoint": "https://api.example.com"
@@ -400,7 +400,7 @@ import os
 config.set("api_key", os.getenv("API_KEY"))
 
 # Now validate that nothing is MISSING
-config.validate(APIConfig)  # Uses allow_missing=False by default
+config.validate(APIConfigSchema)  # Uses allow_missing=False by default
 ```
 
 ## Frozen Configs
@@ -433,11 +433,11 @@ Validation works with references, expressions, and instantiation.
 
 ```python
 @dataclass
-class Config:
+class ConfigSchema:
     base_lr: float
     optimizer_lr: float  # Can be a reference
 
-config = Config(schema=Config)
+config = Config(schema=ConfigSchema)
 config.update({
     "base_lr": 0.001,
     "optimizer_lr": "@base_lr"  # Reference allowed
@@ -448,11 +448,11 @@ config.update({
 
 ```python
 @dataclass
-class Config:
+class ConfigSchema:
     batch_size: int
     total_steps: int  # Computed
 
-config = Config(schema=Config)
+config = Config(schema=ConfigSchema)
 config.update({
     "batch_size": 32,
     "total_steps": "$@batch_size * 100"  # Expression allowed
@@ -465,11 +465,11 @@ Special keys like `_target_` are automatically ignored:
 
 ```python
 @dataclass
-class OptimizerConfig:
+class OptimizerConfigSchema:
     lr: float
     momentum: float = 0.9
 
-config = Config(schema=OptimizerConfig)
+config = Config(schema=OptimizerConfigSchema)
 config.update({
     "_target_": "torch.optim.SGD",  # Ignored by validation
     "lr": 0.001,
@@ -501,7 +501,7 @@ config.update({
 
 ```python
 # ValidationError: Validation error at 'unexpected':
-#   Unexpected field 'unexpected' not in schema Config
+#   Unexpected field 'unexpected' not in schema ConfigSchema
 ```
 
 ### Nested Errors
@@ -540,7 +540,7 @@ config.validate(MySchema)
 from sparkwheel import validate
 
 # Validate a dict directly
-validate(config_dict, AppSchema)
+validate(config_dict, AppConfigSchema)
 ```
 
 ## Complete Example
@@ -551,7 +551,7 @@ from typing import Optional
 from sparkwheel import Config, validator
 
 @dataclass
-class DatabaseConfig:
+class DatabaseConfigSchema:
     host: str
     port: int
     database: str
@@ -561,7 +561,7 @@ class DatabaseConfig:
     timeout: int = 30
 
 @dataclass
-class APIConfig:
+class APIConfigSchema:
     host: str = "0.0.0.0"
     port: int = 8000
     workers: int = 4
@@ -572,15 +572,15 @@ class APIConfig:
             raise ValueError(f"port must be 1024-65535, got {self.port}")
 
 @dataclass
-class AppConfig:
+class AppConfigSchema:
     app_name: str
     environment: str
     debug: bool = False
-    api: APIConfig
-    database: DatabaseConfig
+    api: APIConfigSchema
+    database: DatabaseConfigSchema
 
 # Load and validate continuously
-config = Config(schema=AppConfig)
+config = Config(schema=AppConfigSchema)
 config.update("production.yaml")
 
 # Access validated config

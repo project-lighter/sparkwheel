@@ -158,7 +158,7 @@ from dataclasses import dataclass
 from sparkwheel import Config, validator
 
 @dataclass
-class AppConfig:
+class AppConfigSchema:
     name: str
     port: int
     debug: bool = False
@@ -169,12 +169,12 @@ class AppConfig:
             raise ValueError(f"Invalid port: {self.port}")
 
 # Continuous validation (validates on every mutation)
-config = Config(schema=AppConfig)
+config = Config(schema=AppConfigSchema)
 
 # Or explicit validation
 config = Config()
 config.update("config.yaml")
-config.validate(AppConfig)
+config.validate(AppConfigSchema)
 ```
 
 ## Resolution Order

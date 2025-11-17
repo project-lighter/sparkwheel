@@ -46,13 +46,13 @@ from sparkwheel import Config, MISSING
 from dataclasses import dataclass
 
 @dataclass
-class APIConfig:
+class APIConfigSchema:
     api_key: str
     endpoint: str
     timeout: int = 30
 
 # Build config incrementally with MISSING values
-config = Config(schema=APIConfig, allow_missing=True)
+config = Config(schema=APIConfigSchema, allow_missing=True)
 config.update({
     "api_key": MISSING,  # Will be set later
     "endpoint": "https://api.example.com",
@@ -64,7 +64,7 @@ import os
 config.set("api_key", os.getenv("API_KEY"))
 
 # Validate that nothing is MISSING anymore
-config.validate(APIConfig)  # Uses allow_missing=False by default
+config.validate(APIConfigSchema)  # Uses allow_missing=False by default
 
 # Freeze for production use
 config.freeze()
