@@ -288,21 +288,17 @@ def validate(
                 continue
             # No default -> required
             source_loc = _get_source_location(metadata, field_path) if metadata else None
-            # field_info.type is always type in our usage
-            assert isinstance(field_info.type, type)
             raise ValidationError(
                 f"Missing required field '{field_name}'",
                 field_path=current_path,
-                expected_type=field_info.type,
+                expected_type=field_info.type,  # type: ignore[arg-type]
                 source_location=source_loc,
             )
 
         # Validate the field value
-        # field_info.type is always type in our usage
-        assert isinstance(field_info.type, type)
         _validate_field(
             config[field_name],
-            field_info.type,
+            field_info.type,  # type: ignore[arg-type]
             current_path,
             metadata,
             allow_missing=allow_missing,
