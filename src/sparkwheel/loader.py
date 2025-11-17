@@ -8,7 +8,7 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 from .metadata import MetadataRegistry
-from .path_patterns import is_yaml_file
+from .path_utils import is_yaml_file
 from .utils import CheckKeyDuplicatesYamlLoader, PathLike
 from .utils.constants import ID_SEP_KEY
 from .utils.exceptions import SourceLocation
