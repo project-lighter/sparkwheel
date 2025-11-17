@@ -1177,5 +1177,107 @@ class TestMissingValueHandling:
         validate({"value": MISSING}, Config, allow_missing=True)
 
 
+class TestAnyTypeValidation:
+    """Test validation with Any type."""
+
+    def test_any_type_accepts_any_value(self):
+        """Test that Any type accepts any value."""
+        from typing import Any
+
+        @dataclass
+        class Config:
+            value: Any
+
+        # Should accept any type
+        validate({"value": 42}, Config)
+        validate({"value": "string"}, Config)
+        validate({"value": [1, 2, 3]}, Config)
+        validate({"value": {"nested": "dict"}}, Config)
+        validate({"value": None}, Config)
+
+
+class TestValidatorExceptionHandling:
+    """Test validator exception handling."""
+
+    def test_validator_with_bad_init(self):
+        """Test validator when dataclass __init__ raises exception."""
+        from sparkwheel.schema import validator
+
+        @dataclass
+        class Config:
+            value: int
+
+            def __post_init__(self):
+                # This will raise during validation
+                if self.value < 0:
+                    raise ValueError("Value must be positive")
+
+            @validator
+            def check_value(self):
+                # This validator won't run if __init__ fails
+                assert self.value > 0
+
+        # Should still validate the types even if instance creation fails
+        validate({"value": -5}, Config)
+
+
+class TestUnionValidationSuccess:
+    """Test union validation success path."""
+
+    def test_union_first_type_succeeds(self):
+        """Test union validation when first type succeeds."""
+
+        @dataclass
+        class Config:
+            value: int | str
+
+        # First type (int) should succeed
+        validate({"value": 42}, Config)
+
+    def test_union_second_type_succeeds(self):
+        """Test union validation when second type succeeds."""
+
+        @dataclass
+        class Config:
+            value: int | str
+
+        # Second type (str) should succeed
+        validate({"value": "hello"}, Config)
+
+
+class TestMetadataExceptionHandling:
+    """Test metadata source location exception handling."""
+
+    def test_metadata_get_raises_exception(self):
+        """Test _get_source_location when metadata.get raises."""
+
+        class BadMetadata:
+            def get(self, key):
+                raise RuntimeError("Bad metadata")
+
+        @dataclass
+        class Config:
+            value: int
+
+        # Should handle exception gracefully
+        with pytest.raises(ValidationError, match="Missing required field"):
+            validate({}, Config, metadata=BadMetadata())
+
+    def test_metadata_returns_non_source_location(self):
+        """Test _get_source_location when metadata returns wrong type."""
+
+        class BadMetadata:
+            def get(self, key):
+                return "not a source location"
+
+        @dataclass
+        class Config:
+            value: int
+
+        # Should handle gracefully
+        with pytest.raises(ValidationError, match="Missing required field"):
+            validate({}, Config, metadata=BadMetadata())
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

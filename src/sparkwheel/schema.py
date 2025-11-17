@@ -656,7 +656,7 @@ def _validate_field(
         return
 
     # Handle Any type - accept any value
-    if expected_type is Any:
+    if expected_type == Any:
         return
 
     # Handle basic types (int, str, float, bool, etc.)
