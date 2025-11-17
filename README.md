@@ -4,7 +4,7 @@
 </div>
 <br/><br/>
 <p align="center">
-  <a href="https://github.com/project-lighter/sparkwheel/actions"><img alt="Tests" src="https://github.com/project-lighter/sparkwheel/workflows/Tests/badge.svg"></a>
+  <a href="https://github.com/project-lighter/sparkwheel/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/project-lighter/sparkwheel/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://codecov.io/gh/project-lighter/sparkwheel"><img alt="Coverage" src="https://codecov.io/gh/project-lighter/sparkwheel/branch/main/graph/badge.svg"></a>
   <a href="https://pypi.org/project/sparkwheel/"><img alt="PyPI" src="https://img.shields.io/pypi/v/sparkwheel"></a>
   <a href="https://github.com/project-lighter/sparkwheel/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
