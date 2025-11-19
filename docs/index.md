@@ -233,14 +233,6 @@ Sparkwheel has two types of references with distinct purposes:
 
     [:octicons-arrow-right-24: Core Concepts](user-guide/basics.md)
 
--   :material-lightbulb-on-outline:{ .lg .middle } __Examples__
-
-    ---
-
-    See complete real-world configuration patterns
-
-    [:octicons-arrow-right-24: View Examples](examples/simple.md)
-
 -   :material-code-tags:{ .lg .middle } __API Reference__
 
     ---

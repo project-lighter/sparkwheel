@@ -190,4 +190,4 @@ python train.py base.yaml optimizer::lr=0.001 trainer::epochs=100
 - **[Configuration Basics](basics.md)** - Loading and accessing configs
 - **[Operators](operators.md)** - Composition, replacement, and deletion
 - **[Schema Validation](schema-validation.md)** - Type-safe configs with dataclasses
-- **[API Reference](references.md)** - Full API documentation
+- **[API Reference](reference/)** - Full API documentation

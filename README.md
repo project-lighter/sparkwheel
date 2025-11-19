@@ -34,7 +34,8 @@ dataset:
 ```python
 from sparkwheel import Config
 
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 model = config.resolve("model")  # Actual torch.nn.Linear(784, 10) instance!
 ```
 
@@ -88,7 +89,6 @@ model:
 - [Full Documentation](https://project-lighter.github.io/sparkwheel/)
 - [Quick Start Guide](https://project-lighter.github.io/sparkwheel/getting-started/quickstart/)
 - [Core Concepts](https://project-lighter.github.io/sparkwheel/user-guide/basics/)
-- [Examples](https://project-lighter.github.io/sparkwheel/examples/simple/)
 - [API Reference](https://project-lighter.github.io/sparkwheel/reference/)
 
 ## Community

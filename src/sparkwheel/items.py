@@ -7,7 +7,7 @@ from typing import Any
 
 from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
 from .utils.constants import EXPR_KEY
-from .utils.exceptions import EvaluationError, InstantiationError, ModuleNotFoundError, SourceLocation
+from .utils.exceptions import EvaluationError, InstantiationError, SourceLocation, TargetNotFoundError
 
 __all__ = ["Item", "Expression", "Component", "Instantiable"]
 
@@ -185,10 +185,10 @@ class Component(Item, Instantiable):
 
         try:
             return instantiate(modname, mode, **args)
-        except ModuleNotFoundError as e:
+        except TargetNotFoundError as e:
             # Re-raise with source location and suggestions
             suggestion = self._suggest_similar_modules(modname) if isinstance(modname, str) else None
-            raise ModuleNotFoundError(
+            raise TargetNotFoundError(
                 f"Cannot locate class or function: '{modname}'",
                 source_location=self.source_location,
                 suggestion=suggestion,

@@ -171,7 +171,8 @@ model:  # Merges by default!
 ```python
 from sparkwheel import Config
 
-config = Config.load("base.yaml")
+config = Config()
+config.update("base.yaml")
 config.update("override.yaml")
 
 # Result:
@@ -213,7 +214,8 @@ Use `~key: null` to delete a key, or `~key: [items]` to delete specific items fr
 ```
 
 ```python
-config = Config.load("base.yaml")
+config = Config()
+config.update("base.yaml")
 config.update({"~model::dropout": None})  # Remove entire key
 config.update({"~plugins": [0, 2]})  # Remove list items
 config.update({"~dataloaders": ["train", "test"]})  # Remove dict keys
@@ -226,7 +228,8 @@ config.update({"~dataloaders": ["train", "test"]})  # Remove dict keys
 Apply operators programmatically:
 
 ```python
-config = Config.load("config.yaml")
+config = Config()
+config.update("config.yaml")
 
 # Set individual values
 config.set("model::hidden_size", 1024)
@@ -267,7 +270,8 @@ Sparkwheel provides helpful error messages with suggestions:
 ```python
 from sparkwheel import Config, ConfigKeyError
 
-config = Config.load({
+config = Config()
+config.update({
     "model": {"hidden_size": 512, "num_layers": 4},
     "training": {"batch_size": 32}
 })
@@ -295,7 +299,8 @@ Pre-import modules for use in expressions:
 from sparkwheel import Config
 
 # Pre-import torch for all expressions
-config = Config.load("config.yaml", globals={"torch": "torch", "np": "numpy"})
+config = Config(globals={"torch": "torch", "np": "numpy"})
+config.update("config.yaml")
 
 # Now expressions can use torch and np without importing
 ```
@@ -312,7 +317,8 @@ data: "$np.array([1, 2, 3])"
 ```python
 from sparkwheel import Config
 
-config: Config = Config.load("config.yaml")
+config: Config = Config()
+config.update("config.yaml")
 resolved: dict = config.resolve()
 ```
 

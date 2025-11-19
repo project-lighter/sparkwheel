@@ -25,11 +25,13 @@ Example:
         optimizer: OptimizerConfig
 
     # Load and validate config
-    config = Config.load("config.yaml")
+    config = Config()
+    config.update("config.yaml")
     validate(config.get(), ModelConfig)  # Raises error if invalid
 
     # Or validate during load
-    config = Config.load("config.yaml", schema=ModelConfig)
+    config = Config(schema=ModelConfig)
+    config.update("config.yaml")
     ```
 """
 
@@ -566,6 +568,12 @@ def _validate_field(
                 source_location=source_loc,
             )
 
+    # Handle references and expressions early
+    # Accept resolved references (@), raw references (%), and expressions ($) as strings
+    # since they'll be resolved/expanded later - we can't validate their type until resolution
+    if isinstance(value, str) and (value.startswith("@") or value.startswith("$") or value.startswith("%")):
+        return
+
     # Handle list[T]
     if origin is list:
         if not isinstance(value, list):
@@ -661,13 +669,6 @@ def _validate_field(
 
     # Handle basic types (int, str, float, bool, etc.)
     if not isinstance(value, expected_type):
-        # Special case: accept resolved references (@), raw references (%), and expressions ($) as strings
-        # since they'll be resolved/expanded later
-        if isinstance(value, str) and (value.startswith("@") or value.startswith("$") or value.startswith("%")):
-            # This is a resolved reference/raw reference/expression that will be processed later
-            # We can't validate its type until resolution
-            return
-
         # Special case: allow int for float
         if expected_type is float and isinstance(value, int):
             return

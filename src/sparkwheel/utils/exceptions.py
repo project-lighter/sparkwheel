@@ -7,7 +7,7 @@ from typing import Any
 __all__ = [
     "SourceLocation",
     "BaseError",
-    "ModuleNotFoundError",
+    "TargetNotFoundError",
     "CircularReferenceError",
     "InstantiationError",
     "ConfigKeyError",
@@ -109,7 +109,7 @@ class BaseError(Exception):
             return ""
 
 
-class ModuleNotFoundError(BaseError):
+class TargetNotFoundError(BaseError):
     """Raised when a _target_ module/class/function cannot be located."""
 
     pass

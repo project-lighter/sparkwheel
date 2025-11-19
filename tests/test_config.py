@@ -19,8 +19,7 @@ import pytest
 import yaml
 
 from sparkwheel import Config, apply_operators
-from sparkwheel.path_patterns import split_file_and_id
-from sparkwheel.path_utils import resolve_relative_ids
+from sparkwheel.path_utils import resolve_relative_ids, split_file_and_id
 
 
 class TestConfigBasics:
@@ -277,6 +276,52 @@ class TestConfigMacros:
             assert parser["local"] == {"value": 42}
         finally:
             Path(filepath).unlink()
+
+    def test_eager_raw_reference_expansion(self):
+        """Test that raw references are expanded during update(), not resolve()."""
+        config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
+        parser = Config().update(config)
+
+        # After update(), raw references should be expanded (not resolve() yet!)
+        # The copy should be the actual value, not the "%original" string
+        assert parser.get("copy") == {"a": 1, "b": 2}
+        assert parser.get("copy") is not parser.get("original")  # Deep copy
+
+        # Verify it's a real copy by modifying it
+        parser.set("copy::c", 3)
+        assert parser.get("copy::c") == 3
+        assert "c" not in parser.get("original")
+
+    def test_pruning_with_raw_references(self):
+        """Test that pruning works with raw references (the Lighter use case)."""
+        # This is the critical test: raw refs should be expanded before pruning
+        config = {
+            "system": {
+                "dataloaders": {
+                    "train": {"batch_size": 32},
+                    "val": {"batch_size": 64},
+                }
+            },
+            "train": {
+                "dataloader": "%system::dataloaders::train"  # Raw reference
+            },
+        }
+
+        parser = Config().update(config)
+
+        # Raw reference should already be expanded
+        assert parser.get("train::dataloader") == {"batch_size": 32}
+
+        # Now prune the system section (delete it)
+        parser.update("~system")
+
+        # The raw reference was already expanded, so train::dataloader should still exist
+        assert parser.get("train::dataloader") == {"batch_size": 32}
+        assert "system" not in parser.get()  # system is deleted
+
+        # Verify we can still resolve after pruning
+        result = parser.resolve("train::dataloader")
+        assert result == {"batch_size": 32}
 
 
 class TestComponents:

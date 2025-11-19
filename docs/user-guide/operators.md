@@ -535,4 +535,3 @@ Sparkwheel goes beyond Hydra with:
 
 - **[Configuration Basics](basics.md)** - Core config management
 - **[Advanced Features](advanced.md)** - Macros and power features
-- **[Examples](../examples/simple.md)** - Real-world patterns

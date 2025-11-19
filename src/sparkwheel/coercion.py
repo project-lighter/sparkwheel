@@ -1,4 +1,10 @@
-"""Type coercion for schema validation."""
+"""Type coercion for schema validation.
+
+Automatically converts values between compatible types when safe and unambiguous,
+making configs more flexible while maintaining type safety. Supports string to
+numeric/bool conversions, int to float, and recursive coercion through nested
+structures. Enabled by default via `Config(coerce=True)`.
+"""
 
 import dataclasses
 import types

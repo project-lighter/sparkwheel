@@ -19,8 +19,8 @@ from .utils.exceptions import (
     EvaluationError,
     FrozenConfigError,
     InstantiationError,
-    ModuleNotFoundError,
     SourceLocation,
+    TargetNotFoundError,
 )
 
 __version__ = "0.0.6"
@@ -47,7 +47,7 @@ __all__ = [
     "REMOVE_KEY",
     "REPLACE_KEY",
     "BaseError",
-    "ModuleNotFoundError",
+    "TargetNotFoundError",
     "CircularReferenceError",
     "InstantiationError",
     "ConfigKeyError",

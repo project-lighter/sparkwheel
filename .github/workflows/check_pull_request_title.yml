@@ -43,5 +43,5 @@ jobs:
             Invalid: "add feature", "Adds feature", "Add.", "Fix"
           # Disable type prefixes (we don't use conventional commits format)
           requireScope: false
-          ignoreLabels:
-            - ignore-title-check
+          ignoreLabels: |
+            ignore-title-check

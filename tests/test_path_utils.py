@@ -1,6 +1,6 @@
 """Tests for path utility functions."""
 
-from sparkwheel.path_patterns import PathPatterns, find_references
+from sparkwheel.path_utils import PathPatterns, find_references
 
 
 class TestPathPatterns:
