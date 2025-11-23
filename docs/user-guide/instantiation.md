@@ -47,6 +47,51 @@ examples:
     hidden_size: 256
 ```
 
+## Positional Arguments with `_args_`
+
+Use `_args_` to pass positional arguments to classes or functions that require them:
+
+```yaml
+# Basic example with list()
+my_list:
+  _target_: builtins.list
+  _args_:
+    - [1, 2, 3, 4, 5]
+  # Equivalent to: list([1, 2, 3, 4, 5])
+
+# torch.nn.Sequential requires positional args
+model:
+  _target_: torch.nn.Sequential
+  _args_:
+    - _target_: torch.nn.Linear
+      in_features: 784
+      out_features: 128
+    - _target_: torch.nn.ReLU
+    - _target_: torch.nn.Linear
+      in_features: 128
+      out_features: 10
+  # Equivalent to: nn.Sequential(Linear(784, 128), ReLU(), Linear(128, 10))
+```
+
+### Mixing `_args_` and Keyword Arguments
+
+You can combine positional arguments with keyword arguments:
+
+```yaml
+pipeline:
+  _target_: sklearn.pipeline.Pipeline
+  _args_:
+    - - scaler:
+          _target_: sklearn.preprocessing.StandardScaler
+      - model:
+          _target_: sklearn.linear_model.LogisticRegression
+  memory: null  # Keyword argument
+  verbose: true  # Keyword argument
+```
+
+!!! note "List Requirement"
+    `_args_` must always be a list, even if you're only passing a single positional argument. Each item in the list becomes a positional argument in order.
+
 ## Nested Instantiation
 
 Instantiate objects within objects:
@@ -127,8 +172,10 @@ debug_component:
 
 ### Other Special Keys
 
+- `_target_`: Class or function path to instantiate (required)
+- `_args_`: List of positional arguments to pass
 - `_disabled_`: Skip instantiation if `True`
 - `_requires_`: Dependencies to resolve first
-- `_target_`: Class or function path to instantiate
+- `_mode_`: Instantiation mode (`"default"`, `"callable"`, or `"debug"`)
 
 For complete details, see the [Advanced Features](advanced.md) and [API Reference](../reference/).

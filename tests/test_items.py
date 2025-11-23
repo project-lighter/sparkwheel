@@ -64,11 +64,12 @@ class TestComponent:
         """Test resolving instantiation arguments."""
         config = {"_target_": "collections.Counter", "iterable": [1, 2, 3], "_disabled_": False}
         component = Component(config=config)
-        args = component.resolve_args()
+        args, kwargs = component.resolve_args()
 
-        assert args == {"iterable": [1, 2, 3]}
-        assert "_target_" not in args
-        assert "_disabled_" not in args
+        assert args == []
+        assert kwargs == {"iterable": [1, 2, 3]}
+        assert "_target_" not in kwargs
+        assert "_disabled_" not in kwargs
 
     def test_resolve_args_non_mapping(self):
         """Test resolve_args with non-mapping config raises TypeError."""
@@ -206,6 +207,94 @@ class TestComponent:
         assert result["a"] == 1  # From config
         assert result["b"] == 99  # Overridden by kwargs
         assert result["c"] == 3  # Added by kwargs
+
+    def test_resolve_args_with_args(self):
+        """Test resolving positional arguments from _args_."""
+        config = {"_target_": "builtins.list", "_args_": [[1, 2, 3]], "extra_kwarg": "ignored"}
+        component = Component(config=config)
+        args, kwargs = component.resolve_args()
+
+        assert args == [[1, 2, 3]]
+        assert kwargs == {"extra_kwarg": "ignored"}
+        assert "_args_" not in kwargs
+
+    def test_resolve_args_empty_args(self):
+        """Test that _args_ defaults to empty list when not present."""
+        config = {"_target_": "builtins.dict", "a": 1}
+        component = Component(config=config)
+        args, kwargs = component.resolve_args()
+
+        assert args == []
+        assert kwargs == {"a": 1}
+
+    def test_resolve_args_invalid_args_type(self):
+        """Test that non-list _args_ raises TypeError."""
+        config = {"_target_": "builtins.dict", "_args_": "not a list"}
+        component = Component(config=config)
+
+        with pytest.raises(TypeError, match="Expected _args_ to be a list"):
+            component.resolve_args()
+
+    def test_instantiate_with_args(self):
+        """Test instantiation with positional arguments."""
+        # Use list() which accepts an iterable as first positional arg
+        config = {"_target_": "builtins.list", "_args_": [[1, 2, 3]]}
+        component = Component(config=config)
+        result = component.instantiate()
+
+        assert isinstance(result, list)
+        assert result == [1, 2, 3]
+
+    def test_instantiate_with_args_and_kwargs(self):
+        """Test instantiation with both positional and keyword arguments."""
+
+        # Create a test class that accepts both args and kwargs
+        class TestClass:
+            def __init__(self, arg1, arg2, kwarg1=None, kwarg2=None):
+                self.arg1 = arg1
+                self.arg2 = arg2
+                self.kwarg1 = kwarg1
+                self.kwarg2 = kwarg2
+
+        config = {
+            "_target_": TestClass,
+            "_args_": ["pos1", "pos2"],
+            "kwarg1": "kw1",
+            "kwarg2": "kw2",
+        }
+        component = Component(config=config)
+        result = component.instantiate()
+
+        assert isinstance(result, TestClass)
+        assert result.arg1 == "pos1"
+        assert result.arg2 == "pos2"
+        assert result.kwarg1 == "kw1"
+        assert result.kwarg2 == "kw2"
+
+    def test_instantiate_with_multiple_args(self):
+        """Test instantiation with multiple positional arguments."""
+
+        def test_func(a, b, c):
+            return f"{a}-{b}-{c}"
+
+        config = {"_target_": test_func, "_args_": ["x", "y", "z"]}
+        component = Component(config=config)
+        result = component.instantiate()
+
+        assert result == "x-y-z"
+
+    def test_instantiate_args_not_in_non_arg_keys(self):
+        """Test that _args_ is properly excluded from kwargs."""
+        config = {"_target_": "builtins.dict", "_args_": [], "a": 1}
+        component = Component(config=config)
+        args, kwargs = component.resolve_args()
+
+        # Verify _args_ is not passed as a kwarg
+        assert "_args_" not in kwargs
+        assert "_target_" not in kwargs
+        assert "_disabled_" not in kwargs
+        assert "_requires_" not in kwargs
+        assert "_mode_" not in kwargs
 
 
 class TestExpression:

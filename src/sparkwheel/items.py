@@ -87,16 +87,24 @@ class Component(Item, Instantiable):
     Example:
         ```python
         from sparkwheel import Component
-        from collections import Counter
 
+        # Basic instantiation with kwargs
         config = {
             "_target_": "collections.Counter",
             "iterable": [1, 2, 2, 3, 3, 3]
         }
-
         component = Component(config, id="counter")
         counter = component.instantiate()
         print(counter)  # Counter({3: 3, 2: 2, 1: 1})
+
+        # With positional arguments using _args_
+        config = {
+            "_target_": "builtins.list",
+            "_args_": [[1, 2, 3, 4, 5]]
+        }
+        component = Component(config, id="my_list")
+        my_list = component.instantiate()
+        print(my_list)  # [1, 2, 3, 4, 5]
         ```
 
     Args:
@@ -107,15 +115,16 @@ class Component(Item, Instantiable):
         Special configuration keys:
 
         - `_target_`: Full module path (e.g., "collections.Counter")
+        - `_args_`: List of positional arguments to pass to the target
         - `_requires_`: Dependencies to evaluate/instantiate first
         - `_disabled_`: Skip instantiation if True
         - `_mode_`: Instantiation mode:
-            - `"default"`: Returns component(**kwargs)
-            - `"callable"`: Returns functools.partial(component, **kwargs)
-            - `"debug"`: Returns pdb.runcall(component, **kwargs)
+            - `"default"`: Returns component(*args, **kwargs)
+            - `"callable"`: Returns functools.partial(component, *args, **kwargs)
+            - `"debug"`: Returns pdb.runcall(component, *args, **kwargs)
     """
 
-    non_arg_keys = {"_target_", "_disabled_", "_requires_", "_mode_"}
+    non_arg_keys = {"_target_", "_disabled_", "_requires_", "_mode_", "_args_"}
 
     def __init__(self, config: Any, id: str = "", source_location: SourceLocation | None = None) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
@@ -150,6 +159,11 @@ class Component(Item, Instantiable):
     def resolve_args(self):
         """
         Utility function used in `instantiate()` to resolve the arguments from current config content.
+
+        Returns:
+            tuple: A tuple of (args, kwargs) where:
+                - args is a list of positional arguments from _args_ (or empty list if not present)
+                - kwargs is a dict of keyword arguments (excluding special keys)
         """
         config = self.get_config()
         if not isinstance(config, Mapping):
@@ -157,7 +171,18 @@ class Component(Item, Instantiable):
                 f"Expected config to be a Mapping (dict-like), but got {type(config).__name__}. "
                 f"Cannot resolve arguments from non-mapping config."
             )
-        return {k: v for k, v in config.items() if k not in self.non_arg_keys}
+
+        # Extract positional args from _args_ if present
+        args = config.get("_args_", [])
+        if not isinstance(args, list):
+            raise TypeError(
+                f"Expected _args_ to be a list, but got {type(args).__name__}. _args_ must be a list of positional arguments."
+            )
+
+        # Extract keyword arguments (excluding special keys)
+        kwargs = {k: v for k, v in config.items() if k not in self.non_arg_keys}
+
+        return args, kwargs
 
     def is_disabled(self) -> bool:
         """
@@ -180,11 +205,11 @@ class Component(Item, Instantiable):
 
         modname = self.resolve_module_name()
         mode = self.get_config().get("_mode_", CompInitMode.DEFAULT)
-        args = self.resolve_args()
-        args.update(kwargs)
+        args, config_kwargs = self.resolve_args()
+        config_kwargs.update(kwargs)
 
         try:
-            return instantiate(modname, mode, **args)
+            return instantiate(modname, mode, *args, **config_kwargs)
         except TargetNotFoundError as e:
             # Re-raise with source location and suggestions
             suggestion = self._suggest_similar_modules(modname) if isinstance(modname, str) else None

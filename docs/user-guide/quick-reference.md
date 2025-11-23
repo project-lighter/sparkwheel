@@ -37,9 +37,9 @@ A one-page cheat sheet for Sparkwheel syntax and features.
     | Key | Type | Purpose | Example |
     |-----|------|---------|---------|
     | `_target_` | str | Class/function to instantiate | `torch.optim.Adam` |
-    | `_partial_` | bool | Return partial function | `true` |
+    | `_args_` | list | Positional arguments | `[arg1, arg2]` |
     | `_disabled_` | bool | Skip instantiation | `true` |
-    | `_mode_` | str | Instantiation mode | `"dict"` / `"dataclass"` |
+    | `_mode_` | str | Instantiation mode | `"default"` / `"callable"` / `"debug"` |
 
 ## Common Patterns
 
@@ -81,11 +81,22 @@ database:
 ### Object Instantiation
 
 ```yaml
+# Basic instantiation
 model:
   _target_: torch.nn.Linear
   in_features: 784
   out_features: 10
 
+# With positional arguments
+sequential:
+  _target_: torch.nn.Sequential
+  _args_:
+    - _target_: torch.nn.Linear
+      in_features: 784
+      out_features: 128
+    - _target_: torch.nn.ReLU
+
+# With optimizer
 optimizer:
   _target_: torch.optim.Adam
   params: "$@model.parameters()"

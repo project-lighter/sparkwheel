@@ -200,24 +200,25 @@ def optional_import(
     return _LazyRaise(), False
 
 
-def instantiate(__path: str, __mode: str, **kwargs: Any) -> Any:
+def instantiate(__path: str, __mode: str, *args: Any, **kwargs: Any) -> Any:
     """
     Create an object instance or call a callable object from a class or function represented by ``__path``.
-    `kwargs` will be part of the input arguments to the class constructor or function.
+    `args` and `kwargs` will be part of the input arguments to the class constructor or function.
     The target component must be a class or a function, if not, return the component directly.
 
     Args:
         __path: if a string is provided, it's interpreted as the full path of the target class or function component.
-            If a callable is provided, ``__path(**kwargs)`` will be invoked and returned for ``__mode="default"``.
-            For ``__mode="callable"``, the callable will be returned as ``__path`` or, if ``kwargs`` are provided,
-            as ``functools.partial(__path, **kwargs)`` for future invoking.
+            If a callable is provided, ``__path(*args, **kwargs)`` will be invoked and returned for ``__mode="default"``.
+            For ``__mode="callable"``, the callable will be returned as ``__path`` or, if ``args``/``kwargs`` are provided,
+            as ``functools.partial(__path, *args, **kwargs)`` for future invoking.
 
         __mode: the operating mode for invoking the (callable) ``component`` represented by ``__path``:
 
-            - ``"default"``: returns ``component(**kwargs)``
-            - ``"callable"``: returns ``component`` or, if ``kwargs`` are provided, ``functools.partial(component, **kwargs)``
-            - ``"debug"``: returns ``pdb.runcall(component, **kwargs)``
+            - ``"default"``: returns ``component(*args, **kwargs)``
+            - ``"callable"``: returns ``component`` or, if ``args``/``kwargs`` are provided, ``functools.partial(component, *args, **kwargs)``
+            - ``"debug"``: returns ``pdb.runcall(component, *args, **kwargs)``
 
+        args: positional arguments to the callable represented by ``__path``.
         kwargs: keyword arguments to the callable represented by ``__path``.
     """
     component = locate(__path) if isinstance(__path, str) else __path
@@ -236,20 +237,21 @@ def instantiate(__path: str, __mode: str, **kwargs: Any) -> Any:
             warnings.warn(f"Component {component} is not callable when mode={m}.", stacklevel=2)
             return component
         if m == CompInitMode.DEFAULT:
-            return component(**kwargs)
+            return component(*args, **kwargs)
         if m == CompInitMode.CALLABLE:
-            return partial(component, **kwargs) if kwargs else component
+            return partial(component, *args, **kwargs) if (args or kwargs) else component
         if m == CompInitMode.DEBUG:
             warnings.warn(
                 f"\n\npdb: instantiating component={component}, mode={m}\n"
                 f"See also Debugger commands documentation: https://docs.python.org/3/library/pdb.html\n",
                 stacklevel=2,
             )
-            return pdb.runcall(component, **kwargs)
+            return pdb.runcall(component, *args, **kwargs)
     except Exception as e:
         # Preserve the original exception type and message for better debugging
+        args_str = f"{len(args)} positional args, " if args else ""
         error_msg = (
-            f"Failed to instantiate component '{__path}' with keywords: {','.join(kwargs.keys())}\n"
+            f"Failed to instantiate component '{__path}' with {args_str}keywords: {','.join(kwargs.keys())}\n"
             f"  Original error ({type(e).__name__}): {str(e)}\n"
             f"  Set '_mode_={CompInitMode.DEBUG}' to enter debugging mode."
         )

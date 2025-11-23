@@ -107,10 +107,11 @@ class TestComponent:
             "iterable": [1, 2, 2],
         }
         component = Component(config, id="test")
-        args = component.resolve_args()
-        assert args == {"iterable": [1, 2, 2]}
-        assert "_target_" not in args
-        assert "_disabled_" not in args
+        args, kwargs = component.resolve_args()
+        assert args == []
+        assert kwargs == {"iterable": [1, 2, 2]}
+        assert "_target_" not in kwargs
+        assert "_disabled_" not in kwargs
 
     def test_is_disabled_false(self):
         """Test is_disabled returns False."""
