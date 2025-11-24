@@ -126,10 +126,13 @@ Remove keys or list items with `~key`:
 ### Delete Entire Keys
 
 ```yaml
-# Remove keys (idempotent - no error if missing!)
+# Remove keys explicitly
 ~old_param: null
 ~debug_settings: null
 ```
+
+!!! warning "Key Must Exist"
+    The delete operator will raise an error if the key doesn't exist. This helps catch typos and configuration mistakes.
 
 ### Delete Dict Keys
 
@@ -214,28 +217,6 @@ dataloaders:
 
     **Why?** Path notation is designed for dict keys, not list indices. The batch syntax handles index normalization and processes deletions correctly (high to low order).
 
-### Idempotent Delete
-
-Delete operations don't error if the key doesn't exist:
-
-```yaml
-# production.yaml - Remove debug settings if they exist
-~debug_mode: null
-~dev_logger: null
-~test_data: null
-# No errors if these don't exist!
-```
-
-This enables **reusable configs** that work with multiple bases:
-
-```yaml
-# production.yaml works with ANY base config
-~debug_settings: null
-~verbose_logging: null
-database:
-  pool_size: 100
-```
-
 ## Combining Operators
 
 Mix composition, replace, and delete:
@@ -298,7 +279,7 @@ config.update({"model": {"hidden_size": 1024}})
 # Replace explicitly
 config.update({"=optimizer": {"type": "sgd", "lr": 0.1}})
 
-# Delete keys (idempotent)
+# Delete keys
 config.update({
     "~training::old_param": None,
     "~model::dropout": None
@@ -519,17 +500,17 @@ plugins: [cache]
 |---------|-------|------------|
 | Dict merge default | Yes ✅ | Yes ✅ |
 | List extend default | No ❌ | **Yes** ✅ |
-| Operators in YAML | No ❌ | Yes ✅ (`=`, `~`) |
-| Operator count | 4 (`+`, `++`, `~`) | **2** (`=`, `~`) ✅ |
-| Delete dict keys | No ❌ | Yes ✅ |
-| Delete list items | No ❌ | Yes ✅ |
-| Idempotent delete | N/A | Yes ✅ |
+| Operators in YAML | CLI-only | **Yes** ✅ (YAML + CLI) |
+| Operator count | 4 (`=`, `+`, `++`, `~`) | **2** (`=`, `~`) ✅ |
+| Delete dict keys | CLI-only (`~foo.bar`) | **Yes** ✅ (YAML + CLI) |
+| Delete list items | No ❌ | **Yes** ✅ (by index) |
 
-Sparkwheel goes beyond Hydra with:
-- Full composition-first philosophy (dicts **and** lists)
-- Operators directly in YAML files
-- Just 2 simple operators
-- Delete operations for fine-grained control
+Sparkwheel differs from Hydra:
+- **Full composition philosophy**: Both dicts AND lists compose by default
+- **Operators in YAML files**: Not just CLI overrides
+- **Simpler operator set**: Just 2 operators (`=`, `~`) vs 4 (`=`, `+`, `++`, `~`)
+- **List deletion**: Delete items by index with `~plugins: [0, 2]`
+- **Flexible delete**: Use `~` anywhere (YAML, CLI, programmatic)
 
 ## Next Steps
 

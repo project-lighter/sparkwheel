@@ -65,7 +65,9 @@ Sparkwheel builds on similar ideas but adds powerful features:
 |---------|-----------------|------------|
 | Config composition | Explicit (`+`, `++`) | **By default** (dicts merge, lists extend) |
 | Replace semantics | Default | Explicit with `=` operator |
-| Delete keys | Not idempotent | Idempotent `~` operator |
+| Delete keys | CLI-only `~` operator | `~` in **YAML and CLI** |
+| Delete list items | No ❌ | Yes ✅ (by index) |
+| Delete dict keys | CLI-only (`~foo.bar`) | Yes ✅ (YAML + CLI) |
 | References | OmegaConf interpolation | `@` (resolved) + `%` (raw YAML) |
 | Python expressions | Limited | Full Python with `$` |
 | Schema validation | Structured Configs | Python dataclasses |

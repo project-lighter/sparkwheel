@@ -376,7 +376,7 @@ class Config:
         Operators:
             - key=value      - Compose (default): merge dict or extend list
             - =key=value     - Replace operator: completely replace value
-            - ~key           - Remove operator: delete key (idempotent)
+            - ~key           - Remove operator: delete key (errors if missing)
 
         Examples:
             >>> # Update from file
@@ -466,12 +466,15 @@ class Config:
                 self.set(actual_key, value)
 
             elif key.startswith(REMOVE_KEY):
-                # Delete operator: ~key (idempotent)
+                # Delete operator: ~key
                 actual_key = key[1:]
                 _validate_delete_operator(actual_key, value)
 
-                if actual_key in self:
-                    self._delete_nested_key(actual_key)
+                if actual_key not in self:
+                    raise ConfigMergeError(
+                        f"Cannot delete key '{actual_key}': key does not exist"
+                    )
+                self._delete_nested_key(actual_key)
 
             else:
                 # Default: compose (merge dict or extend list)

@@ -58,7 +58,7 @@ def validate_operators(config: dict[str, Any], parent_key: str = "") -> None:
     """Validate operator usage in config tree.
 
     With composition-by-default, validation is simpler:
-    1. Remove operators always work (idempotent delete)
+    1. Remove operators error if key doesn't exist
     2. Replace operators work on any type
     3. No parent context requirements
 
@@ -104,7 +104,7 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
     Default behavior: Compose (merge dicts, extend lists)
     Operators:
         =key: value   - Replace operator: completely replace value (override default)
-        ~key: null    - Remove operator: delete key or list items (idempotent)
+        ~key: null    - Remove operator: delete key or list items (errors if missing)
         key: value    - Compose (default): merge dict or extend list
 
     Composition-by-Default Philosophy:
@@ -112,7 +112,7 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
         - Lists extend by default (append new items)
         - Only scalars and type mismatches replace
         - Use = to explicitly replace entire dicts or lists
-        - Use ~ to delete keys (idempotent - no error if missing)
+        - Use ~ to delete keys (errors if key doesn't exist)
 
     Args:
         base: Base configuration dict
@@ -143,7 +143,7 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
         >>> apply_operators(base, override)
         {"model": {"lr": 0.01}}
 
-        >>> # Remove operator: delete key (idempotent)
+        >>> # Remove operator: delete key
         >>> base = {"a": 1, "b": 2, "c": 3}
         >>> override = {"b": 5, "~c": None}
         >>> apply_operators(base, override)
@@ -170,9 +170,11 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
             actual_key = key[1:]
             _validate_delete_operator(actual_key, value)
 
-            # Idempotent: no error if key doesn't exist
+            # Error if key doesn't exist
             if actual_key not in result:
-                continue  # Silently skip
+                raise ConfigMergeError(
+                    f"Cannot delete key '{actual_key}': key does not exist"
+                )
 
             # Handle remove entire key (null or empty value)
             if value is None or value == "":

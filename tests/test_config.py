@@ -629,14 +629,16 @@ class TestConfigMerging:
         assert "c" not in parser
         assert parser["d"] == {"new": 4}  # Replaced
 
-    def test_delete_on_nonexistent_key_idempotent(self):
-        """Test that ~key is idempotent (no error when key doesn't exist)."""
+    def test_delete_on_nonexistent_key_raises_error(self):
+        """Test that ~key raises error when key doesn't exist."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
         base = {"a": 1}
         override = {"~b": None}
 
-        # NEW: No error! Idempotent delete
-        result = apply_operators(base, override)
-        assert result == {"a": 1}
+        # Should raise error when key doesn't exist
+        with pytest.raises(ConfigMergeError, match="Cannot delete key 'b': key does not exist"):
+            apply_operators(base, override)
 
     def test_delete_directive_with_invalid_value_raises_error(self):
         """Test that ~key raises error when value is not null, empty, or list."""
