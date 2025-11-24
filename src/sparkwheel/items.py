@@ -7,7 +7,7 @@ from typing import Any
 
 from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
 from .utils.constants import EXPR_KEY
-from .utils.exceptions import EvaluationError, InstantiationError, SourceLocation, TargetNotFoundError
+from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
 
 __all__ = ["Item", "Expression", "Component", "Instantiable"]
 
@@ -46,7 +46,7 @@ class Item:
         source_location: optional location in source file where this config item was defined.
     """
 
-    def __init__(self, config: Any, id: str = "", source_location: SourceLocation | None = None) -> None:
+    def __init__(self, config: Any, id: str = "", source_location: Location | None = None) -> None:
         self.config = config
         self.id = id
         self.source_location = source_location
@@ -126,7 +126,7 @@ class Component(Item, Instantiable):
 
     non_arg_keys = {"_target_", "_disabled_", "_requires_", "_mode_", "_args_"}
 
-    def __init__(self, config: Any, id: str = "", source_location: SourceLocation | None = None) -> None:
+    def __init__(self, config: Any, id: str = "", source_location: Location | None = None) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
 
     @staticmethod
@@ -304,7 +304,7 @@ class Expression(Item):
         config: Any,
         id: str = "",
         globals: dict[str, Any] | None = None,
-        source_location: SourceLocation | None = None,
+        source_location: Location | None = None,
     ) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
         self.globals = globals if globals is not None else {}

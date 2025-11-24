@@ -642,17 +642,17 @@ class TestExceptionEdgeCases:
     """Test edge cases in exception handling."""
 
     def test_source_location_without_id(self):
-        """Test SourceLocation string formatting without ID."""
-        from sparkwheel.utils.exceptions import SourceLocation
+        """Test Location string formatting without ID."""
+        from sparkwheel.utils.exceptions import Location
 
-        loc = SourceLocation(filepath="test.yaml", line=10)
+        loc = Location(filepath="test.yaml", line=10)
         assert str(loc) == "test.yaml:10"
 
     def test_base_error_without_source_location_id(self):
         """Test BaseError formatting when source_location has no ID."""
-        from sparkwheel.utils.exceptions import BaseError, SourceLocation
+        from sparkwheel.utils.exceptions import BaseError, Location
 
-        loc = SourceLocation(filepath="test.yaml", line=5)
+        loc = Location(filepath="test.yaml", line=5)
         error = BaseError("Test error", source_location=loc)
         msg = str(error)
         assert "[test.yaml:5]" in msg
@@ -660,10 +660,10 @@ class TestExceptionEdgeCases:
 
     def test_base_error_snippet_file_read_error(self, tmp_path):
         """Test BaseError snippet handling when file can't be read."""
-        from sparkwheel.utils.exceptions import BaseError, SourceLocation
+        from sparkwheel.utils.exceptions import BaseError, Location
 
         # Create a source location pointing to non-existent file
-        loc = SourceLocation(filepath="/nonexistent/file.yaml", line=5)
+        loc = Location(filepath="/nonexistent/file.yaml", line=5)
         error = BaseError("Test error", source_location=loc)
         # Should not raise, just skip snippet
         msg = str(error)

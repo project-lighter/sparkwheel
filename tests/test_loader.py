@@ -3,8 +3,8 @@
 import pytest
 
 from sparkwheel.loader import Loader
-from sparkwheel.metadata import MetadataRegistry
-from sparkwheel.utils.exceptions import SourceLocation
+from sparkwheel.locations import LocationRegistry
+from sparkwheel.utils.exceptions import Location
 
 
 class TestLoaderBasic:
@@ -19,7 +19,7 @@ class TestLoaderBasic:
         config, metadata = loader.load_file(str(config_file))
 
         assert config == {"key": "value", "number": 42}
-        assert isinstance(metadata, MetadataRegistry)
+        assert isinstance(metadata, LocationRegistry)
 
     def test_load_file_empty_filepath(self):
         """Test loading with empty filepath returns empty config."""
@@ -27,7 +27,7 @@ class TestLoaderBasic:
         config, metadata = loader.load_file("")
 
         assert config == {}
-        assert isinstance(metadata, MetadataRegistry)
+        assert isinstance(metadata, LocationRegistry)
 
     def test_load_file_none_filepath(self):
         """Test loading with None filepath returns empty config."""
@@ -35,7 +35,7 @@ class TestLoaderBasic:
         config, metadata = loader.load_file(None)
 
         assert config == {}
-        assert isinstance(metadata, MetadataRegistry)
+        assert isinstance(metadata, LocationRegistry)
 
     def test_load_file_non_yaml_extension(self, tmp_path):
         """Test loading non-YAML file raises ValueError."""
@@ -136,7 +136,7 @@ class TestLoaderMultipleFiles:
         config, metadata = loader.load_files([])
 
         assert config == {}
-        assert isinstance(metadata, MetadataRegistry)
+        assert isinstance(metadata, LocationRegistry)
 
     def test_load_files_single_file(self, tmp_path):
         """Test loading single file via load_files."""
@@ -236,18 +236,18 @@ model:
         assert "__sparkwheel_metadata__" not in str(config)
 
 
-class TestMetadataRegistry:
-    """Test MetadataRegistry functionality."""
+class TestLocationRegistry:
+    """Test LocationRegistry functionality."""
 
     def test_create_registry(self):
         """Test creating empty registry."""
-        registry = MetadataRegistry()
+        registry = LocationRegistry()
         assert len(registry) == 0
 
     def test_register_and_get(self):
         """Test registering and getting source locations."""
-        registry = MetadataRegistry()
-        location = SourceLocation(filepath="config.yaml", line=10, column=5, id="model::lr")
+        registry = LocationRegistry()
+        location = Location(filepath="config.yaml", line=10, column=5, id="model::lr")
 
         registry.register("model::lr", location)
 
@@ -257,13 +257,13 @@ class TestMetadataRegistry:
 
     def test_get_nonexistent_returns_none(self):
         """Test getting nonexistent location returns None."""
-        registry = MetadataRegistry()
+        registry = LocationRegistry()
         assert registry.get("nonexistent") is None
 
     def test_len(self):
         """Test registry length."""
-        registry = MetadataRegistry()
-        location = SourceLocation(filepath="config.yaml", line=10, column=5, id="key")
+        registry = LocationRegistry()
+        location = Location(filepath="config.yaml", line=10, column=5, id="key")
 
         assert len(registry) == 0
 
@@ -275,8 +275,8 @@ class TestMetadataRegistry:
 
     def test_contains(self):
         """Test __contains__ operator."""
-        registry = MetadataRegistry()
-        location = SourceLocation(filepath="config.yaml", line=10, column=5, id="key")
+        registry = LocationRegistry()
+        location = Location(filepath="config.yaml", line=10, column=5, id="key")
 
         assert "key" not in registry
 
@@ -285,11 +285,11 @@ class TestMetadataRegistry:
 
     def test_merge(self):
         """Test merging registries."""
-        registry1 = MetadataRegistry()
-        registry2 = MetadataRegistry()
+        registry1 = LocationRegistry()
+        registry2 = LocationRegistry()
 
-        location1 = SourceLocation(filepath="file1.yaml", line=5, column=2, id="key1")
-        location2 = SourceLocation(filepath="file2.yaml", line=10, column=3, id="key2")
+        location1 = Location(filepath="file1.yaml", line=5, column=2, id="key1")
+        location2 = Location(filepath="file2.yaml", line=10, column=3, id="key2")
 
         registry1.register("key1", location1)
         registry2.register("key2", location2)
@@ -302,8 +302,8 @@ class TestMetadataRegistry:
 
     def test_copy(self):
         """Test copying registry."""
-        registry = MetadataRegistry()
-        location = SourceLocation(filepath="config.yaml", line=10, column=5, id="key")
+        registry = LocationRegistry()
+        location = Location(filepath="config.yaml", line=10, column=5, id="key")
 
         registry.register("key", location)
 
@@ -313,7 +313,7 @@ class TestMetadataRegistry:
         assert copied.get("key") == location
 
         # Ensure it's a real copy, not a reference
-        location2 = SourceLocation(filepath="other.yaml", line=20, column=1, id="other")
+        location2 = Location(filepath="other.yaml", line=20, column=1, id="other")
         copied.register("other", location2)
 
         assert "other" in copied

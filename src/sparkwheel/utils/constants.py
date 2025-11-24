@@ -5,6 +5,7 @@ __all__ = [
     "EXPR_KEY",
     "REMOVE_KEY",
     "REPLACE_KEY",
+    "SIMILARITY_THRESHOLD",
 ]
 
 RESOLVED_REF_KEY = "@"  # start of a resolved reference (to instantiated/evaluated value)
@@ -13,3 +14,4 @@ ID_SEP_KEY = "::"  # separator for the ID of an Item
 EXPR_KEY = "$"  # start of an Expression
 REMOVE_KEY = "~"  # remove operator for config modifications (delete keys/items)
 REPLACE_KEY = "="  # replace operator for config modifications (explicit override)
+SIMILARITY_THRESHOLD = 0.6  # minimum similarity score for key name suggestions (0-1)

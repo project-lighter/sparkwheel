@@ -3,7 +3,7 @@
 from typing import Any
 
 from .items import Component, Expression, Item
-from .metadata import MetadataRegistry
+from .locations import LocationRegistry
 from .utils.constants import ID_SEP_KEY
 
 __all__ = ["Parser"]
@@ -27,7 +27,7 @@ class Parser:
             }
         }
 
-        metadata = MetadataRegistry()
+        metadata = LocationRegistry()
         parser = Parser(globals={}, metadata=metadata)
         items = parser.parse(config)
 
@@ -43,15 +43,15 @@ class Parser:
 
     Args:
         globals: Global context for expression evaluation
-        metadata: MetadataRegistry for source location lookup
+        metadata: LocationRegistry for source location lookup
     """
 
-    def __init__(self, globals: dict[str, Any], metadata: MetadataRegistry):
+    def __init__(self, globals: dict[str, Any], metadata: LocationRegistry):
         """Initialize parser with globals and metadata.
 
         Args:
             globals: Dictionary of global variables for expression evaluation
-            metadata: MetadataRegistry for looking up source locations
+            metadata: LocationRegistry for looking up source locations
         """
         self._globals = globals
         self._metadata = metadata

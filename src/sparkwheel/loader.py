@@ -7,23 +7,23 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
-from .metadata import MetadataRegistry
+from .locations import LocationRegistry
 from .path_utils import is_yaml_file
 from .utils import CheckKeyDuplicatesYamlLoader, PathLike
 from .utils.constants import ID_SEP_KEY
-from .utils.exceptions import SourceLocation
+from .utils.exceptions import Location
 
 __all__ = ["Loader"]
 
 
 class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
-    """YAML loader that tracks source locations into MetadataRegistry.
+    """YAML loader that tracks source locations into LocationRegistry.
 
     Unlike the old approach that added __sparkwheel_metadata__ keys to dicts,
-    this loader populates a separate MetadataRegistry during loading.
+    this loader populates a separate LocationRegistry during loading.
     """
 
-    def __init__(self, stream, filepath: str, registry: MetadataRegistry):  # type: ignore[no-untyped-def]
+    def __init__(self, stream, filepath: str, registry: LocationRegistry):  # type: ignore[no-untyped-def]
         super().__init__(stream)
         self.filepath = filepath
         self.registry = registry
@@ -35,7 +35,7 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
         current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
 
         if node.start_mark:
-            location = SourceLocation(
+            location = Location(
                 filepath=self.filepath,
                 line=node.start_mark.line + 1,
                 column=node.start_mark.column + 1,
@@ -52,6 +52,18 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
 
                 # Push key onto path stack before constructing value
                 self.id_path_stack.append(str(key))
+
+                # Register source location for this specific key
+                # This allows us to track where each key was defined
+                key_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
+                if key_node.start_mark:
+                    key_location = Location(
+                        filepath=self.filepath,
+                        line=key_node.start_mark.line + 1,
+                        column=key_node.start_mark.column + 1,
+                        id=key_id,
+                    )
+                    self.registry.register(key_id, key_location)
 
                 # Construct value with updated path
                 value = self.construct_object(value_node, deep=True)
@@ -72,7 +84,7 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
         current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
 
         if node.start_mark:
-            location = SourceLocation(
+            location = Location(
                 filepath=self.filepath,
                 line=node.start_mark.line + 1,
                 column=node.start_mark.column + 1,
@@ -121,7 +133,7 @@ class Loader:
         ```
     """
 
-    def load_file(self, filepath: PathLike) -> tuple[dict[str, Any], MetadataRegistry]:
+    def load_file(self, filepath: PathLike) -> tuple[dict[str, Any], LocationRegistry]:
         """Load a single YAML file with metadata tracking.
 
         Args:
@@ -134,7 +146,7 @@ class Loader:
             ValueError: If file is not a YAML file
         """
         if not filepath:
-            return {}, MetadataRegistry()
+            return {}, LocationRegistry()
 
         filepath_str = str(Path(filepath))
 
@@ -154,7 +166,7 @@ class Loader:
             )
 
         # Load YAML with metadata tracking
-        registry = MetadataRegistry()
+        registry = LocationRegistry()
         with open(resolved_path) as f:
             config = self._load_yaml_with_metadata(f, str(resolved_path), registry)
 
@@ -163,13 +175,13 @@ class Loader:
 
         return config, registry
 
-    def _load_yaml_with_metadata(self, stream, filepath: str, registry: MetadataRegistry) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    def _load_yaml_with_metadata(self, stream, filepath: str, registry: LocationRegistry) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         """Load YAML and populate metadata registry during construction.
 
         Args:
             stream: File stream to load from
             filepath: Path string for error messages
-            registry: MetadataRegistry to populate
+            registry: LocationRegistry to populate
 
         Returns:
             Config dictionary (clean, no metadata keys)
@@ -206,7 +218,7 @@ class Loader:
         else:
             return config
 
-    def load_files(self, filepaths: Sequence[PathLike]) -> tuple[dict[str, Any], MetadataRegistry]:
+    def load_files(self, filepaths: Sequence[PathLike]) -> tuple[dict[str, Any], LocationRegistry]:
         """Load multiple YAML files sequentially.
 
         Files are loaded in order and merged using simple dict update
@@ -219,7 +231,7 @@ class Loader:
             Tuple of (merged_config_dict, merged_metadata_registry)
         """
         combined_config = {}
-        combined_registry = MetadataRegistry()
+        combined_registry = LocationRegistry()
 
         for filepath in filepaths:
             config, registry = self.load_file(filepath)

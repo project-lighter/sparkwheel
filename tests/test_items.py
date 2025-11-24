@@ -454,14 +454,14 @@ class TestExpressionDebugMode:
             sparkwheel.utils.run_debug = original_debug
 
 
-class TestItemWithSourceLocation:
+class TestItemWithLocation:
     """Test Item classes with source location tracking."""
 
     def test_item_with_source_location(self):
         """Test creating item with source location."""
-        from sparkwheel.utils.exceptions import SourceLocation
+        from sparkwheel.utils.exceptions import Location
 
-        location = SourceLocation(filepath="/tmp/config.yaml", line=10, column=5, id="model::lr")
+        location = Location(filepath="/tmp/config.yaml", line=10, column=5, id="model::lr")
         item = Item(config={"lr": 0.001}, id="model::lr", source_location=location)
 
         assert item.source_location == location
@@ -470,9 +470,9 @@ class TestItemWithSourceLocation:
 
     def test_component_error_includes_source_location(self):
         """Test that component errors include source location."""
-        from sparkwheel.utils.exceptions import SourceLocation
+        from sparkwheel.utils.exceptions import Location
 
-        location = SourceLocation(filepath="/tmp/config.yaml", line=15, column=2, id="model")
+        location = Location(filepath="/tmp/config.yaml", line=15, column=2, id="model")
         config = {"_target_": "nonexistent.Module"}
         component = Component(config=config, id="model", source_location=location)
 
@@ -484,9 +484,9 @@ class TestItemWithSourceLocation:
 
     def test_expression_error_includes_source_location(self):
         """Test that expression errors include source location."""
-        from sparkwheel.utils.exceptions import SourceLocation
+        from sparkwheel.utils.exceptions import Location
 
-        location = SourceLocation(filepath="/tmp/config.yaml", line=20, column=2, id="calc")
+        location = Location(filepath="/tmp/config.yaml", line=20, column=2, id="calc")
         expr = Expression(config="$undefined_var", id="calc", source_location=location)
 
         with pytest.raises(EvaluationError) as exc_info:

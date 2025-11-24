@@ -97,15 +97,15 @@ from pathlib import Path
 from typing import Any
 
 from .loader import Loader
-from .metadata import MetadataRegistry
-from .operators import _validate_delete_operator, apply_operators, validate_operators
+from .locations import LocationRegistry
+from .operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
 from .parser import Parser
 from .path_utils import split_id
 from .preprocessor import Preprocessor
 from .resolver import Resolver
 from .utils import PathLike, look_up_option, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
-from .utils.exceptions import ConfigKeyError
+from .utils.exceptions import ConfigKeyError, build_missing_key_error
 
 __all__ = ["Config", "parse_overrides"]
 
@@ -183,7 +183,7 @@ class Config:
             >>> config = Config(schema=MySchema).update("config.yaml")
         """
         self._data: dict[str, Any] = data or {}  # Start with provided data or empty
-        self._metadata = MetadataRegistry()
+        self._locations = LocationRegistry()
         self._resolver = Resolver()
         self._is_parsed = False
         self._frozen = False  # Set via freeze() method later
@@ -329,7 +329,7 @@ class Config:
         """
         from .schema import validate as validate_schema
 
-        validate_schema(self._data, schema, metadata=self._metadata)
+        validate_schema(self._data, schema, metadata=self._locations)
 
     def freeze(self) -> None:
         """Freeze config to prevent further modifications.
@@ -358,6 +358,20 @@ class Config:
             True if frozen, False otherwise
         """
         return self._frozen
+
+    @property
+    def locations(self) -> LocationRegistry:
+        """Get the location registry for this config.
+
+        Returns:
+            LocationRegistry tracking file locations of config keys
+
+        Example:
+            >>> config = Config().update("config.yaml")
+            >>> location = config.locations.get("model::lr")
+            >>> print(f"{location.filepath}:{location.line}")
+        """
+        return self._locations
 
     def update(self, source: PathLike | dict[str, Any] | "Config" | str) -> "Config":
         """Update configuration with changes from another source.
@@ -436,7 +450,7 @@ class Config:
             validate_schema(
                 self._data,
                 self._schema,
-                metadata=self._metadata,
+                metadata=self._locations,
                 allow_missing=self._allow_missing,
                 strict=self._strict,
             )
@@ -445,8 +459,9 @@ class Config:
 
     def _update_from_config(self, source: "Config") -> None:
         """Update from another Config instance."""
-        self._data = apply_operators(self._data, source._data)
-        self._metadata.merge(source._metadata)
+        context = MergeContext(locations=source.locations)
+        self._data = apply_operators(self._data, source._data, context=context)
+        self._locations.merge(source.locations)
         self._invalidate_resolution()
 
     def _uses_nested_paths(self, source: dict[str, Any]) -> bool:
@@ -471,15 +486,17 @@ class Config:
                 _validate_delete_operator(actual_key, value)
 
                 if actual_key not in self:
-                    raise ConfigMergeError(
-                        f"Cannot delete key '{actual_key}': key does not exist"
-                    )
+                    # Try to find source location for the key being deleted
+                    source_location = self._locations.get(actual_key) if self._locations else None
+                    available_keys: list[str] = list(self._data.keys()) if isinstance(self._data, dict) else []
+                    raise build_missing_key_error(actual_key, available_keys, source_location)
                 self._delete_nested_key(actual_key)
 
             else:
                 # Default: compose (merge dict or extend list)
                 if key in self and isinstance(self[key], dict) and isinstance(value, dict):
-                    merged = apply_operators(self[key], value)
+                    context = MergeContext(locations=self._locations, current_path=key)
+                    merged = apply_operators(self[key], value, context=context)
                     self.set(key, merged)
                 elif key in self and isinstance(self[key], list) and isinstance(value, list):
                     self.set(key, self[key] + value)
@@ -504,7 +521,8 @@ class Config:
     def _apply_structural_update(self, source: dict[str, Any]) -> None:
         """Apply structural update with operators."""
         validate_operators(source)
-        self._data = apply_operators(self._data, source)
+        context = MergeContext(locations=self._locations)
+        self._data = apply_operators(self._data, source, context=context)
         self._invalidate_resolution()
 
     def _update_from_file(self, source: PathLike) -> None:
@@ -515,12 +533,13 @@ class Config:
         # Check if loaded data uses :: path syntax
         if self._uses_nested_paths(new_data):
             # Expand nested paths using path updates
-            self._metadata.merge(new_metadata)
+            self._locations.merge(new_metadata)
             self._apply_path_updates(new_data)
         else:
             # Normal structural update
-            self._data = apply_operators(self._data, new_data)
-            self._metadata.merge(new_metadata)
+            context = MergeContext(locations=new_metadata)
+            self._data = apply_operators(self._data, new_data, context=context)
+            self._locations.merge(new_metadata)
 
         self._invalidate_resolution()
 
@@ -640,7 +659,7 @@ class Config:
         self._data = self._preprocessor.process(self._data, self._data, id="")
 
         # Stage 2: Parse config tree to create Items
-        parser = Parser(globals=self._globals, metadata=self._metadata)
+        parser = Parser(globals=self._globals, metadata=self._locations)
         items = parser.parse(self._data)
 
         # Stage 3: Add items to resolver

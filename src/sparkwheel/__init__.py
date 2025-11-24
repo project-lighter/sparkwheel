@@ -19,7 +19,7 @@ from .utils.exceptions import (
     EvaluationError,
     FrozenConfigError,
     InstantiationError,
-    SourceLocation,
+    Location,
     TargetNotFoundError,
 )
 
@@ -55,5 +55,5 @@ __all__ = [
     "EvaluationError",
     "FrozenConfigError",
     "ValidationError",
-    "SourceLocation",
+    "Location",
 ]
