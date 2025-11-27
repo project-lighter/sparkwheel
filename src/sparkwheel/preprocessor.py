@@ -10,6 +10,7 @@ from typing import Any
 
 from .path_utils import resolve_relative_ids, split_file_and_id, split_id
 from .utils.constants import ID_SEP_KEY, RAW_REF_KEY
+from .utils.exceptions import CircularReferenceError, ConfigKeyError
 
 __all__ = ["Preprocessor"]
 
@@ -58,7 +59,13 @@ class Preprocessor:
         self.loader = loader
         self.globals = globals or {}
 
-    def process_raw_refs(self, config: Any, base_data: dict[str, Any], id: str = "") -> Any:
+    def process_raw_refs(
+        self,
+        config: Any,
+        base_data: dict[str, Any],
+        id: str = "",
+        locations=None,  # type: ignore[no-untyped-def]
+    ) -> Any:
         """Preprocess config tree - expand only % raw references.
 
         This is the first preprocessing stage that runs eagerly during update().
@@ -73,6 +80,7 @@ class Preprocessor:
             config: Raw config structure to process
             base_data: Root config dict (for resolving local raw references)
             id: Current ID path in tree
+            locations: LocationRegistry for error reporting (optional)
 
         Returns:
             Config with raw references expanded
@@ -80,7 +88,7 @@ class Preprocessor:
         Raises:
             ValueError: If circular raw reference detected
         """
-        return self._process_raw_refs_recursive(config, base_data, id, set())
+        return self._process_raw_refs_recursive(config, base_data, id, set(), locations)
 
     def process(self, config: Any, base_data: dict[str, Any], id: str = "") -> Any:
         """Preprocess entire config tree.
@@ -108,6 +116,7 @@ class Preprocessor:
         base_data: dict[str, Any],
         id: str,
         raw_ref_stack: set[str],
+        locations=None,  # type: ignore[no-untyped-def]
     ) -> Any:
         """Internal recursive implementation for expanding only raw references.
 
@@ -121,6 +130,7 @@ class Preprocessor:
             base_data: Root config dict
             id: Current ID path
             raw_ref_stack: Circular reference detection
+            locations: LocationRegistry for error reporting (optional)
 
         Returns:
             Config with raw references expanded
@@ -134,12 +144,12 @@ class Preprocessor:
         if isinstance(config, dict):
             for key in list(config.keys()):
                 sub_id = f"{id}{ID_SEP_KEY}{key}" if id else str(key)
-                config[key] = self._process_raw_refs_recursive(config[key], base_data, sub_id, raw_ref_stack)
+                config[key] = self._process_raw_refs_recursive(config[key], base_data, sub_id, raw_ref_stack, locations)
 
         elif isinstance(config, list):
             for idx in range(len(config)):
                 sub_id = f"{id}{ID_SEP_KEY}{idx}" if id else str(idx)
-                config[idx] = self._process_raw_refs_recursive(config[idx], base_data, sub_id, raw_ref_stack)
+                config[idx] = self._process_raw_refs_recursive(config[idx], base_data, sub_id, raw_ref_stack, locations)
 
         # Process string values - only expand raw references (%)
         if isinstance(config, str):
@@ -149,7 +159,7 @@ class Preprocessor:
 
             # Then expand raw references
             if config.startswith(RAW_REF_KEY):
-                config = self._expand_raw_ref(config, base_data, raw_ref_stack)
+                config = self._expand_raw_ref(config, base_data, raw_ref_stack, id, locations)
 
         return config
 
@@ -193,13 +203,22 @@ class Preprocessor:
 
         return config
 
-    def _expand_raw_ref(self, raw_ref: str, base_data: dict[str, Any], raw_ref_stack: set[str]) -> Any:
+    def _expand_raw_ref(
+        self,
+        raw_ref: str,
+        base_data: dict[str, Any],
+        raw_ref_stack: set[str],
+        current_id: str = "",
+        locations=None,  # type: ignore[no-untyped-def]
+    ) -> Any:
         """Expand a single raw reference by loading external file or local YAML.
 
         Args:
             raw_ref: Raw reference string (e.g., "%file.yaml::key" or "%key")
             base_data: Root config for local raw references
             raw_ref_stack: Circular reference detection
+            current_id: Current ID path (where this raw reference was found)
+            locations: LocationRegistry for error reporting (optional)
 
         Returns:
             Value from raw reference (deep copied)
@@ -210,7 +229,16 @@ class Preprocessor:
         # Circular reference check
         if raw_ref in raw_ref_stack:
             chain = " -> ".join(sorted(raw_ref_stack))
-            raise ValueError(f"Circular raw reference detected: '{raw_ref}'\nRaw reference chain: {chain} -> {raw_ref}")
+
+            # Get location information if available
+            location = None
+            if locations and current_id:
+                location = locations.get(current_id)
+
+            raise CircularReferenceError(
+                message=f"Circular raw reference detected: '{raw_ref}'\nReference chain: {chain} -> {raw_ref}",
+                source_location=location,
+            )
 
         # Parse: "%file.yaml::key" → ("file.yaml", "key")
         path, ids = split_file_and_id(raw_ref[len(RAW_REF_KEY) :])
@@ -221,14 +249,36 @@ class Preprocessor:
             # Load config (external file or local)
             if not path:
                 loaded_config = base_data  # Local raw reference: %key
+                loaded_locations = locations  # Use same location registry
+                source_description = "local config"
             else:
-                loaded_config, _ = self.loader.load_file(path)  # External: %file.yaml::key
+                loaded_config, loaded_locations = self.loader.load_file(path)  # External: %file.yaml::key
+                source_description = f"'{path}'"
 
             # Navigate to referenced value
-            result = self._get_by_id(loaded_config, ids)
+            try:
+                result = self._get_by_id(loaded_config, ids)
+            except (KeyError, TypeError, IndexError) as e:
+                # Get location information if available
+                location = None
+                if locations and current_id:
+                    location = locations.get(current_id)
+
+                # Build error message
+                if not path:
+                    error_msg = f"Error resolving raw reference '{raw_ref}' from local config:\n{e}"
+                else:
+                    error_msg = f"Error resolving raw reference '{raw_ref}' from {source_description}:\n{e}"
+
+                # Raise custom error with proper formatting
+                raise ConfigKeyError(
+                    message=error_msg,
+                    source_location=location,
+                ) from e
 
             # Recursively preprocess the loaded value (expand nested raw references only)
-            result = self._process_raw_refs_recursive(result, loaded_config, ids, raw_ref_stack)
+            # Use the loaded file's location registry for nested raw refs
+            result = self._process_raw_refs_recursive(result, loaded_config, ids, raw_ref_stack, loaded_locations)
 
             # Deep copy for independence
             return deepcopy(result)
@@ -268,19 +318,49 @@ class Preprocessor:
             Value at ID path
 
         Raises:
-            KeyError: If path not found
+            KeyError: If path not found (with path to missing key)
             TypeError: If trying to index non-dict/list
         """
         if not id:
             return config
 
         current = config
-        for key in split_id(id):
+        path_parts = split_id(id)
+        for i, key in enumerate(path_parts):
             if isinstance(current, dict):
+                if key not in current:
+                    # Build the path up to the missing key
+                    available_keys = list(current.keys())
+                    if i == 0:
+                        # First key - no need to mention path
+                        error_msg = f"Key '{key}' not found"
+                    else:
+                        # Nested key - show where we were when it failed
+                        parent_path = ID_SEP_KEY.join(path_parts[:i])
+                        error_msg = f"Key '{key}' not found in '{parent_path}'"
+
+                    error_msg += f". Available keys: {available_keys[:10]}"
+                    if len(available_keys) > 10:
+                        error_msg += "..."
+
+                    raise KeyError(error_msg)
                 current = current[key]
             elif isinstance(current, list):  # type: ignore[unreachable]
-                current = current[int(key)]
+                try:
+                    current = current[int(key)]
+                except (ValueError, IndexError) as e:
+                    if i == 0:
+                        error_msg = f"Invalid list index '{key}': {e}"
+                    else:
+                        parent_path = ID_SEP_KEY.join(path_parts[:i])
+                        error_msg = f"Invalid list index '{key}' in '{parent_path}': {e}"
+                    raise KeyError(error_msg) from e
             else:
-                raise TypeError(f"Cannot index {type(current).__name__} with key '{key}' at path '{id}'")
+                if i == 0:
+                    error_msg = f"Cannot index {type(current).__name__} with key '{key}'"
+                else:
+                    parent_path = ID_SEP_KEY.join(path_parts[:i])
+                    error_msg = f"Cannot index {type(current).__name__} with key '{key}' (in '{parent_path}')"
+                raise TypeError(error_msg)
 
         return current

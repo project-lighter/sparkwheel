@@ -440,7 +440,7 @@ class Config:
         # Eagerly expand raw references (%) immediately after update
         # This matches MONAI's behavior and allows safe pruning with delete operator (~)
         # Must happen BEFORE validation so schema sees final structure, not raw ref strings
-        self._data = self._preprocessor.process_raw_refs(self._data, self._data, id="")
+        self._data = self._preprocessor.process_raw_refs(self._data, self._data, id="", locations=self._locations)
 
         # Validate after raw ref expansion if schema exists
         # This validates the final structure, not intermediate raw reference strings
