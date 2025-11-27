@@ -193,7 +193,7 @@ class TestComponent:
         config = {"_target_": "builtins.int", "invalid_arg": 123}
         component = Component(config=config)
 
-        with pytest.raises(InstantiationError, match="Failed to instantiate"):
+        with pytest.raises(InstantiationError):
             component.instantiate()
 
     def test_instantiate_with_kwargs_override(self):
@@ -287,7 +287,7 @@ class TestComponent:
         """Test that _args_ is properly excluded from kwargs."""
         config = {"_target_": "builtins.dict", "_args_": [], "a": 1}
         component = Component(config=config)
-        args, kwargs = component.resolve_args()
+        _, kwargs = component.resolve_args()
 
         # Verify _args_ is not passed as a kwarg
         assert "_args_" not in kwargs

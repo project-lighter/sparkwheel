@@ -248,13 +248,8 @@ def instantiate(__path: str, __mode: str, *args: Any, **kwargs: Any) -> Any:
             )
             return pdb.runcall(component, *args, **kwargs)
     except Exception as e:
-        # Preserve the original exception type and message for better debugging
-        args_str = f"{len(args)} positional args, " if args else ""
-        error_msg = (
-            f"Failed to instantiate component '{__path}' with {args_str}keywords: {','.join(kwargs.keys())}\n"
-            f"  Original error ({type(e).__name__}): {str(e)}\n"
-            f"  Set '_mode_={CompInitMode.DEBUG}' to enter debugging mode."
-        )
+        error_msg = f"Could not instantiate component '{__path}':\n  From {type(e).__name__}: {e}"
+
         raise InstantiationError(error_msg) from e
 
     warnings.warn(f"Component to instantiate must represent a valid class or function, but got {__path}.", stacklevel=2)

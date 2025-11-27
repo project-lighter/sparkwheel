@@ -75,9 +75,9 @@ class BaseError(Exception):
         if self.source_location:
             location = f"{self.source_location.filepath}:{self.source_location.line}"
             if self.source_location.id:
-                parts.append(f"[{location} → {self.source_location.id}] {self._original_message}")
+                parts.append(f"{self._original_message}\n\n[{location} → {self.source_location.id}]:")
             else:
-                parts.append(f"[{location}] {self._original_message}")
+                parts.append(f"{self._original_message}\n\n[{location}]:")
         else:
             parts.append(self._original_message)
 
@@ -85,10 +85,10 @@ class BaseError(Exception):
         if self.source_location:
             snippet = self._get_config_snippet()
             if snippet:
-                parts.append(f"\n\n{snippet}")
+                parts.append(f"\n{snippet}\n")
 
         if self.suggestion:
-            parts.append(f"\n\n  💡 {self.suggestion}")
+            parts.append(f"\n  💡 {self.suggestion}\n")
 
         return "".join(parts)
 

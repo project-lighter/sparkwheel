@@ -220,10 +220,7 @@ class Component(Item, Instantiable):
             ) from e
         except Exception as e:
             # Wrap other errors with location context (points to _target_ line)
-            raise InstantiationError(
-                f"Failed to instantiate '{modname}': {type(e).__name__}: {e}",
-                source_location=self.source_location,
-            ) from e
+            raise InstantiationError(str(e), source_location=self.source_location) from e
 
     def _suggest_similar_modules(self, target: str) -> str | None:
         """Suggest similar valid module names using fuzzy matching.
