@@ -495,6 +495,47 @@ class TestItemWithLocation:
         error = exc_info.value
         assert error.source_location == location
 
+    def test_instantiation_error_with_location_reraises_unchanged(self):
+        """Test that InstantiationError with source_location is re-raised unchanged.
+
+        This tests the re-raise path in Component.instantiate() where an InstantiationError
+        already has source_location set and should be re-raised as-is without modification.
+        """
+        from unittest.mock import patch
+
+        from sparkwheel.utils.exceptions import Location
+
+        # Create a location for the inner error (different from component's location)
+        inner_location = Location(filepath="/tmp/inner.yaml", line=99, column=1, id="inner_id")
+        component_location = Location(filepath="/tmp/outer.yaml", line=5, column=2, id="outer_id")
+
+        # Create the exception to be raised
+        inner_error = InstantiationError(
+            "Inner error message",
+            source_location=inner_location,
+            suggestion="Inner suggestion",
+        )
+
+        # Mock the instantiate function to raise InstantiationError with source_location
+        def mock_instantiate(*args, **kwargs):
+            raise inner_error
+
+        config = {"_target_": "some.module.Class"}
+        component = Component(config=config, id="test", source_location=component_location)
+
+        with patch("sparkwheel.items.instantiate", mock_instantiate):
+            with pytest.raises(InstantiationError) as exc_info:
+                component.instantiate()
+
+        error = exc_info.value
+        # The exception should be re-raised unchanged (not wrapped with component's location)
+        assert error is inner_error
+        assert error._original_message == "Inner error message"
+        assert error.suggestion == "Inner suggestion"
+        assert error.source_location == inner_location
+        assert error.source_location.filepath == "/tmp/inner.yaml"
+        assert error.source_location.line == 99
+
 
 class TestItemsEdgeCases:
     """Test edge cases in items module."""
