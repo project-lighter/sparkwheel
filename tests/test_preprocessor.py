@@ -146,6 +146,20 @@ class TestPreprocessor:
 
         assert result["lr"] == 0.001
 
+    def test_raw_ref_in_list(self, tmp_path):
+        """Test raw reference inside a list item is expanded."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text('base_value: 42\nitems:\n  - "%base_value"\n  - 100')
+
+        loader = Loader()
+        preprocessor = Preprocessor(loader)
+
+        config, locations = loader.load_file(str(config_file))
+        result = preprocessor.process_raw_refs(config, config, locations=locations)
+
+        assert result["items"][0] == 42
+        assert result["items"][1] == 100
+
 
 class TestPreprocessorExternalOnly:
     """Test external_only parameter for two-phase raw reference expansion."""
