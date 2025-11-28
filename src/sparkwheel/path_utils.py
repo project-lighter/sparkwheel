@@ -18,6 +18,7 @@ __all__ = [
     "replace_references",
     "split_file_and_id",
     "is_yaml_file",
+    "get_by_id",
     "PathPatterns",  # Export for backward compatibility
 ]
 
@@ -284,6 +285,85 @@ def normalize_id(id: str | int) -> str:
         "42"
     """
     return str(id)
+
+
+def _format_path_context(path_parts: list[str], index: int) -> str:
+    """Format parent path context for error messages.
+
+    Internal helper for get_by_id error messages.
+
+    Args:
+        path_parts: List of path components
+        index: Current index in path_parts (0 = first level)
+
+    Returns:
+        Empty string for first level, or " in 'parent::path'" for nested levels
+    """
+    if index == 0:
+        return ""
+    parent_path = ID_SEP_KEY.join(path_parts[:index])
+    return f" in '{parent_path}'"
+
+
+def get_by_id(config: dict[str, Any] | list[Any], id: str) -> Any:
+    """Navigate config structure by ID path.
+
+    Traverses nested dicts and lists using :: separated path components.
+    Provides detailed error messages with available keys when navigation fails.
+
+    Args:
+        config: Config dict or list to navigate
+        id: ID path (e.g., "model::optimizer::lr" or "items::0::value")
+
+    Returns:
+        Value at the specified path
+
+    Raises:
+        KeyError: If a dict key is not found (includes available keys in message)
+        TypeError: If trying to index a non-dict/list value
+
+    Examples:
+        >>> config = {"model": {"lr": 0.001, "layers": [64, 128]}}
+        >>> get_by_id(config, "model::lr")
+        0.001
+        >>> get_by_id(config, "model::layers::1")
+        128
+        >>> get_by_id(config, "")
+        {"model": {"lr": 0.001, "layers": [64, 128]}}
+
+    Error messages include context:
+        >>> get_by_id({"a": {"b": 1}}, "a::missing")
+        KeyError: "Key 'missing' not found in 'a'. Available keys: ['b']"
+    """
+    if not id:
+        return config
+
+    current = config
+    path_parts = split_id(id)
+
+    for i, key in enumerate(path_parts):
+        context = _format_path_context(path_parts, i)
+
+        if isinstance(current, dict):
+            if key not in current:
+                available_keys = list(current.keys())
+                error_msg = f"Key '{key}' not found{context}"
+                error_msg += f". Available keys: {available_keys[:10]}"
+                if len(available_keys) > 10:
+                    error_msg += "..."
+                raise KeyError(error_msg)
+            current = current[key]
+        elif isinstance(current, list):
+            try:
+                current = current[int(key)]
+            except ValueError as e:
+                raise KeyError(f"Invalid list index '{key}'{context}: not an integer") from e
+            except IndexError as e:
+                raise KeyError(f"List index '{key}' out of range{context}: {e}") from e
+        else:
+            raise TypeError(f"Cannot index {type(current).__name__} with key '{key}'{context}")
+
+    return current
 
 
 def resolve_relative_ids(current_id: str, value: str) -> str:

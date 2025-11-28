@@ -106,7 +106,7 @@ class TestConfigBasics:
     def test_getitem_invalid_config_type(self):
         """Test __getitem__ raises error for invalid config type."""
         parser = Config({"scalar": 42})
-        with pytest.raises(ValueError, match="Config must be dict or list"):
+        with pytest.raises(TypeError, match="Cannot index int"):
             _ = parser["scalar::invalid"]
 
     def test_getitem_list_indexing(self):

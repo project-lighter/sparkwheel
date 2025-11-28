@@ -8,7 +8,7 @@ Handles transformations on raw config dicts before Items are created:
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Optional
 
-from .path_utils import resolve_relative_ids, split_file_and_id, split_id
+from .path_utils import get_by_id, resolve_relative_ids, split_file_and_id
 from .utils.constants import ID_SEP_KEY, RAW_REF_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
 
@@ -89,7 +89,8 @@ class Preprocessor:
             Config with raw references expanded
 
         Raises:
-            ValueError: If circular raw reference detected
+            CircularReferenceError: If circular raw reference detected
+            ConfigKeyError: If referenced key not found
         """
         return self._process_raw_refs_recursive(config, base_data, id, set(), locations)
 
@@ -109,7 +110,7 @@ class Preprocessor:
             Preprocessed config ready for parsing
 
         Raises:
-            ValueError: If circular raw reference detected
+            CircularReferenceError: If circular raw reference detected
         """
         return self._process_recursive(config, base_data, id, set())
 
@@ -227,7 +228,8 @@ class Preprocessor:
             Value from raw reference (deep copied)
 
         Raises:
-            ValueError: If circular reference detected
+            CircularReferenceError: If circular reference detected
+            ConfigKeyError: If referenced key not found
         """
         # Circular reference check
         if raw_ref in raw_ref_stack:
@@ -260,7 +262,7 @@ class Preprocessor:
 
             # Navigate to referenced value
             try:
-                result = self._get_by_id(loaded_config, ids)
+                result = get_by_id(loaded_config, ids)
             except (KeyError, TypeError, IndexError) as e:
                 # Get location information if available
                 location = None
@@ -308,62 +310,3 @@ class Preprocessor:
         elif isinstance(config, list):
             return any(Preprocessor._contains_raw_refs(item) for item in config)
         return False
-
-    @staticmethod
-    def _get_by_id(config: dict[str, Any], id: str) -> Any:
-        """Navigate config dict by ID path.
-
-        Args:
-            config: Config dict to navigate
-            id: ID path (e.g., "model::optimizer::lr")
-
-        Returns:
-            Value at ID path
-
-        Raises:
-            KeyError: If path not found (with path to missing key)
-            TypeError: If trying to index non-dict/list
-        """
-        if not id:
-            return config
-
-        current = config
-        path_parts = split_id(id)
-        for i, key in enumerate(path_parts):
-            if isinstance(current, dict):
-                if key not in current:
-                    # Build the path up to the missing key
-                    available_keys = list(current.keys())
-                    if i == 0:
-                        # First key - no need to mention path
-                        error_msg = f"Key '{key}' not found"
-                    else:
-                        # Nested key - show where we were when it failed
-                        parent_path = ID_SEP_KEY.join(path_parts[:i])
-                        error_msg = f"Key '{key}' not found in '{parent_path}'"
-
-                    error_msg += f". Available keys: {available_keys[:10]}"
-                    if len(available_keys) > 10:
-                        error_msg += "..."
-
-                    raise KeyError(error_msg)
-                current = current[key]
-            elif isinstance(current, list):  # type: ignore[unreachable]
-                try:
-                    current = current[int(key)]
-                except (ValueError, IndexError) as e:
-                    if i == 0:
-                        error_msg = f"Invalid list index '{key}': {e}"
-                    else:
-                        parent_path = ID_SEP_KEY.join(path_parts[:i])
-                        error_msg = f"Invalid list index '{key}' in '{parent_path}': {e}"
-                    raise KeyError(error_msg) from e
-            else:
-                if i == 0:
-                    error_msg = f"Cannot index {type(current).__name__} with key '{key}'"
-                else:
-                    parent_path = ID_SEP_KEY.join(path_parts[:i])
-                    error_msg = f"Cannot index {type(current).__name__} with key '{key}' (in '{parent_path}')"
-                raise TypeError(error_msg)
-
-        return current

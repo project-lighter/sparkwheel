@@ -218,9 +218,19 @@ class Component(Item, Instantiable):
                 source_location=self.source_location,
                 suggestion=suggestion,
             ) from e
+        except InstantiationError as e:
+            # Add source location if not already present, preserving original message and suggestion
+            if e.source_location is None:
+                raise InstantiationError(
+                    e._original_message, source_location=self.source_location, suggestion=e.suggestion
+                ) from e
+            raise  # Already has location, re-raise as-is
         except Exception as e:
-            # Wrap other errors with location context (points to _target_ line)
-            raise InstantiationError(str(e), source_location=self.source_location) from e
+            # Wrap unexpected errors with component context and location
+            raise InstantiationError(
+                f"Failed to instantiate '{modname}': {type(e).__name__}: {e}",
+                source_location=self.source_location,
+            ) from e
 
     def _suggest_similar_modules(self, target: str) -> str | None:
         """Suggest similar valid module names using fuzzy matching.

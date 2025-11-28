@@ -100,10 +100,10 @@ from .loader import Loader
 from .locations import LocationRegistry
 from .operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
 from .parser import Parser
-from .path_utils import split_id
+from .path_utils import get_by_id, split_id
 from .preprocessor import Preprocessor
 from .resolver import Resolver
-from .utils import PathLike, look_up_option, optional_import
+from .utils import PathLike, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
 from .utils.exceptions import ConfigKeyError, build_missing_key_error
 
@@ -257,7 +257,7 @@ class Config:
         """
         try:
             return self._get_by_id(id)
-        except (KeyError, IndexError, ValueError):
+        except (KeyError, IndexError, TypeError):
             return default
 
     def set(self, id: str, value: Any) -> None:
@@ -503,7 +503,7 @@ class Config:
                             parent = self._get_by_id(parent_path)
                             if isinstance(parent, dict):
                                 available_keys = list(parent.keys())
-                        except (KeyError, IndexError, ValueError):
+                        except (KeyError, IndexError, TypeError):
                             # Parent doesn't exist, fall back to top-level
                             available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
                     else:
@@ -698,21 +698,10 @@ class Config:
             Config value at that path
 
         Raises:
-            KeyError: If path not found
+            KeyError: If path not found (includes available keys in message)
+            TypeError: If trying to index a non-dict/list value
         """
-        if id == "":
-            return self._data
-
-        config = self._data
-        for k in split_id(id):
-            if not isinstance(config, (dict, list)):
-                raise ValueError(f"Config must be dict or list for key `{k}`, but got {type(config)}: {config}")
-            try:
-                config = look_up_option(k, config, print_all_options=False) if isinstance(config, dict) else config[int(k)]
-            except ValueError as e:
-                raise KeyError(f"Key not found: {k}") from e
-
-        return config
+        return get_by_id(self._data, id)
 
     def _invalidate_resolution(self) -> None:
         """Invalidate cached resolution (called when config changes)."""
@@ -760,7 +749,7 @@ class Config:
         try:
             self._get_by_id(id)
             return True
-        except (KeyError, IndexError, ValueError):
+        except (KeyError, IndexError, TypeError):
             return False
 
     def __repr__(self) -> str:
