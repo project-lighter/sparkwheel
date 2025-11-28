@@ -277,51 +277,117 @@ class TestConfigMacros:
         finally:
             Path(filepath).unlink()
 
-    def test_eager_raw_reference_expansion(self):
-        """Test that raw references are expanded during update(), not resolve()."""
+    def test_local_raw_reference_lazy_expansion(self):
+        """Test that local raw references are expanded lazily (during resolve()).
+
+        This allows CLI overrides to affect values used by local % refs.
+        """
         config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
         parser = Config().update(config)
 
-        # After update(), raw references should be expanded (not resolve() yet!)
-        # The copy should be the actual value, not the "%original" string
-        assert parser.get("copy") == {"a": 1, "b": 2}
-        assert parser.get("copy") is not parser.get("original")  # Deep copy
+        # After update(), LOCAL raw references are NOT expanded yet
+        # They remain as strings until resolve() is called
+        assert parser.get("copy") == "%original"
 
-        # Verify it's a real copy by modifying it
-        parser.set("copy::c", 3)
-        assert parser.get("copy::c") == 3
-        assert "c" not in parser.get("original")
+        # After resolve(), local refs are expanded
+        resolved = parser.resolve("copy")
+        assert resolved == {"a": 1, "b": 2}
 
-    def test_pruning_with_raw_references(self):
-        """Test that pruning works with raw references (the Lighter use case)."""
-        # This is the critical test: raw refs should be expanded before pruning
+        # Verify it's a deep copy (independent of original)
+        assert resolved is not parser.resolve("original")
+
+    def test_cli_override_affects_local_raw_ref(self):
+        """Test that CLI overrides affect values used by local % refs.
+
+        This is the key use case: vars::path can be overridden via CLI
+        and local % refs will see the overridden value.
+        """
+        parser = Config()
+        parser.update({"vars": {"path": None}})
+        parser.update({"data": {"path": "%vars::path"}})
+
+        # Before CLI override, local ref is still a string
+        assert parser.get("data::path") == "%vars::path"
+
+        # Apply CLI override
+        parser.update("vars::path=/data/features.npz")
+
+        # Now resolve - local ref should see the overridden value
+        assert parser.resolve("data::path") == "/data/features.npz"
+
+    def test_external_raw_reference_eager_expansion(self, tmp_path):
+        """Test that external file raw references are expanded eagerly."""
+        # Create external file
+        external = tmp_path / "external.yaml"
+        external.write_text("value: 42\nnested:\n  a: 1\n  b: 2")
+
+        parser = Config()
+        parser.update({"imported": f"%{external}::value", "section": f"%{external}::nested"})
+
+        # After update(), EXTERNAL raw references ARE expanded (eager)
+        assert parser.get("imported") == 42
+        assert parser.get("section") == {"a": 1, "b": 2}
+
+    def test_pruning_with_external_raw_references(self, tmp_path):
+        """Test that pruning works with external file raw references.
+
+        External file refs are expanded eagerly, so copy-then-delete works.
+        For local refs, use @ references instead (they also support this pattern).
+        """
+        # Create external file with dataloader configs
+        external = tmp_path / "dataloaders.yaml"
+        external.write_text("train:\n  batch_size: 32\nval:\n  batch_size: 64")
+
         config = {
             "system": {
-                "dataloaders": {
-                    "train": {"batch_size": 32},
-                    "val": {"batch_size": 64},
-                }
+                "dataloaders": f"%{external}",  # External ref - expanded eagerly
             },
             "train": {
-                "dataloader": "%system::dataloaders::train"  # Raw reference
+                "dataloader": f"%{external}::train",  # External ref - expanded eagerly
             },
         }
 
         parser = Config().update(config)
 
-        # Raw reference should already be expanded
+        # External raw reference should already be expanded (eager)
         assert parser.get("train::dataloader") == {"batch_size": 32}
+        assert parser.get("system::dataloaders") == {"train": {"batch_size": 32}, "val": {"batch_size": 64}}
 
         # Now prune the system section (delete it)
         parser.update("~system")
 
-        # The raw reference was already expanded, so train::dataloader should still exist
+        # The external raw reference was already expanded, so train::dataloader still exists
         assert parser.get("train::dataloader") == {"batch_size": 32}
         assert "system" not in parser.get()  # system is deleted
 
         # Verify we can still resolve after pruning
         result = parser.resolve("train::dataloader")
         assert result == {"batch_size": 32}
+
+    def test_local_raw_ref_to_deleted_key_fails(self):
+        """Test that local % ref to deleted key fails clearly.
+
+        With lazy local refs, deleting the source before resolve() will fail.
+        Use external file refs or @ refs if you need copy-then-delete.
+        """
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        config = {
+            "system": {"train": {"batch_size": 32}},
+            "train": {"dataloader": "%system::train"},  # Local ref - expanded lazily
+        }
+
+        parser = Config().update(config)
+
+        # Local ref is NOT expanded yet
+        assert parser.get("train::dataloader") == "%system::train"
+
+        # Delete the source
+        parser.update("~system")
+
+        # Attempting to resolve will fail - source was deleted
+        with pytest.raises(ConfigKeyError, match="system"):
+            parser.resolve("train::dataloader")
 
 
 class TestComponents:

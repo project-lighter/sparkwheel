@@ -145,3 +145,108 @@ class TestPreprocessor:
         result = preprocessor.process_raw_refs(config, config, locations=locations)
 
         assert result["lr"] == 0.001
+
+
+class TestPreprocessorExternalOnly:
+    """Test external_only parameter for two-phase raw reference expansion."""
+
+    def test_external_only_expands_external_refs(self, tmp_path):
+        """Test that external_only=True expands external file refs."""
+        external_file = tmp_path / "external.yaml"
+        external_file.write_text("value: 42")
+
+        loader = Loader()
+        preprocessor = Preprocessor(loader)
+
+        config = {"external_ref": f"%{external_file}::value", "local_ref": "%local_key", "local_key": 100}
+
+        result = preprocessor.process_raw_refs(config, config, external_only=True)
+
+        # External ref should be expanded
+        assert result["external_ref"] == 42
+        # Local ref should remain as string
+        assert result["local_ref"] == "%local_key"
+        # Local key unchanged
+        assert result["local_key"] == 100
+
+    def test_external_only_false_expands_all_refs(self, tmp_path):
+        """Test that external_only=False expands all refs including local."""
+        external_file = tmp_path / "external.yaml"
+        external_file.write_text("value: 42")
+
+        loader = Loader()
+        preprocessor = Preprocessor(loader)
+
+        config = {"external_ref": f"%{external_file}::value", "local_ref": "%local_key", "local_key": 100}
+
+        result = preprocessor.process_raw_refs(config, config, external_only=False)
+
+        # Both should be expanded
+        assert result["external_ref"] == 42
+        assert result["local_ref"] == 100
+
+    def test_two_phase_expansion_with_override(self, tmp_path):
+        """Test that two-phase expansion allows overrides to affect local refs."""
+        external_file = tmp_path / "external.yaml"
+        external_file.write_text("external_value: 1")
+
+        loader = Loader()
+        preprocessor = Preprocessor(loader)
+
+        # Initial config with both external and local refs
+        config = {
+            "external_ref": f"%{external_file}::external_value",
+            "local_ref": "%vars::value",
+            "vars": {"value": None},  # Will be overridden
+        }
+
+        # Phase 1: Expand only external refs
+        config = preprocessor.process_raw_refs(config, config, external_only=True)
+        assert config["external_ref"] == 1
+        assert config["local_ref"] == "%vars::value"  # Still string
+
+        # Simulate CLI override
+        config["vars"]["value"] = "/data/features.npz"
+
+        # Phase 2: Expand local refs (now sees override)
+        config = preprocessor.process_raw_refs(config, config, external_only=False)
+        assert config["local_ref"] == "/data/features.npz"
+
+    def test_nested_local_refs_expanded_together(self, tmp_path):
+        """Test that nested local refs are all expanded in phase 2."""
+        loader = Loader()
+        preprocessor = Preprocessor(loader)
+
+        config = {"a": {"b": {"c": 42}}, "ref_to_b": "%a::b", "ref_to_c": "%a::b::c"}
+
+        # Phase 1: Nothing to expand (no external refs)
+        result = preprocessor.process_raw_refs(config, config, external_only=True)
+        assert result["ref_to_b"] == "%a::b"
+        assert result["ref_to_c"] == "%a::b::c"
+
+        # Phase 2: Expand all local refs
+        result = preprocessor.process_raw_refs(result, result, external_only=False)
+        assert result["ref_to_b"] == {"c": 42}
+        assert result["ref_to_c"] == 42
+
+    def test_external_ref_within_local_ref_expanded_correctly(self, tmp_path):
+        """Test that external refs within locally-referenced values are expanded."""
+        external_file = tmp_path / "external.yaml"
+        external_file.write_text("nested:\n  value: 99")
+
+        loader = Loader()
+        preprocessor = Preprocessor(loader)
+
+        config = {
+            "template": {"external": f"%{external_file}::nested"},
+            "copy": "%template",
+        }
+
+        # Phase 1: Expand external ref inside template
+        result = preprocessor.process_raw_refs(config, config, external_only=True)
+        assert result["template"]["external"] == {"value": 99}
+        assert result["copy"] == "%template"  # Local ref still string
+
+        # Phase 2: Expand local ref - should get the already-expanded template
+        result = preprocessor.process_raw_refs(result, result, external_only=False)
+        assert result["copy"] == {"external": {"value": 99}}

@@ -3,26 +3,28 @@
 Sparkwheel is a YAML-based configuration system with references, expressions, and dynamic instantiation.
 This module provides the main Config class for loading, managing, and resolving configurations.
 
-## Two-Stage Processing
+## Two-Phase Processing
 
-Sparkwheel uses a two-stage processing model to handle different reference types at appropriate times:
+Sparkwheel uses a two-phase processing model to handle different reference types at appropriate times:
 
-### Stage 1: Eager Processing (during update())
-- **Raw References (`%`)**: Expanded immediately when configs are merged
-- **Purpose**: Enables safe config composition or deletion
+### Phase 1: Eager Processing (during update())
+- **External file raw refs (`%file.yaml::key`)**: Expanded immediately
+- **Purpose**: External files are frozen - their content won't change
 - **Example**: `%base.yaml::lr` is replaced with the actual value from base.yaml
 
-### Stage 2: Lazy Processing (during resolve())
+### Phase 2: Lazy Processing (during resolve())
+- **Local raw refs (`%key`)**: Expanded after all composition is complete
 - **Resolved References (`@`)**: Resolved on-demand to support circular dependencies
 - **Expressions (`$`)**: Evaluated when needed using Python's eval()
 - **Components (`_target_`)**: Instantiated only when requested
-- **Purpose**: Supports deferred instantiation and complex dependency graphs
+- **Purpose**: CLI overrides can affect local `%` refs, supports deferred instantiation
 
 ## Reference Types
 
 | Symbol | Name | When Expanded | Purpose | Example |
 |--------|------|---------------|---------|---------|
-| `%` | Raw Reference | Eager (update()) | Copy/paste YAML sections | `%base.yaml::lr` |
+| `%` | Raw Reference (external) | Eager (update()) | Copy from external files | `%base.yaml::lr` |
+| `%` | Raw Reference (local) | Lazy (resolve()) | Copy local config values | `%vars::lr` |
 | `@` | Resolved Reference | Lazy (resolve()) | Reference config values | `@model::lr` |
 | `$` | Expression | Lazy (resolve()) | Compute values dynamically | `$@lr * 2` |
 
@@ -437,10 +439,13 @@ class Config:
         else:
             self._update_from_file(source)
 
-        # Eagerly expand raw references (%) immediately after update
-        # This matches MONAI's behavior and allows safe pruning with delete operator (~)
-        # Must happen BEFORE validation so schema sees final structure, not raw ref strings
-        self._data = self._preprocessor.process_raw_refs(self._data, self._data, id="", locations=self._locations)
+        # Phase 1: Eagerly expand ONLY external file raw references (%file.yaml::key)
+        # Local refs (%key) are kept as strings - they'll be expanded in _parse() after
+        # all composition is complete. This allows CLI overrides to affect local refs.
+        # External files are frozen (their content won't change), so eager expansion is safe.
+        self._data = self._preprocessor.process_raw_refs(
+            self._data, self._data, id="", locations=self._locations, external_only=True
+        )
 
         # Validate after raw ref expansion if schema exists
         # This validates the final structure, not intermediate raw reference strings
@@ -666,7 +671,10 @@ class Config:
         """Parse config tree and prepare for resolution.
 
         Internal method called automatically by resolve().
-        Note: % raw references are already expanded during update().
+
+        Two-phase raw reference expansion:
+        - Phase 1 (update): External file refs expanded eagerly
+        - Phase 2 (here): Local refs expanded now, after all composition
 
         Args:
             reset: Whether to reset the resolver before parsing (default: True)
@@ -675,8 +683,13 @@ class Config:
         if reset:
             self._resolver.reset()
 
+        # Phase 2: Expand local raw references (%key) now that all composition is complete
+        # CLI overrides have been applied, so local refs will see final values
+        self._data = self._preprocessor.process_raw_refs(
+            self._data, self._data, id="", locations=self._locations, external_only=False
+        )
+
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        # Note: % raw references were already expanded in update()
         self._data = self._preprocessor.process(self._data, self._data, id="")
 
         # Stage 2: Parse config tree to create Items
