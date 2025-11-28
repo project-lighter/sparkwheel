@@ -6,11 +6,14 @@ Handles transformations on raw config dicts before Items are created:
 """
 
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from .path_utils import resolve_relative_ids, split_file_and_id, split_id
 from .utils.constants import ID_SEP_KEY, RAW_REF_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
+
+if TYPE_CHECKING:
+    from .locations import LocationRegistry
 
 __all__ = ["Preprocessor"]
 
@@ -64,7 +67,7 @@ class Preprocessor:
         config: Any,
         base_data: dict[str, Any],
         id: str = "",
-        locations=None,  # type: ignore[no-untyped-def]
+        locations: Optional["LocationRegistry"] = None,
     ) -> Any:
         """Preprocess config tree - expand only % raw references.
 
@@ -116,7 +119,7 @@ class Preprocessor:
         base_data: dict[str, Any],
         id: str,
         raw_ref_stack: set[str],
-        locations=None,  # type: ignore[no-untyped-def]
+        locations: Optional["LocationRegistry"] = None,
     ) -> Any:
         """Internal recursive implementation for expanding only raw references.
 
@@ -209,7 +212,7 @@ class Preprocessor:
         base_data: dict[str, Any],
         raw_ref_stack: set[str],
         current_id: str = "",
-        locations=None,  # type: ignore[no-untyped-def]
+        locations: Optional["LocationRegistry"] = None,
     ) -> Any:
         """Expand a single raw reference by loading external file or local YAML.
 

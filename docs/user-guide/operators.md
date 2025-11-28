@@ -435,15 +435,38 @@ model:
 
 ### Write Reusable Configs
 
-Use idempotent delete for portable configs:
+!!! warning "Delete Requires Key Existence"
+    The delete operator (`~`) is **strict** - it raises an error if the key doesn't exist. This helps catch typos and configuration mistakes.
 
+When writing configs that should work with different base configurations, you have a few options:
+
+**Option 1: Document required keys**
 ```yaml
-# production.yaml - works with ANY base!
-~debug_mode: null        # Remove if exists
-~verbose_logging: null   # No error if missing
+# production.yaml
+# Requires: base config must have debug_mode and verbose_logging
+~debug_mode: null
+~verbose_logging: null
 database:
   pool_size: 100
   ssl: true
+```
+
+**Option 2: Use composition order**
+```yaml
+# production.yaml - override instead of delete
+debug_mode: false        # Overrides if exists, sets if not
+verbose_logging: false
+database:
+  pool_size: 100
+  ssl: true
+```
+
+**Option 3: Conditional deletion with lists**
+```yaml
+# Delete multiple optional keys - fails only if ALL are missing
+~: [debug_mode, verbose_logging]  # At least one must exist
+database:
+  pool_size: 100
 ```
 
 ## Common Mistakes

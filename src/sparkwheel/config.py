@@ -488,8 +488,29 @@ class Config:
                 if actual_key not in self:
                     # Try to find source location for the key being deleted
                     source_location = self._locations.get(actual_key) if self._locations else None
-                    available_keys: list[str] = list(self._data.keys()) if isinstance(self._data, dict) else []
-                    raise build_missing_key_error(actual_key, available_keys, source_location)
+
+                    # For nested keys, get available keys from the parent container
+                    available_keys: list[str] = []
+                    parent_key_name: str | None = None
+                    error_key = actual_key  # The key to show in error message
+
+                    if ID_SEP_KEY in actual_key:
+                        # Nested key like "model::lr"
+                        parent_path, child_key = actual_key.rsplit(ID_SEP_KEY, 1)
+                        parent_key_name = parent_path
+                        error_key = child_key  # Show only the child key in nested errors
+                        try:
+                            parent = self._get_by_id(parent_path)
+                            if isinstance(parent, dict):
+                                available_keys = list(parent.keys())
+                        except (KeyError, IndexError, ValueError):
+                            # Parent doesn't exist, fall back to top-level
+                            available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
+                    else:
+                        # Top-level key
+                        available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
+
+                    raise build_missing_key_error(error_key, available_keys, source_location, parent_key=parent_key_name)
                 self._delete_nested_key(actual_key)
 
             else:

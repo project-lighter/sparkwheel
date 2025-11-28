@@ -430,6 +430,34 @@ class TestConfigFileOperations:
         assert path == ""
         assert ids == "key::subkey"
 
+    def test_update_from_file_with_nested_paths_merges_locations(self, tmp_path):
+        """Test that nested-path syntax (::) in YAML files properly merges location tracking."""
+        # Create a YAML file with nested-path syntax
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("model::lr: 0.001\nmodel::dropout: 0.5\ntrainer::epochs: 10")
+
+        # Load the file
+        config = Config()
+        config.update(str(config_file))
+
+        # Verify the values were set correctly
+        assert config["model"]["lr"] == 0.001
+        assert config["model"]["dropout"] == 0.5
+        assert config["trainer"]["epochs"] == 10
+
+        # Verify that locations were tracked
+        # The location registry should have entries for the nested paths
+        assert "model::lr" in config._locations or "model" in config._locations
+        assert "model::dropout" in config._locations or "model" in config._locations
+        assert "trainer::epochs" in config._locations or "trainer" in config._locations
+
+        # Verify the location points to the correct file
+        if "model::lr" in config._locations:
+            location = config._locations.get("model::lr")
+            assert location is not None
+            assert location.filepath == str(config_file)
+            assert location.line >= 1
+
 
 class TestConfigMerging:
     """Test merging configurations with composition-by-default and =/~ operators."""
@@ -889,6 +917,52 @@ class TestConfigMerging:
         result = apply_operators(base, override)
 
         assert result == {"items": ["a", "b"]}
+
+    def test_delete_nonexistent_top_level_key_shows_available_keys(self):
+        """Test that deleting a nonexistent top-level key shows available top-level keys in error."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        config = Config().update({"model": {"lr": 0.001}, "trainer": {"epochs": 10}})
+
+        with pytest.raises(ConfigMergeError) as exc_info:
+            config.update({"~missing": None})
+
+        error_msg = str(exc_info.value)
+        assert "Cannot delete key 'missing'" in error_msg
+        # Should suggest top-level keys
+        assert "'model'" in error_msg
+        assert "'trainer'" in error_msg
+
+    def test_delete_nonexistent_nested_key_shows_parent_keys(self):
+        """Test that deleting a nonexistent nested key shows keys from parent container."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        config = Config().update({"model": {"lr": 0.001, "dropout": 0.5, "hidden_size": 1024}})
+
+        with pytest.raises(ConfigMergeError) as exc_info:
+            config.update({"~model::missing": None})
+
+        error_msg = str(exc_info.value)
+        assert "Cannot remove non-existent key 'missing' from 'model'" in error_msg
+        # Should suggest keys from the parent (model)
+        assert "'lr'" in error_msg
+        assert "'dropout'" in error_msg
+        assert "'hidden_size'" in error_msg
+        # Should NOT show unrelated top-level keys
+        assert "'trainer'" not in error_msg or "trainer" not in config._data
+
+    def test_delete_nested_key_when_parent_doesnt_exist(self):
+        """Test error when trying to delete nested key but parent doesn't exist."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        config = Config().update({"model": {"lr": 0.001}})
+
+        with pytest.raises(ConfigMergeError) as exc_info:
+            config.update({"~trainer::epochs": None})
+
+        # Should fail because 'trainer' doesn't exist
+        error_msg = str(exc_info.value)
+        assert "Cannot remove non-existent key 'epochs' from 'trainer'" in error_msg
 
 
 class TestConfigAdvanced:

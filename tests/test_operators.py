@@ -204,10 +204,10 @@ class TestValidateOperators:
             validate_operators(config)
 
     def test_validate_skips_dict_under_remove(self):
-        """Test that validation doesn't recurse into remove operator dicts."""
-        # This should be valid - the dict under ~key won't be recursed into
+        """Test that validation catches dict value under remove operator."""
+        # A dict value under a remove operator is invalid
+        # Remove operators must have null, empty, or list values
         config = {"~key": {"nested": "value"}}
-        # This should raise because dict is invalid for remove operator
         with pytest.raises(ConfigMergeError, match="must have null, empty, or list value"):
             validate_operators(config)
 
