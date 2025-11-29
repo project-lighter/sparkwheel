@@ -3,26 +3,28 @@
 Sparkwheel is a YAML-based configuration system with references, expressions, and dynamic instantiation.
 This module provides the main Config class for loading, managing, and resolving configurations.
 
-## Two-Stage Processing
+## Two-Phase Processing
 
-Sparkwheel uses a two-stage processing model to handle different reference types at appropriate times:
+Sparkwheel uses a two-phase processing model to handle different reference types at appropriate times:
 
-### Stage 1: Eager Processing (during update())
-- **Raw References (`%`)**: Expanded immediately when configs are merged
-- **Purpose**: Enables safe config composition or deletion
+### Phase 1: Eager Processing (during update())
+- **External file raw refs (`%file.yaml::key`)**: Expanded immediately
+- **Purpose**: External files are frozen - their content won't change
 - **Example**: `%base.yaml::lr` is replaced with the actual value from base.yaml
 
-### Stage 2: Lazy Processing (during resolve())
+### Phase 2: Lazy Processing (during resolve())
+- **Local raw refs (`%key`)**: Expanded after all composition is complete
 - **Resolved References (`@`)**: Resolved on-demand to support circular dependencies
 - **Expressions (`$`)**: Evaluated when needed using Python's eval()
 - **Components (`_target_`)**: Instantiated only when requested
-- **Purpose**: Supports deferred instantiation and complex dependency graphs
+- **Purpose**: CLI overrides can affect local `%` refs, supports deferred instantiation
 
 ## Reference Types
 
 | Symbol | Name | When Expanded | Purpose | Example |
 |--------|------|---------------|---------|---------|
-| `%` | Raw Reference | Eager (update()) | Copy/paste YAML sections | `%base.yaml::lr` |
+| `%` | Raw Reference (external) | Eager (update()) | Copy from external files | `%base.yaml::lr` |
+| `%` | Raw Reference (local) | Lazy (resolve()) | Copy local config values | `%vars::lr` |
 | `@` | Resolved Reference | Lazy (resolve()) | Reference config values | `@model::lr` |
 | `$` | Expression | Lazy (resolve()) | Compute values dynamically | `$@lr * 2` |
 
@@ -97,15 +99,15 @@ from pathlib import Path
 from typing import Any
 
 from .loader import Loader
-from .metadata import MetadataRegistry
-from .operators import _validate_delete_operator, apply_operators, validate_operators
+from .locations import LocationRegistry
+from .operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
 from .parser import Parser
-from .path_utils import split_id
+from .path_utils import get_by_id, split_id
 from .preprocessor import Preprocessor
 from .resolver import Resolver
-from .utils import PathLike, look_up_option, optional_import
+from .utils import PathLike, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
-from .utils.exceptions import ConfigKeyError
+from .utils.exceptions import ConfigKeyError, build_missing_key_error
 
 __all__ = ["Config", "parse_overrides"]
 
@@ -183,7 +185,7 @@ class Config:
             >>> config = Config(schema=MySchema).update("config.yaml")
         """
         self._data: dict[str, Any] = data or {}  # Start with provided data or empty
-        self._metadata = MetadataRegistry()
+        self._locations = LocationRegistry()
         self._resolver = Resolver()
         self._is_parsed = False
         self._frozen = False  # Set via freeze() method later
@@ -257,7 +259,7 @@ class Config:
         """
         try:
             return self._get_by_id(id)
-        except (KeyError, IndexError, ValueError):
+        except (KeyError, IndexError, TypeError):
             return default
 
     def set(self, id: str, value: Any) -> None:
@@ -329,7 +331,7 @@ class Config:
         """
         from .schema import validate as validate_schema
 
-        validate_schema(self._data, schema, metadata=self._metadata)
+        validate_schema(self._data, schema, metadata=self._locations)
 
     def freeze(self) -> None:
         """Freeze config to prevent further modifications.
@@ -359,6 +361,20 @@ class Config:
         """
         return self._frozen
 
+    @property
+    def locations(self) -> LocationRegistry:
+        """Get the location registry for this config.
+
+        Returns:
+            LocationRegistry tracking file locations of config keys
+
+        Example:
+            >>> config = Config().update("config.yaml")
+            >>> location = config.locations.get("model::lr")
+            >>> print(f"{location.filepath}:{location.line}")
+        """
+        return self._locations
+
     def update(self, source: PathLike | dict[str, Any] | "Config" | str) -> "Config":
         """Update configuration with changes from another source.
 
@@ -376,7 +392,7 @@ class Config:
         Operators:
             - key=value      - Compose (default): merge dict or extend list
             - =key=value     - Replace operator: completely replace value
-            - ~key           - Remove operator: delete key (idempotent)
+            - ~key           - Remove operator: delete key (errors if missing)
 
         Examples:
             >>> # Update from file
@@ -423,10 +439,13 @@ class Config:
         else:
             self._update_from_file(source)
 
-        # Eagerly expand raw references (%) immediately after update
-        # This matches MONAI's behavior and allows safe pruning with delete operator (~)
-        # Must happen BEFORE validation so schema sees final structure, not raw ref strings
-        self._data = self._preprocessor.process_raw_refs(self._data, self._data, id="")
+        # Phase 1: Eagerly expand ONLY external file raw references (%file.yaml::key)
+        # Local refs (%key) are kept as strings - they'll be expanded in _parse() after
+        # all composition is complete. This allows CLI overrides to affect local refs.
+        # External files are frozen (their content won't change), so eager expansion is safe.
+        self._data = self._preprocessor.process_raw_refs(
+            self._data, self._data, id="", locations=self._locations, external_only=True
+        )
 
         # Validate after raw ref expansion if schema exists
         # This validates the final structure, not intermediate raw reference strings
@@ -436,7 +455,7 @@ class Config:
             validate_schema(
                 self._data,
                 self._schema,
-                metadata=self._metadata,
+                metadata=self._locations,
                 allow_missing=self._allow_missing,
                 strict=self._strict,
             )
@@ -445,8 +464,9 @@ class Config:
 
     def _update_from_config(self, source: "Config") -> None:
         """Update from another Config instance."""
-        self._data = apply_operators(self._data, source._data)
-        self._metadata.merge(source._metadata)
+        context = MergeContext(locations=source.locations)
+        self._data = apply_operators(self._data, source._data, context=context)
+        self._locations.merge(source.locations)
         self._invalidate_resolution()
 
     def _uses_nested_paths(self, source: dict[str, Any]) -> bool:
@@ -466,17 +486,43 @@ class Config:
                 self.set(actual_key, value)
 
             elif key.startswith(REMOVE_KEY):
-                # Delete operator: ~key (idempotent)
+                # Delete operator: ~key
                 actual_key = key[1:]
                 _validate_delete_operator(actual_key, value)
 
-                if actual_key in self:
-                    self._delete_nested_key(actual_key)
+                if actual_key not in self:
+                    # Try to find source location for the key being deleted
+                    source_location = self._locations.get(actual_key) if self._locations else None
+
+                    # For nested keys, get available keys from the parent container
+                    available_keys: list[str] = []
+                    parent_key_name: str | None = None
+                    error_key = actual_key  # The key to show in error message
+
+                    if ID_SEP_KEY in actual_key:
+                        # Nested key like "model::lr"
+                        parent_path, child_key = actual_key.rsplit(ID_SEP_KEY, 1)
+                        parent_key_name = parent_path
+                        error_key = child_key  # Show only the child key in nested errors
+                        try:
+                            parent = self._get_by_id(parent_path)
+                            if isinstance(parent, dict):
+                                available_keys = list(parent.keys())
+                        except (KeyError, IndexError, TypeError):
+                            # Parent doesn't exist, fall back to top-level
+                            available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
+                    else:
+                        # Top-level key
+                        available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
+
+                    raise build_missing_key_error(error_key, available_keys, source_location, parent_key=parent_key_name)
+                self._delete_nested_key(actual_key)
 
             else:
                 # Default: compose (merge dict or extend list)
                 if key in self and isinstance(self[key], dict) and isinstance(value, dict):
-                    merged = apply_operators(self[key], value)
+                    context = MergeContext(locations=self._locations, current_path=key)
+                    merged = apply_operators(self[key], value, context=context)
                     self.set(key, merged)
                 elif key in self and isinstance(self[key], list) and isinstance(value, list):
                     self.set(key, self[key] + value)
@@ -501,7 +547,8 @@ class Config:
     def _apply_structural_update(self, source: dict[str, Any]) -> None:
         """Apply structural update with operators."""
         validate_operators(source)
-        self._data = apply_operators(self._data, source)
+        context = MergeContext(locations=self._locations)
+        self._data = apply_operators(self._data, source, context=context)
         self._invalidate_resolution()
 
     def _update_from_file(self, source: PathLike) -> None:
@@ -512,12 +559,13 @@ class Config:
         # Check if loaded data uses :: path syntax
         if self._uses_nested_paths(new_data):
             # Expand nested paths using path updates
-            self._metadata.merge(new_metadata)
+            self._locations.merge(new_metadata)
             self._apply_path_updates(new_data)
         else:
             # Normal structural update
-            self._data = apply_operators(self._data, new_data)
-            self._metadata.merge(new_metadata)
+            context = MergeContext(locations=new_metadata)
+            self._data = apply_operators(self._data, new_data, context=context)
+            self._locations.merge(new_metadata)
 
         self._invalidate_resolution()
 
@@ -623,7 +671,10 @@ class Config:
         """Parse config tree and prepare for resolution.
 
         Internal method called automatically by resolve().
-        Note: % raw references are already expanded during update().
+
+        Two-phase raw reference expansion:
+        - Phase 1 (update): External file refs expanded eagerly
+        - Phase 2 (here): Local refs expanded now, after all composition
 
         Args:
             reset: Whether to reset the resolver before parsing (default: True)
@@ -632,12 +683,17 @@ class Config:
         if reset:
             self._resolver.reset()
 
+        # Phase 2: Expand local raw references (%key) now that all composition is complete
+        # CLI overrides have been applied, so local refs will see final values
+        self._data = self._preprocessor.process_raw_refs(
+            self._data, self._data, id="", locations=self._locations, external_only=False
+        )
+
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        # Note: % raw references were already expanded in update()
         self._data = self._preprocessor.process(self._data, self._data, id="")
 
         # Stage 2: Parse config tree to create Items
-        parser = Parser(globals=self._globals, metadata=self._metadata)
+        parser = Parser(globals=self._globals, metadata=self._locations)
         items = parser.parse(self._data)
 
         # Stage 3: Add items to resolver
@@ -655,21 +711,10 @@ class Config:
             Config value at that path
 
         Raises:
-            KeyError: If path not found
+            KeyError: If path not found (includes available keys in message)
+            TypeError: If trying to index a non-dict/list value
         """
-        if id == "":
-            return self._data
-
-        config = self._data
-        for k in split_id(id):
-            if not isinstance(config, (dict, list)):
-                raise ValueError(f"Config must be dict or list for key `{k}`, but got {type(config)}: {config}")
-            try:
-                config = look_up_option(k, config, print_all_options=False) if isinstance(config, dict) else config[int(k)]
-            except ValueError as e:
-                raise KeyError(f"Key not found: {k}") from e
-
-        return config
+        return get_by_id(self._data, id)
 
     def _invalidate_resolution(self) -> None:
         """Invalidate cached resolution (called when config changes)."""
@@ -717,7 +762,7 @@ class Config:
         try:
             self._get_by_id(id)
             return True
-        except (KeyError, IndexError, ValueError):
+        except (KeyError, IndexError, TypeError):
             return False
 
     def __repr__(self) -> str:

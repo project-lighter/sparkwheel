@@ -10,7 +10,7 @@ Sparkwheel provides two types of references for linking configuration values:
 | Feature | `@ref` (Resolved) | `%ref` (Raw) | `$expr` (Expression) |
 |---------|-------------------|--------------|----------------------|
 | **Returns** | Final computed value | Raw YAML content | Evaluated expression result |
-| **When processed** | Lazy (`resolve()`) | Eager (`update()`) | Lazy (`resolve()`) |
+| **When processed** | Lazy (`resolve()`) | External: Eager / Local: Lazy | Lazy (`resolve()`) |
 | **Instantiates objects** | ✅ Yes | ❌ No | ✅ Yes (if referenced) |
 | **Evaluates expressions** | ✅ Yes | ❌ No | ✅ Yes |
 | **Use in dataclass validation** | ✅ Yes | ⚠️ Limited | ✅ Yes |
@@ -18,68 +18,80 @@ Sparkwheel provides two types of references for linking configuration values:
 | **Cross-file references** | ✅ Yes | ✅ Yes | ❌ No |
 | **When to use** | Get computed results | Copy config structures | Compute new values |
 
-## Two-Stage Processing Model
+## Two-Phase Processing Model
 
-Sparkwheel processes references at different times to enable safe config composition:
+Sparkwheel processes raw references (`%`) in two phases to support CLI overrides:
 
 !!! abstract "When References Are Processed"
 
-    **Stage 1: Eager Processing (during `update()`)**
+    **Phase 1: Eager Processing (during `update()`)**
 
-    - **Raw References (`%`)** are expanded immediately when configs are merged
-    - Enables safe config composition and pruning workflows
-    - External file references resolved at load time
+    - **External file raw refs (`%file.yaml::key`)** are expanded immediately
+    - External files are frozen—their content won't change based on CLI overrides
+    - Enables copy-then-delete workflows with external files
 
-    **Stage 2: Lazy Processing (during `resolve()`)**
+    **Phase 2: Lazy Processing (during `resolve()`)**
 
+    - **Local raw refs (`%key`)** are expanded after all composition is complete
     - **Resolved References (`@`)** are processed on-demand
     - **Expressions (`$`)** are evaluated when needed
     - **Components (`_target_`)** are instantiated only when requested
-    - Supports complex dependency graphs and deferred instantiation
+    - CLI overrides can affect local `%` refs
 
-**Why two stages?**
+**Why two phases?**
 
-This separation enables powerful workflows like config pruning:
+This design ensures CLI overrides work intuitively with local raw references:
 
 ```yaml
 # base.yaml
-system:
-  lr: 0.001
-  batch_size: 32
+vars:
+  features_path: null  # Default, will be overridden
 
-experiment:
-  model:
-    optimizer:
-      lr: "%system::lr"  # Copies raw value 0.001 eagerly
-
-~system: null  # Delete system section after copying
+# model.yaml
+dataset:
+  path: "%vars::features_path"  # Local ref - sees CLI override
 ```
 
 ```python
 config = Config()
 config.update("base.yaml")
-# % references already expanded during update()
-# ~system deletion applied after expansion
-# Result: experiment::model::optimizer::lr = 0.001 (system deleted safely)
+config.update("model.yaml")
+config.update("vars::features_path=/data/features.npz")  # CLI override
+
+# Local % ref sees the override!
+path = config.resolve("dataset::path")  # "/data/features.npz"
 ```
 
-With `@` references, this would fail because they resolve lazily after deletion.
+!!! tip "External vs Local Raw References"
+
+    | Type | Example | When Expanded | Use Case |
+    |------|---------|---------------|----------|
+    | **External** | `%file.yaml::key` | Eager (update) | Import from frozen files |
+    | **Local** | `%vars::key` | Lazy (resolve) | Reference config values |
+
+    External files are "frozen"—their content is fixed at load time.
+    Local config values may be overridden via CLI, so local refs see the final state.
 
 ## Resolution Flow
 
 !!! abstract "How References Are Resolved"
 
-    **Step 1: Parse Config** → Detect references in YAML
+    **Step 1: Load Configs** → During `update()`
 
-    **Step 2: Determine Type**
+    - Parse YAML files
+    - Expand external `%file.yaml::key` refs immediately
+    - Keep local `%key` refs as strings
 
-    - **`%key`** → Expanded eagerly during `update()` ✅
-    - **`@key`** → Proceed to dependency resolution (lazy)
+    **Step 2: Apply Overrides** → During `update()` calls
 
-    **Step 3: Resolve Dependencies** (for `@` references during `resolve()`)
+    - CLI overrides modify local config values
+    - Local `%` refs still see the string form
 
+    **Step 3: Resolve** → During `resolve()`
+
+    - Expand local `%key` refs (now sees final values)
+    - Resolve `@` dependencies in order
     - Check for circular references → ❌ **Error if found**
-    - Resolve all dependencies first
     - Evaluate expressions and instantiate objects
     - Return final computed value ✅
 
@@ -223,6 +235,8 @@ model_template: "%base.yaml::model"
 
 ### Local Raw References
 
+Local raw references are expanded lazily during `resolve()`, which means CLI overrides can affect them:
+
 ```yaml
 # config.yaml
 defaults:
@@ -236,6 +250,17 @@ api_config:
 # Copy entire section
 backup_defaults: "%defaults"  # Gets the whole defaults dict
 ```
+
+!!! tip "CLI Overrides Work with Local Raw Refs"
+
+    ```python
+    config = Config()
+    config.update("config.yaml")
+    config.update("defaults::timeout=60")  # CLI override
+
+    # Local % ref sees the override!
+    config.resolve("api_config::timeout")  # 60
+    ```
 
 ### Key Distinction
 

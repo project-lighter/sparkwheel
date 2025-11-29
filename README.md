@@ -10,25 +10,30 @@
   <a href="https://github.com/project-lighter/sparkwheel/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"></a>
   <a href="https://project-lighter.github.io/sparkwheel"><img alt="Documentation" src="https://img.shields.io/badge/docs-latest-olive"></a>
 </p>
-<br/>
 
-<p align="center">⚙️ YAML configuration meets Python 🐍</p>
+<h3 align="center">YAML configuration meets Python</h3>
 <p align="center">Define Python objects in YAML. Reference, compose, and instantiate them effortlessly.</p>
 <br/>
 
-## What is Sparkwheel?
+## Quick Start
 
-Stop hardcoding parameters. Define complex Python objects in clean YAML files, compose them naturally, and instantiate with one line.
+```bash
+pip install sparkwheel
+```
 
 ```yaml
 # config.yaml
+dataset:
+  num_classes: 10
+  batch_size: 32
+
 model:
   _target_: torch.nn.Linear
   in_features: 784
-  out_features: "%dataset::num_classes"  # Reference other values
+  out_features: "%dataset::num_classes"  # Reference
 
-dataset:
-  num_classes: 10
+training:
+  steps_per_epoch: "$10000 // @dataset::batch_size"  # Expression
 ```
 
 ```python
@@ -36,77 +41,25 @@ from sparkwheel import Config
 
 config = Config()
 config.update("config.yaml")
-model = config.resolve("model")  # Actual torch.nn.Linear(784, 10) instance!
+
+model = config.resolve("model")  # Actual torch.nn.Linear(784, 10)
 ```
 
-## Key Features
+## Features
 
-- **Declarative Object Creation** - Instantiate any Python class from YAML with `_target_`
+- **Declarative Objects** - Instantiate any Python class with `_target_`
 - **Smart References** - `@` for resolved values, `%` for raw YAML
-- **Composition by Default** - Configs merge naturally (dicts merge, lists extend)
-- **Explicit Operators** - `=` to replace, `~` to delete when needed
-- **Python Expressions** - Compute values dynamically with `$` prefix
-- **Schema Validation** - Type-check configs with Python dataclasses
-- **CLI Overrides** - Override any value from command line
+- **Composition by Default** - Dicts merge, lists extend automatically
+- **Explicit Control** - `=` to replace, `~` to delete
+- **Python Expressions** - Dynamic values with `$`
+- **Schema Validation** - Type-check with dataclasses
 
-## Installation
-
-```bash
-pip install sparkwheel
-```
-
-**[→ Get Started in 5 Minutes](https://project-lighter.github.io/sparkwheel/getting-started/quickstart/)**
-
-## Coming from Hydra/OmegaConf?
-
-Sparkwheel builds on similar ideas but adds powerful features:
-
-| Feature | Hydra/OmegaConf | Sparkwheel |
-|---------|-----------------|------------|
-| Config composition | Explicit (`+`, `++`) | **By default** (dicts merge, lists extend) |
-| Replace semantics | Default | Explicit with `=` operator |
-| Delete keys | Not idempotent | Idempotent `~` operator |
-| References | OmegaConf interpolation | `@` (resolved) + `%` (raw YAML) |
-| Python expressions | Limited | Full Python with `$` |
-| Schema validation | Structured Configs | Python dataclasses |
-| List extension | Lists replace | **Lists extend by default** |
-
-**Composition by default** means configs merge naturally without operators:
-```yaml
-# base.yaml
-model:
-  hidden_size: 256
-  dropout: 0.1
-
-# experiment.yaml
-model:
-  hidden_size: 512  # Override
-  # dropout inherited
-```
-
-## Documentation
-
-- [Full Documentation](https://project-lighter.github.io/sparkwheel/)
-- [Quick Start Guide](https://project-lighter.github.io/sparkwheel/getting-started/quickstart/)
-- [Core Concepts](https://project-lighter.github.io/sparkwheel/user-guide/basics/)
-- [API Reference](https://project-lighter.github.io/sparkwheel/reference/)
+**[Get Started](https://project-lighter.github.io/sparkwheel/getting-started/quickstart/)** · **[Documentation](https://project-lighter.github.io/sparkwheel/)** · **[Quick Reference](https://project-lighter.github.io/sparkwheel/user-guide/quick-reference/)**
 
 ## Community
 
-- [Discord Server](https://discord.gg/zJcnp6KrUp) - Chat with the community
-- [YouTube Channel](https://www.youtube.com/channel/UCef1oTpv2QEBrD2pZtrdk1Q) - Tutorials and demos
-- [GitHub Issues](https://github.com/project-lighter/sparkwheel/issues) - Bug reports and feature requests
-
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+- [Discord](https://discord.gg/zJcnp6KrUp) · [YouTube](https://www.youtube.com/channel/UCef1oTpv2QEBrD2pZtrdk1Q) · [Issues](https://github.com/project-lighter/sparkwheel/issues)
 
 ## About
 
-Sparkwheel is a hard fork of [MONAI Bundle](https://github.com/Project-MONAI/MONAI/tree/dev/monai/bundle)'s configuration system, refined and expanded for general-purpose use. We're deeply grateful to the MONAI team for their excellent foundation.
-
-Sparkwheel powers [Lighter](https://project-lighter.github.io/lighter/), our configuration-driven deep learning framework built on PyTorch Lightning.
-
-## License
-
-Apache License 2.0 - See [LICENSE](LICENSE) for details.
+Sparkwheel is a hard fork of [MONAI Bundle](https://github.com/Project-MONAI/MONAI/tree/dev/monai/bundle)'s config system, with the goal of making a more general-purpose configuration library for Python projects. It combines the best of MONAI Bundle and [Hydra](http://hydra.cc/)/[OmegaComf](https://omegaconf.readthedocs.io/), while introducing new features and improvements not found in either.

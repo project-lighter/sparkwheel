@@ -199,7 +199,7 @@ Sparkwheel has two types of references with distinct purposes:
     - **Composition-by-default** - Configs merge/extend naturally, no operators needed for common case
     - **List extension** - Lists extend by default (unique vs Hydra!)
     - **`=` replace operator** - Explicit control when you need replacement
-    - **`~` delete operator** - Remove inherited keys cleanly (idempotent!)
+    - **`~` delete operator** - Remove inherited keys explicitly
     - **Python expressions with `$`** - Compute values dynamically
     - **Dataclass validation** - Type-safe configs without boilerplate
     - **Dual reference system** - `@` for resolved values, `%` for raw YAML

@@ -39,7 +39,7 @@ import dataclasses
 import types
 from typing import Any, Union, get_args, get_origin
 
-from .utils.exceptions import BaseError, SourceLocation
+from .utils.exceptions import BaseError, Location
 
 __all__ = ["validate", "validator", "ValidationError", "MISSING"]
 
@@ -192,7 +192,7 @@ class ValidationError(BaseError):
         field_path: str = "",
         expected_type: type | None = None,
         actual_value: Any = None,
-        source_location: SourceLocation | None = None,
+        source_location: Location | None = None,
     ):
         """Initialize validation error.
 
@@ -682,15 +682,15 @@ def _validate_field(
         )
 
 
-def _get_source_location(metadata: Any, field_path: str) -> SourceLocation | None:
+def _get_source_location(metadata: Any, field_path: str) -> Location | None:
     """Get source location from metadata registry.
 
     Args:
-        metadata: MetadataRegistry instance
+        metadata: LocationRegistry instance
         field_path: Dot-separated field path to look up
 
     Returns:
-        SourceLocation if found, None otherwise
+        Location if found, None otherwise
     """
     if metadata is None:
         return None
@@ -699,6 +699,6 @@ def _get_source_location(metadata: Any, field_path: str) -> SourceLocation | Non
         # Convert dot notation to :: notation used by sparkwheel
         id_path = field_path.replace(".", "::")
         result = metadata.get(id_path)
-        return result if result is None or isinstance(result, SourceLocation) else None
+        return result if result is None or isinstance(result, Location) else None
     except Exception:
         return None

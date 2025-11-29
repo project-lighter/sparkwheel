@@ -5,7 +5,6 @@ Uses YAML format only.
 """
 
 from .config import Config, parse_overrides
-from .errors import enable_colors
 from .items import Component, Expression, Instantiable, Item
 from .operators import apply_operators, validate_operators
 from .resolver import Resolver
@@ -19,7 +18,7 @@ from .utils.exceptions import (
     EvaluationError,
     FrozenConfigError,
     InstantiationError,
-    SourceLocation,
+    Location,
     TargetNotFoundError,
 )
 
@@ -39,7 +38,6 @@ __all__ = [
     "validate_operators",
     "validate",
     "validator",
-    "enable_colors",
     "RESOLVED_REF_KEY",
     "RAW_REF_KEY",
     "ID_SEP_KEY",
@@ -55,5 +53,5 @@ __all__ = [
     "EvaluationError",
     "FrozenConfigError",
     "ValidationError",
-    "SourceLocation",
+    "Location",
 ]

@@ -106,7 +106,7 @@ class TestConfigBasics:
     def test_getitem_invalid_config_type(self):
         """Test __getitem__ raises error for invalid config type."""
         parser = Config({"scalar": 42})
-        with pytest.raises(ValueError, match="Config must be dict or list"):
+        with pytest.raises(TypeError, match="Cannot index int"):
             _ = parser["scalar::invalid"]
 
     def test_getitem_list_indexing(self):
@@ -277,51 +277,117 @@ class TestConfigMacros:
         finally:
             Path(filepath).unlink()
 
-    def test_eager_raw_reference_expansion(self):
-        """Test that raw references are expanded during update(), not resolve()."""
+    def test_local_raw_reference_lazy_expansion(self):
+        """Test that local raw references are expanded lazily (during resolve()).
+
+        This allows CLI overrides to affect values used by local % refs.
+        """
         config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
         parser = Config().update(config)
 
-        # After update(), raw references should be expanded (not resolve() yet!)
-        # The copy should be the actual value, not the "%original" string
-        assert parser.get("copy") == {"a": 1, "b": 2}
-        assert parser.get("copy") is not parser.get("original")  # Deep copy
+        # After update(), LOCAL raw references are NOT expanded yet
+        # They remain as strings until resolve() is called
+        assert parser.get("copy") == "%original"
 
-        # Verify it's a real copy by modifying it
-        parser.set("copy::c", 3)
-        assert parser.get("copy::c") == 3
-        assert "c" not in parser.get("original")
+        # After resolve(), local refs are expanded
+        resolved = parser.resolve("copy")
+        assert resolved == {"a": 1, "b": 2}
 
-    def test_pruning_with_raw_references(self):
-        """Test that pruning works with raw references (the Lighter use case)."""
-        # This is the critical test: raw refs should be expanded before pruning
+        # Verify it's a deep copy (independent of original)
+        assert resolved is not parser.resolve("original")
+
+    def test_cli_override_affects_local_raw_ref(self):
+        """Test that CLI overrides affect values used by local % refs.
+
+        This is the key use case: vars::path can be overridden via CLI
+        and local % refs will see the overridden value.
+        """
+        parser = Config()
+        parser.update({"vars": {"path": None}})
+        parser.update({"data": {"path": "%vars::path"}})
+
+        # Before CLI override, local ref is still a string
+        assert parser.get("data::path") == "%vars::path"
+
+        # Apply CLI override
+        parser.update("vars::path=/data/features.npz")
+
+        # Now resolve - local ref should see the overridden value
+        assert parser.resolve("data::path") == "/data/features.npz"
+
+    def test_external_raw_reference_eager_expansion(self, tmp_path):
+        """Test that external file raw references are expanded eagerly."""
+        # Create external file
+        external = tmp_path / "external.yaml"
+        external.write_text("value: 42\nnested:\n  a: 1\n  b: 2")
+
+        parser = Config()
+        parser.update({"imported": f"%{external}::value", "section": f"%{external}::nested"})
+
+        # After update(), EXTERNAL raw references ARE expanded (eager)
+        assert parser.get("imported") == 42
+        assert parser.get("section") == {"a": 1, "b": 2}
+
+    def test_pruning_with_external_raw_references(self, tmp_path):
+        """Test that pruning works with external file raw references.
+
+        External file refs are expanded eagerly, so copy-then-delete works.
+        For local refs, use @ references instead (they also support this pattern).
+        """
+        # Create external file with dataloader configs
+        external = tmp_path / "dataloaders.yaml"
+        external.write_text("train:\n  batch_size: 32\nval:\n  batch_size: 64")
+
         config = {
             "system": {
-                "dataloaders": {
-                    "train": {"batch_size": 32},
-                    "val": {"batch_size": 64},
-                }
+                "dataloaders": f"%{external}",  # External ref - expanded eagerly
             },
             "train": {
-                "dataloader": "%system::dataloaders::train"  # Raw reference
+                "dataloader": f"%{external}::train",  # External ref - expanded eagerly
             },
         }
 
         parser = Config().update(config)
 
-        # Raw reference should already be expanded
+        # External raw reference should already be expanded (eager)
         assert parser.get("train::dataloader") == {"batch_size": 32}
+        assert parser.get("system::dataloaders") == {"train": {"batch_size": 32}, "val": {"batch_size": 64}}
 
         # Now prune the system section (delete it)
         parser.update("~system")
 
-        # The raw reference was already expanded, so train::dataloader should still exist
+        # The external raw reference was already expanded, so train::dataloader still exists
         assert parser.get("train::dataloader") == {"batch_size": 32}
         assert "system" not in parser.get()  # system is deleted
 
         # Verify we can still resolve after pruning
         result = parser.resolve("train::dataloader")
         assert result == {"batch_size": 32}
+
+    def test_local_raw_ref_to_deleted_key_fails(self):
+        """Test that local % ref to deleted key fails clearly.
+
+        With lazy local refs, deleting the source before resolve() will fail.
+        Use external file refs or @ refs if you need copy-then-delete.
+        """
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        config = {
+            "system": {"train": {"batch_size": 32}},
+            "train": {"dataloader": "%system::train"},  # Local ref - expanded lazily
+        }
+
+        parser = Config().update(config)
+
+        # Local ref is NOT expanded yet
+        assert parser.get("train::dataloader") == "%system::train"
+
+        # Delete the source
+        parser.update("~system")
+
+        # Attempting to resolve will fail - source was deleted
+        with pytest.raises(ConfigKeyError, match="system"):
+            parser.resolve("train::dataloader")
 
 
 class TestComponents:
@@ -429,6 +495,34 @@ class TestConfigFileOperations:
         path, ids = split_file_and_id("key::subkey")
         assert path == ""
         assert ids == "key::subkey"
+
+    def test_update_from_file_with_nested_paths_merges_locations(self, tmp_path):
+        """Test that nested-path syntax (::) in YAML files properly merges location tracking."""
+        # Create a YAML file with nested-path syntax
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("model::lr: 0.001\nmodel::dropout: 0.5\ntrainer::epochs: 10")
+
+        # Load the file
+        config = Config()
+        config.update(str(config_file))
+
+        # Verify the values were set correctly
+        assert config["model"]["lr"] == 0.001
+        assert config["model"]["dropout"] == 0.5
+        assert config["trainer"]["epochs"] == 10
+
+        # Verify that locations were tracked
+        # The location registry should have entries for the nested paths
+        assert "model::lr" in config._locations or "model" in config._locations
+        assert "model::dropout" in config._locations or "model" in config._locations
+        assert "trainer::epochs" in config._locations or "trainer" in config._locations
+
+        # Verify the location points to the correct file
+        if "model::lr" in config._locations:
+            location = config._locations.get("model::lr")
+            assert location is not None
+            assert location.filepath == str(config_file)
+            assert location.line >= 1
 
 
 class TestConfigMerging:
@@ -629,14 +723,16 @@ class TestConfigMerging:
         assert "c" not in parser
         assert parser["d"] == {"new": 4}  # Replaced
 
-    def test_delete_on_nonexistent_key_idempotent(self):
-        """Test that ~key is idempotent (no error when key doesn't exist)."""
+    def test_delete_on_nonexistent_key_raises_error(self):
+        """Test that ~key raises error when key doesn't exist."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
         base = {"a": 1}
         override = {"~b": None}
 
-        # NEW: No error! Idempotent delete
-        result = apply_operators(base, override)
-        assert result == {"a": 1}
+        # Should raise error when key doesn't exist
+        with pytest.raises(ConfigMergeError, match="Cannot delete key 'b': key does not exist"):
+            apply_operators(base, override)
 
     def test_delete_directive_with_invalid_value_raises_error(self):
         """Test that ~key raises error when value is not null, empty, or list."""
@@ -887,6 +983,52 @@ class TestConfigMerging:
         result = apply_operators(base, override)
 
         assert result == {"items": ["a", "b"]}
+
+    def test_delete_nonexistent_top_level_key_shows_available_keys(self):
+        """Test that deleting a nonexistent top-level key shows available top-level keys in error."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        config = Config().update({"model": {"lr": 0.001}, "trainer": {"epochs": 10}})
+
+        with pytest.raises(ConfigMergeError) as exc_info:
+            config.update({"~missing": None})
+
+        error_msg = str(exc_info.value)
+        assert "Cannot delete key 'missing'" in error_msg
+        # Should suggest top-level keys
+        assert "'model'" in error_msg
+        assert "'trainer'" in error_msg
+
+    def test_delete_nonexistent_nested_key_shows_parent_keys(self):
+        """Test that deleting a nonexistent nested key shows keys from parent container."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        config = Config().update({"model": {"lr": 0.001, "dropout": 0.5, "hidden_size": 1024}})
+
+        with pytest.raises(ConfigMergeError) as exc_info:
+            config.update({"~model::missing": None})
+
+        error_msg = str(exc_info.value)
+        assert "Cannot remove non-existent key 'missing' from 'model'" in error_msg
+        # Should suggest keys from the parent (model)
+        assert "'lr'" in error_msg
+        assert "'dropout'" in error_msg
+        assert "'hidden_size'" in error_msg
+        # Should NOT show unrelated top-level keys
+        assert "'trainer'" not in error_msg or "trainer" not in config._data
+
+    def test_delete_nested_key_when_parent_doesnt_exist(self):
+        """Test error when trying to delete nested key but parent doesn't exist."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        config = Config().update({"model": {"lr": 0.001}})
+
+        with pytest.raises(ConfigMergeError) as exc_info:
+            config.update({"~trainer::epochs": None})
+
+        # Should fail because 'trainer' doesn't exist
+        error_msg = str(exc_info.value)
+        assert "Cannot remove non-existent key 'epochs' from 'trainer'" in error_msg
 
 
 class TestConfigAdvanced:

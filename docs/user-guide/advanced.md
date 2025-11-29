@@ -221,8 +221,6 @@ config.update({"~plugins": [0, 2]})  # Remove list items
 config.update({"~dataloaders": ["train", "test"]})  # Remove dict keys
 ```
 
-**Note:** The `~` directive is idempotent - it doesn't error if the key doesn't exist, enabling reusable configs.
-
 ### Programmatic Updates
 
 Apply operators programmatically:

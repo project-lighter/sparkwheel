@@ -193,7 +193,7 @@ class TestComponent:
         config = {"_target_": "builtins.int", "invalid_arg": 123}
         component = Component(config=config)
 
-        with pytest.raises(InstantiationError, match="Failed to instantiate"):
+        with pytest.raises(InstantiationError):
             component.instantiate()
 
     def test_instantiate_with_kwargs_override(self):
@@ -287,7 +287,7 @@ class TestComponent:
         """Test that _args_ is properly excluded from kwargs."""
         config = {"_target_": "builtins.dict", "_args_": [], "a": 1}
         component = Component(config=config)
-        args, kwargs = component.resolve_args()
+        _, kwargs = component.resolve_args()
 
         # Verify _args_ is not passed as a kwarg
         assert "_args_" not in kwargs
@@ -454,14 +454,14 @@ class TestExpressionDebugMode:
             sparkwheel.utils.run_debug = original_debug
 
 
-class TestItemWithSourceLocation:
+class TestItemWithLocation:
     """Test Item classes with source location tracking."""
 
     def test_item_with_source_location(self):
         """Test creating item with source location."""
-        from sparkwheel.utils.exceptions import SourceLocation
+        from sparkwheel.utils.exceptions import Location
 
-        location = SourceLocation(filepath="/tmp/config.yaml", line=10, column=5, id="model::lr")
+        location = Location(filepath="/tmp/config.yaml", line=10, column=5, id="model::lr")
         item = Item(config={"lr": 0.001}, id="model::lr", source_location=location)
 
         assert item.source_location == location
@@ -470,9 +470,9 @@ class TestItemWithSourceLocation:
 
     def test_component_error_includes_source_location(self):
         """Test that component errors include source location."""
-        from sparkwheel.utils.exceptions import SourceLocation
+        from sparkwheel.utils.exceptions import Location
 
-        location = SourceLocation(filepath="/tmp/config.yaml", line=15, column=2, id="model")
+        location = Location(filepath="/tmp/config.yaml", line=15, column=2, id="model")
         config = {"_target_": "nonexistent.Module"}
         component = Component(config=config, id="model", source_location=location)
 
@@ -484,9 +484,9 @@ class TestItemWithSourceLocation:
 
     def test_expression_error_includes_source_location(self):
         """Test that expression errors include source location."""
-        from sparkwheel.utils.exceptions import SourceLocation
+        from sparkwheel.utils.exceptions import Location
 
-        location = SourceLocation(filepath="/tmp/config.yaml", line=20, column=2, id="calc")
+        location = Location(filepath="/tmp/config.yaml", line=20, column=2, id="calc")
         expr = Expression(config="$undefined_var", id="calc", source_location=location)
 
         with pytest.raises(EvaluationError) as exc_info:
@@ -494,6 +494,47 @@ class TestItemWithSourceLocation:
 
         error = exc_info.value
         assert error.source_location == location
+
+    def test_instantiation_error_with_location_reraises_unchanged(self):
+        """Test that InstantiationError with source_location is re-raised unchanged.
+
+        This tests the re-raise path in Component.instantiate() where an InstantiationError
+        already has source_location set and should be re-raised as-is without modification.
+        """
+        from unittest.mock import patch
+
+        from sparkwheel.utils.exceptions import Location
+
+        # Create a location for the inner error (different from component's location)
+        inner_location = Location(filepath="/tmp/inner.yaml", line=99, column=1, id="inner_id")
+        component_location = Location(filepath="/tmp/outer.yaml", line=5, column=2, id="outer_id")
+
+        # Create the exception to be raised
+        inner_error = InstantiationError(
+            "Inner error message",
+            source_location=inner_location,
+            suggestion="Inner suggestion",
+        )
+
+        # Mock the instantiate function to raise InstantiationError with source_location
+        def mock_instantiate(*args, **kwargs):
+            raise inner_error
+
+        config = {"_target_": "some.module.Class"}
+        component = Component(config=config, id="test", source_location=component_location)
+
+        with patch("sparkwheel.items.instantiate", mock_instantiate):
+            with pytest.raises(InstantiationError) as exc_info:
+                component.instantiate()
+
+        error = exc_info.value
+        # The exception should be re-raised unchanged (not wrapped with component's location)
+        assert error is inner_error
+        assert error._original_message == "Inner error message"
+        assert error.suggestion == "Inner suggestion"
+        assert error.source_location == inner_location
+        assert error.source_location.filepath == "/tmp/inner.yaml"
+        assert error.source_location.line == 99
 
 
 class TestItemsEdgeCases:

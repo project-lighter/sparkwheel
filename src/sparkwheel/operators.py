@@ -1,12 +1,97 @@
 """Configuration merging with composition-by-default and operators (=, ~)."""
 
 from copy import deepcopy
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
-from .utils.constants import REMOVE_KEY, REPLACE_KEY
-from .utils.exceptions import ConfigMergeError
+if TYPE_CHECKING:
+    from .locations import LocationRegistry
+    from .utils.exceptions import Location
 
-__all__ = ["apply_operators", "validate_operators", "_validate_delete_operator"]
+from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
+from .utils.exceptions import ConfigMergeError, build_missing_key_error
+
+__all__ = ["apply_operators", "validate_operators", "_validate_delete_operator", "MergeContext"]
+
+
+@dataclass
+class MergeContext:
+    """Context for configuration merging operations.
+
+    This class consolidates location tracking and path information needed
+    during recursive config merging. Using a context object reduces parameter
+    threading and makes it easier to extend with additional context in the future.
+
+    Attributes:
+        locations: Optional registry tracking file locations of config keys
+        current_path: Current path in config tree using :: separator (e.g., "model::optimizer::lr")
+
+    Examples:
+        >>> ctx = MergeContext()
+        >>> child_ctx = ctx.child_path("model")
+        >>> child_ctx.current_path
+        'model'
+        >>> grandchild_ctx = child_ctx.child_path("lr")
+        >>> grandchild_ctx.current_path
+        'model::lr'
+    """
+
+    locations: "LocationRegistry | None" = None
+    current_path: str = ""
+
+    def child_path(self, key: str) -> "MergeContext":
+        """Create a child context for a nested config key.
+
+        Args:
+            key: Key to append to current path
+
+        Returns:
+            New MergeContext with updated path, sharing the same source location registry
+
+        Examples:
+            >>> ctx = MergeContext(current_path="model")
+            >>> child = ctx.child_path("optimizer")
+            >>> child.current_path
+            'model::optimizer'
+        """
+        new_path = f"{self.current_path}{ID_SEP_KEY}{key}" if self.current_path else key
+        return MergeContext(locations=self.locations, current_path=new_path)
+
+    def get_source_location(self, key: str) -> "Location | None":
+        """Get source location for a key in the current context.
+
+        Tries both the exact key and the key without operator prefix to handle
+        operator keys correctly (e.g., ~key, =key).
+
+        Args:
+            key: Key to look up (may include operators like ~key or =key)
+
+        Returns:
+            Location if found, None otherwise
+
+        Examples:
+            >>> ctx = MergeContext(locations=registry, current_path="model")
+            >>> ctx.get_source_location("~lr")  # Looks up both "model::~lr" and "model::lr"
+            >>> ctx.get_source_location("=lr")  # Looks up both "model::=lr" and "model::lr"
+        """
+        if not self.locations:
+            return None
+
+        # Build full path for the key
+        key_path = f"{self.current_path}{ID_SEP_KEY}{key}" if self.current_path else key
+
+        # Try the key as-is first
+        location = self.locations.get(key_path)
+        if location:
+            return location
+
+        # If key starts with an operator (~, =), also try without the operator
+        if key.startswith((REMOVE_KEY, REPLACE_KEY)):
+            actual_key = key[1:]
+            actual_path = f"{self.current_path}{ID_SEP_KEY}{actual_key}" if self.current_path else actual_key
+            return self.locations.get(actual_path)
+
+        return None
 
 
 def _validate_delete_operator(key: str, value: Any) -> None:
@@ -58,7 +143,7 @@ def validate_operators(config: dict[str, Any], parent_key: str = "") -> None:
     """Validate operator usage in config tree.
 
     With composition-by-default, validation is simpler:
-    1. Remove operators always work (idempotent delete)
+    1. Remove operators error if key doesn't exist
     2. Replace operators work on any type
     3. No parent context requirements
 
@@ -98,13 +183,17 @@ def validate_operators(config: dict[str, Any], parent_key: str = "") -> None:
             validate_operators(value, full_key)
 
 
-def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+def apply_operators(
+    base: dict[str, Any],
+    override: dict[str, Any],
+    context: MergeContext | None = None,
+) -> dict[str, Any]:
     """Apply configuration changes with composition-by-default semantics.
 
     Default behavior: Compose (merge dicts, extend lists)
     Operators:
         =key: value   - Replace operator: completely replace value (override default)
-        ~key: null    - Remove operator: delete key or list items (idempotent)
+        ~key: null    - Remove operator: delete key or list items (errors if missing)
         key: value    - Compose (default): merge dict or extend list
 
     Composition-by-Default Philosophy:
@@ -112,11 +201,12 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
         - Lists extend by default (append new items)
         - Only scalars and type mismatches replace
         - Use = to explicitly replace entire dicts or lists
-        - Use ~ to delete keys (idempotent - no error if missing)
+        - Use ~ to delete keys (errors if key doesn't exist)
 
     Args:
         base: Base configuration dict
         override: Override configuration dict with optional =/~ operators
+        context: Optional merge context with metadata and path tracking
 
     Returns:
         Merged configuration dict
@@ -143,12 +233,21 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
         >>> apply_operators(base, override)
         {"model": {"lr": 0.01}}
 
-        >>> # Remove operator: delete key (idempotent)
+        >>> # Remove operator: delete key
         >>> base = {"a": 1, "b": 2, "c": 3}
         >>> override = {"b": 5, "~c": None}
         >>> apply_operators(base, override)
         {"a": 1, "b": 5}
+
+        >>> # With context for better error messages
+        >>> from .locations import LocationRegistry
+        >>> ctx = MergeContext(locations=LocationRegistry())
+        >>> apply_operators(base, override, context=ctx)
     """
+    # Create context if not provided
+    if context is None:
+        context = MergeContext()
+
     if not isinstance(base, dict) or not isinstance(override, dict):
         return deepcopy(override)  # type: ignore[unreachable]
 
@@ -170,9 +269,11 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
             actual_key = key[1:]
             _validate_delete_operator(actual_key, value)
 
-            # Idempotent: no error if key doesn't exist
+            # Error if key doesn't exist
             if actual_key not in result:
-                continue  # Silently skip
+                # Get source location using context helper
+                source_location = context.get_source_location(key)
+                raise build_missing_key_error(actual_key, list(result.keys()), source_location)
 
             # Handle remove entire key (null or empty value)
             if value is None or value == "":
@@ -223,11 +324,10 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
                 elif isinstance(base_val, dict):
                     for del_key in value:
                         if del_key not in base_val:
-                            raise ConfigMergeError(
-                                f"Cannot remove non-existent key '{del_key}' from '{actual_key}'",
-                                suggestion=f"The key '{del_key}' does not exist in '{actual_key}'.\n"
-                                f"Available keys: {list(base_val.keys())}",
-                            )
+                            # Use helper to build error with suggestions
+                            available_keys = list(base_val.keys())
+                            source_location = context.get_source_location(key)
+                            raise build_missing_key_error(del_key, available_keys, source_location, parent_key=actual_key)
                         del base_val[del_key]
 
                 else:
@@ -246,7 +346,9 @@ def apply_operators(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
 
             # For dicts: MERGE (composition)
             if isinstance(base_val, dict) and isinstance(value, dict):
-                result[key] = apply_operators(base_val, value)
+                # Create child context for recursion
+                child_context = context.child_path(key)
+                result[key] = apply_operators(base_val, value, context=child_context)
                 continue
 
             # For lists: EXTEND (composition)

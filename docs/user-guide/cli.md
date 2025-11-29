@@ -111,7 +111,7 @@ Three operators for fine-grained control:
 |----------|--------|----------|---------|
 | **Compose** (default) | `key=value` | Merges dicts, extends lists | `model::lr=0.001` |
 | **Replace** | `=key=value` | Completely replaces value | `=model={'_target_': 'ResNet'}` |
-| **Delete** | `~key` | Removes key (idempotent) | `~debug` |
+| **Delete** | `~key` | Removes key (errors if missing) | `~debug` |
 
 !!! info "Type Inference"
     Values are automatically typed using `ast.literal_eval()`:

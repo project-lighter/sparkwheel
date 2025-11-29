@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
-    "SourceLocation",
+    "Location",
     "BaseError",
     "TargetNotFoundError",
     "CircularReferenceError",
@@ -14,17 +14,30 @@ __all__ = [
     "ConfigMergeError",
     "EvaluationError",
     "FrozenConfigError",
+    "build_missing_key_error",
 ]
 
 
 @dataclass
-class SourceLocation:
-    """Tracks the source location of a config item."""
+class Location:
+    """Tracks the location of a config item in source files.
+
+    Attributes:
+        filepath: Path to the source file
+        line: Line number in the file (must be >= 1)
+        column: Column number (0 if not available)
+        id: Config path ID (e.g., "model::lr")
+    """
 
     filepath: str
     line: int
     column: int = 0
     id: str = ""
+
+    def __post_init__(self) -> None:
+        """Validate line number after initialization."""
+        if self.line < 1:
+            raise ValueError(f"line must be >= 1, got {self.line}")
 
     def __str__(self) -> str:
         return f"{self.filepath}:{self.line}"
@@ -42,7 +55,7 @@ class BaseError(Exception):
     def __init__(
         self,
         message: str,
-        source_location: SourceLocation | None = None,
+        source_location: Location | None = None,
         suggestion: str | None = None,
     ) -> None:
         self.source_location = source_location
@@ -62,9 +75,9 @@ class BaseError(Exception):
         if self.source_location:
             location = f"{self.source_location.filepath}:{self.source_location.line}"
             if self.source_location.id:
-                parts.append(f"[{location} @ {self.source_location.id}] {self._original_message}")
+                parts.append(f"{self._original_message}\n\n[{location} → {self.source_location.id}]:")
             else:
-                parts.append(f"[{location}] {self._original_message}")
+                parts.append(f"{self._original_message}\n\n[{location}]:")
         else:
             parts.append(self._original_message)
 
@@ -72,10 +85,10 @@ class BaseError(Exception):
         if self.source_location:
             snippet = self._get_config_snippet()
             if snippet:
-                parts.append(f"\n\n{snippet}")
+                parts.append(f"\n{snippet}\n")
 
         if self.suggestion:
-            parts.append(f"\n\n  💡 {self.suggestion}")
+            parts.append(f"\n  💡 {self.suggestion}\n")
 
         return "".join(parts)
 
@@ -136,7 +149,7 @@ class ConfigKeyError(BaseError):
     def __init__(
         self,
         message: str,
-        source_location: SourceLocation | None = None,
+        source_location: Location | None = None,
         suggestion: str | None = None,
         missing_key: str | None = None,
         available_keys: list[str] | None = None,
@@ -217,3 +230,59 @@ class FrozenConfigError(BaseError):
         if field_path:
             full_message = f"Cannot modify frozen config at '{field_path}': {message}"
         super().__init__(full_message)
+
+
+def build_missing_key_error(
+    key: str,
+    available_keys: list[str],
+    source_location: Location | None = None,
+    *,
+    max_suggestions: int = 3,
+    max_available_keys: int = 10,
+    parent_key: str | None = None,
+) -> ConfigMergeError:
+    """Build a ConfigMergeError for a missing key with helpful suggestions.
+
+    Args:
+        key: The key that wasn't found
+        available_keys: List of available keys to compare against
+        source_location: Optional location where error occurred
+        max_suggestions: Maximum number of suggestions to show (default: 3)
+        max_available_keys: Maximum number of available keys to show (default: 10)
+        parent_key: Optional parent key for nested deletions (e.g., "model" when deleting "model.lr")
+
+    Returns:
+        ConfigMergeError with helpful suggestions
+
+    Examples:
+        >>> error = build_missing_key_error("paramters", ["parameters", "param_groups"])
+        >>> print(error._original_message)
+        Cannot delete key 'paramters': key does not exist
+
+        >>> error = build_missing_key_error("lr", ["learning_rate"], parent_key="model")
+        >>> print(error._original_message)
+        Cannot remove non-existent key 'lr' from 'model'
+    """
+    from ..errors import get_suggestions
+    from .constants import SIMILARITY_THRESHOLD
+
+    # Build appropriate message based on context
+    if parent_key:
+        message = f"Cannot remove non-existent key '{key}' from '{parent_key}'"
+    else:
+        message = f"Cannot delete key '{key}': key does not exist"
+
+    suggestion_parts = []
+    if available_keys:
+        suggestions = get_suggestions(
+            key, available_keys, max_suggestions=max_suggestions, similarity_threshold=SIMILARITY_THRESHOLD
+        )
+        if suggestions:
+            suggestion_keys = [s[0] for s in suggestions]
+            suggestion_parts.append(f"Did you mean: {', '.join(repr(s) for s in suggestion_keys)}?")
+
+        if len(available_keys) <= max_available_keys:
+            suggestion_parts.append(f"Available keys: {', '.join(repr(k) for k in available_keys)}")
+
+    suggestion = "\n".join(suggestion_parts) if suggestion_parts else None
+    return ConfigMergeError(message, source_location=source_location, suggestion=suggestion)
