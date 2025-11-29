@@ -676,9 +676,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#two-stage-processing-model" class="md-nav__link">
+  <a href="#two-phase-processing-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Two-Stage Processing Model
+      Two-Phase Processing Model
     </span>
   </a>
   
@@ -1218,8 +1218,6 @@
       
         
       
-        
-      
     
     
     
@@ -1278,29 +1276,6 @@
   
   <span class="md-ellipsis">
     context
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/errors/formatters/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    formatters
     
   </span>
   
@@ -1395,12 +1370,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/metadata/" class="md-nav__link">
+      <a href="../../reference/locations/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    metadata
+    locations
     
   </span>
   
@@ -1816,9 +1791,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#two-stage-processing-model" class="md-nav__link">
+  <a href="#two-phase-processing-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Two-Stage Processing Model
+      Two-Phase Processing Model
     </span>
   </a>
   
@@ -2055,7 +2030,7 @@
 <tr>
 <td><strong>When processed</strong></td>
 <td>Lazy (<code>resolve()</code>)</td>
-<td>Eager (<code>update()</code>)</td>
+<td>External: Eager / Local: Lazy</td>
 <td>Lazy (<code>resolve()</code>)</td>
 </tr>
 <tr>
@@ -2096,58 +2071,91 @@
 </tr>
 </tbody>
 </table>
-<h2 id="two-stage-processing-model">Two-Stage Processing Model</h2>
-<p>Sparkwheel processes references at different times to enable safe config composition:</p>
+<h2 id="two-phase-processing-model">Two-Phase Processing Model</h2>
+<p>Sparkwheel processes raw references (<code>%</code>) in two phases to support CLI overrides:</p>
 <div class="admonition abstract">
 <p class="admonition-title">When References Are Processed</p>
-<p><strong>Stage 1: Eager Processing (during <code>update()</code>)</strong></p>
+<p><strong>Phase 1: Eager Processing (during <code>update()</code>)</strong></p>
 <ul>
-<li><strong>Raw References (<code>%</code>)</strong> are expanded immediately when configs are merged</li>
-<li>Enables safe config composition and pruning workflows</li>
-<li>External file references resolved at load time</li>
+<li><strong>External file raw refs (<code>%file.yaml::key</code>)</strong> are expanded immediately</li>
+<li>External files are frozen—their content won't change based on CLI overrides</li>
+<li>Enables copy-then-delete workflows with external files</li>
 </ul>
-<p><strong>Stage 2: Lazy Processing (during <code>resolve()</code>)</strong></p>
+<p><strong>Phase 2: Lazy Processing (during <code>resolve()</code>)</strong></p>
 <ul>
+<li><strong>Local raw refs (<code>%key</code>)</strong> are expanded after all composition is complete</li>
 <li><strong>Resolved References (<code>@</code>)</strong> are processed on-demand</li>
 <li><strong>Expressions (<code>$</code>)</strong> are evaluated when needed</li>
 <li><strong>Components (<code>_target_</code>)</strong> are instantiated only when requested</li>
-<li>Supports complex dependency graphs and deferred instantiation</li>
+<li>CLI overrides can affect local <code>%</code> refs</li>
 </ul>
 </div>
-<p><strong>Why two stages?</strong></p>
-<p>This separation enables powerful workflows like config pruning:</p>
+<p><strong>Why two phases?</strong></p>
+<p>This design ensures CLI overrides work intuitively with local raw references:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># base.yaml</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">system</span><span class="p">:</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">lr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.001</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">batch_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nt">experiment</span><span class="p">:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">model</span><span class="p">:</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="nt">optimizer</span><span class="p">:</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">lr</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%system::lr&quot;</span><span class="w">  </span><span class="c1"># Copies raw value 0.001 eagerly</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nt">~system</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">  </span><span class="c1"># Delete system section after copying</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">vars</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">features_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span><span class="w">  </span><span class="c1"># Default, will be overridden</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1"># model.yaml</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nt">dataset</span><span class="p">:</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%vars::features_path&quot;</span><span class="w">  </span><span class="c1"># Local ref - sees CLI override</span>
 </span></code></pre></div>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">()</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;base.yaml&quot;</span><span class="p">)</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="c1"># % references already expanded during update()</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># ~system deletion applied after expansion</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># Result: experiment::model::optimizer::lr = 0.001 (system deleted safely)</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;model.yaml&quot;</span><span class="p">)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;vars::features_path=/data/features.npz&quot;</span><span class="p">)</span>  <span class="c1"># CLI override</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Local % ref sees the override!</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">path</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="s2">&quot;dataset::path&quot;</span><span class="p">)</span>  <span class="c1"># &quot;/data/features.npz&quot;</span>
 </span></code></pre></div>
-<p>With <code>@</code> references, this would fail because they resolve lazily after deletion.</p>
+<div class="admonition tip">
+<p class="admonition-title">External vs Local Raw References</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Example</th>
+<th>When Expanded</th>
+<th>Use Case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>External</strong></td>
+<td><code>%file.yaml::key</code></td>
+<td>Eager (update)</td>
+<td>Import from frozen files</td>
+</tr>
+<tr>
+<td><strong>Local</strong></td>
+<td><code>%vars::key</code></td>
+<td>Lazy (resolve)</td>
+<td>Reference config values</td>
+</tr>
+</tbody>
+</table>
+<p>External files are "frozen"—their content is fixed at load time.
+Local config values may be overridden via CLI, so local refs see the final state.</p>
+</div>
 <h2 id="resolution-flow">Resolution Flow</h2>
 <div class="admonition abstract">
 <p class="admonition-title">How References Are Resolved</p>
-<p><strong>Step 1: Parse Config</strong> → Detect references in YAML</p>
-<p><strong>Step 2: Determine Type</strong></p>
+<p><strong>Step 1: Load Configs</strong> → During <code>update()</code></p>
 <ul>
-<li><strong><code>%key</code></strong> → Expanded eagerly during <code>update()</code> ✅</li>
-<li><strong><code>@key</code></strong> → Proceed to dependency resolution (lazy)</li>
+<li>Parse YAML files</li>
+<li>Expand external <code>%file.yaml::key</code> refs immediately</li>
+<li>Keep local <code>%key</code> refs as strings</li>
 </ul>
-<p><strong>Step 3: Resolve Dependencies</strong> (for <code>@</code> references during <code>resolve()</code>)</p>
+<p><strong>Step 2: Apply Overrides</strong> → During <code>update()</code> calls</p>
 <ul>
+<li>CLI overrides modify local config values</li>
+<li>Local <code>%</code> refs still see the string form</li>
+</ul>
+<p><strong>Step 3: Resolve</strong> → During <code>resolve()</code></p>
+<ul>
+<li>Expand local <code>%key</code> refs (now sees final values)</li>
+<li>Resolve <code>@</code> dependencies in order</li>
 <li>Check for circular references → ❌ <strong>Error if found</strong></li>
-<li>Resolve all dependencies first</li>
 <li>Evaluate expressions and instantiate objects</li>
 <li>Return final computed value ✅</li>
 </ul>
@@ -2259,6 +2267,7 @@
 </span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="nt">model_template</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%base.yaml::model&quot;</span>
 </span></code></pre></div>
 <h3 id="local-raw-references">Local Raw References</h3>
+<p>Local raw references are expanded lazily during <code>resolve()</code>, which means CLI overrides can affect them:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># config.yaml</span>
 </span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="nt">defaults</span><span class="p">:</span>
 </span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
@@ -2271,6 +2280,16 @@
 </span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># Copy entire section</span>
 </span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="nt">backup_defaults</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%defaults&quot;</span><span class="w">  </span><span class="c1"># Gets the whole defaults dict</span>
 </span></code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">CLI Overrides Work with Local Raw Refs</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">()</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;defaults::timeout=60&quot;</span><span class="p">)</span>  <span class="c1"># CLI override</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># Local % ref sees the override!</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">config</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="s2">&quot;api_config::timeout&quot;</span><span class="p">)</span>  <span class="c1"># 60</span>
+</span></code></pre></div>
+</div>
 <h3 id="key-distinction">Key Distinction</h3>
 <div class="admonition abstract">
 <p class="admonition-title">@ vs % - When to Use Each</p>
@@ -2300,16 +2319,16 @@
 </table>
 </div>
 <p><strong>Example showing the difference:</strong></p>
-<div class="language-yaml highlight"><span class="filename">config.yaml</span><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">model</span><span class="p">:</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch.nn.Linear</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">in_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">784</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span><span class="nt">out_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c1"># Resolved reference - gets the actual instantiated torch.nn.Linear object</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="nt">trained_model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;@model&quot;</span><span class="w">  </span><span class="c1"># (1)!</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="hll">
-</span></span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="c1"># Raw reference - gets the raw dict with _target_, in_features, out_features</span>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="nt">model_config_copy</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%model&quot;</span><span class="w">  </span><span class="c1"># (2)!</span>
+<div class="language-yaml highlight"><span class="filename">config.yaml</span><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">model</span><span class="p">:</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch.nn.Linear</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">in_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">784</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">out_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="c1"># Resolved reference - gets the actual instantiated torch.nn.Linear object</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="nt">trained_model</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;@model&quot;</span><span class="w">  </span><span class="c1"># (1)!</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="hll">
+</span></span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="c1"># Raw reference - gets the raw dict with _target_, in_features, out_features</span>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="nt">model_config_copy</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;%model&quot;</span><span class="w">  </span><span class="c1"># (2)!</span>
 </span></code></pre></div>
 <ol>
 <li>✅ Returns an actual <code>torch.nn.Linear</code> instance</li>
@@ -2318,34 +2337,34 @@
 <p>See <a href="../advanced/">Advanced Features</a> for more on raw references.</p>
 <h2 id="common-use-cases">Common Use Cases</h2>
 <h3 id="shared-hyperparameters">Shared Hyperparameters</h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Single source of truth</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nt">model_config</span><span class="p">:</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">hidden_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">512</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="nt">encoder</span><span class="p">:</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;@model_config::hidden_size&quot;</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="nt">decoder</span><span class="p">:</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">  </span><span class="nt">size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;@model_config::hidden_size&quot;</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Single source of truth</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nt">model_config</span><span class="p">:</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">hidden_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">512</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="nt">encoder</span><span class="p">:</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span><span class="nt">size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;@model_config::hidden_size&quot;</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="nt">decoder</span><span class="p">:</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">  </span><span class="nt">size</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;@model_config::hidden_size&quot;</span>
 </span></code></pre></div>
 <h3 id="computed-values">Computed Values</h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">dataset</span><span class="p">:</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">batch_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="nt">training</span><span class="p">:</span>
-</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span><span class="nt">steps</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$@dataset::samples</span><span class="nv"> </span><span class="s">//</span><span class="nv"> </span><span class="s">@dataset::batch_size&quot;</span><span class="w">  </span><span class="c1"># 312</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">dataset</span><span class="p">:</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">samples</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">batch_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="nt">training</span><span class="p">:</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">  </span><span class="nt">steps</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$@dataset::samples</span><span class="nv"> </span><span class="s">//</span><span class="nv"> </span><span class="s">@dataset::batch_size&quot;</span><span class="w">  </span><span class="c1"># 312</span>
 </span></code></pre></div>
 <h3 id="object-parameters">Object Parameters</h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">model</span><span class="p">:</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch.nn.Linear</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">in_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">784</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span><span class="nt">out_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="nt">optimizer</span><span class="p">:</span>
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch.optim.Adam</span>
-</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$@model.parameters()&quot;</span><span class="w">  </span><span class="c1"># Call model&#39;s method</span>
-</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="w">  </span><span class="nt">lr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.001</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="nt">model</span><span class="p">:</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch.nn.Linear</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">in_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">784</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">  </span><span class="nt">out_features</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="nt">optimizer</span><span class="p">:</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch.optim.Adam</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">  </span><span class="nt">params</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$@model.parameters()&quot;</span><span class="w">  </span><span class="c1"># Call model&#39;s method</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="w">  </span><span class="nt">lr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.001</span>
 </span></code></pre></div>
 <h2 id="next-steps">Next Steps</h2>
 <ul>

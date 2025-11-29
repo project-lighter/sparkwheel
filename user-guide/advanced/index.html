@@ -1152,8 +1152,6 @@
       
         
       
-        
-      
     
     
     
@@ -1212,29 +1210,6 @@
   
   <span class="md-ellipsis">
     context
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/errors/formatters/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    formatters
     
   </span>
   
@@ -1329,12 +1304,12 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/metadata/" class="md-nav__link">
+      <a href="../../reference/locations/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    metadata
+    locations
     
   </span>
   
@@ -2076,7 +2051,6 @@
 </span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;~plugins&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]})</span>  <span class="c1"># Remove list items</span>
 </span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s2">&quot;~dataloaders&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;train&quot;</span><span class="p">,</span> <span class="s2">&quot;test&quot;</span><span class="p">]})</span>  <span class="c1"># Remove dict keys</span>
 </span></code></pre></div>
-<p><strong>Note:</strong> The <code>~</code> directive is idempotent - it doesn't error if the key doesn't exist, enabling reusable configs.</p>
 <h3 id="programmatic-updates">Programmatic Updates</h3>
 <p>Apply operators programmatically:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">()</span>
