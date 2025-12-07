@@ -116,7 +116,7 @@ training:
 Sparkwheel recognizes these special keys in configuration:
 
 - `_target_`: Class or function path to instantiate (e.g., `"torch.nn.Linear"`)
-- `_disabled_`: Boolean or expression - skip instantiation if evaluates to `True`
+- `_disabled_`: Skip instantiation if `true` (removed from parent). See [Instantiation](instantiation.md#_disabled_-skip-instantiation) for details.
 - `_requires_`: List of dependencies to evaluate/instantiate first
 - `_mode_`: Operating mode for instantiation (see below)
 

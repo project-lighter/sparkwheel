@@ -170,11 +170,60 @@ debug_component:
   # Runs in pdb debugger
 ```
 
+### `_disabled_` - Skip Instantiation
+
+Skip instantiation of a component without removing it from config:
+
+```yaml
+callbacks:
+  - _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: val_loss
+    patience: 3
+  - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    _disabled_: true  # This callback is removed from the list
+    save_top_k: 3
+```
+
+**Behavior:**
+
+- When `_disabled_: true`, the component is skipped entirely
+- **Inline in lists/dicts**: Disabled components are **removed** from the parent structure
+- **Direct resolution**: `config.resolve("disabled_component")` returns `None`
+- **References**: `@disabled_component` resolves to `None`
+- Default is `false` (component is enabled)
+- Accepts boolean values (`true`/`false`) or strings (`"true"`/`"false"`, case-insensitive)
+- The config is preserved—you can re-enable by setting `_disabled_: false`
+
+**Use cases:**
+
+```yaml
+# Temporarily disable a feature for debugging
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _disabled_: true  # Disable while debugging optimizer issues
+  optimizer: "@optimizer"
+  T_max: 100
+
+# Environment-specific components
+profiler:
+  _target_: pytorch_lightning.profilers.PyTorchProfiler
+  _disabled_: "$not os.environ.get('ENABLE_PROFILER')"  # Expression support
+
+# A/B testing configurations
+augmentation:
+  _target_: torchvision.transforms.RandomErasing
+  _disabled_: false  # Toggle between experiments
+  p: 0.5
+```
+
+!!! tip "Disabled vs Deleted"
+    Use `_disabled_` when you want to keep the config for future use. Use the delete operator (`~key: null`) when you want to permanently remove a key.
+
 ### Other Special Keys
 
 - `_target_`: Class or function path to instantiate (required)
 - `_args_`: List of positional arguments to pass
-- `_disabled_`: Skip instantiation if `True`
+- `_disabled_`: Skip instantiation if `true` (removed from parent)
 - `_requires_`: Dependencies to resolve first
 - `_mode_`: Instantiation mode (`"default"`, `"callable"`, or `"debug"`)
 

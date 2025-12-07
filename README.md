@@ -62,4 +62,4 @@ model = config.resolve("model")  # Actual torch.nn.Linear(784, 10)
 
 ## About
 
-Sparkwheel is a hard fork of [MONAI Bundle](https://github.com/Project-MONAI/MONAI/tree/dev/monai/bundle)'s config system, with the goal of making a more general-purpose configuration library for Python projects. It combines the best of MONAI Bundle and [Hydra](http://hydra.cc/)/[OmegaComf](https://omegaconf.readthedocs.io/), while introducing new features and improvements not found in either.
+Sparkwheel is a hard fork of [MONAI Bundle](https://github.com/Project-MONAI/MONAI/tree/dev/monai/bundle)'s config system, with the goal of making a more general-purpose configuration library for Python projects. It combines the best of MONAI Bundle and [Hydra](http://hydra.cc/)/[OmegaConf](https://omegaconf.readthedocs.io/), while introducing new features and improvements not found in either.
