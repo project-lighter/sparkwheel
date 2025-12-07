@@ -792,6 +792,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_disabled_-skip-instantiation" class="md-nav__link">
+    <span class="md-ellipsis">
+      _disabled_ - Skip Instantiation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#other-special-keys" class="md-nav__link">
     <span class="md-ellipsis">
       Other Special Keys
@@ -1750,6 +1759,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_disabled_-skip-instantiation" class="md-nav__link">
+    <span class="md-ellipsis">
+      _disabled_ - Skip Instantiation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#other-special-keys" class="md-nav__link">
     <span class="md-ellipsis">
       Other Special Keys
@@ -1924,11 +1942,54 @@
 </span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="w">  </span><span class="nt">_mode_</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;debug&quot;</span>
 </span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a><span class="w">  </span><span class="c1"># Runs in pdb debugger</span>
 </span></code></pre></div>
+<h3 id="_disabled_-skip-instantiation"><code>_disabled_</code> - Skip Instantiation</h3>
+<p>Skip instantiation of a component without removing it from config:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">callbacks</span><span class="p">:</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pytorch_lightning.callbacks.EarlyStopping</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">monitor</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">val_loss</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">patience</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pytorch_lightning.callbacks.ModelCheckpoint</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">_disabled_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># This callback is removed from the list</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">    </span><span class="nt">save_top_k</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+</span></code></pre></div>
+<p><strong>Behavior:</strong></p>
+<ul>
+<li>When <code>_disabled_: true</code>, the component is skipped entirely</li>
+<li><strong>Inline in lists/dicts</strong>: Disabled components are <strong>removed</strong> from the parent structure</li>
+<li><strong>Direct resolution</strong>: <code>config.resolve("disabled_component")</code> returns <code>None</code></li>
+<li><strong>References</strong>: <code>@disabled_component</code> resolves to <code>None</code></li>
+<li>Default is <code>false</code> (component is enabled)</li>
+<li>Accepts boolean values (<code>true</code>/<code>false</code>) or strings (<code>"true"</code>/<code>"false"</code>, case-insensitive)</li>
+<li>The config is preserved—you can re-enable by setting <code>_disabled_: false</code></li>
+</ul>
+<p><strong>Use cases:</strong></p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Temporarily disable a feature for debugging</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nt">scheduler</span><span class="p">:</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch.optim.lr_scheduler.CosineAnnealingLR</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">_disabled_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># Disable while debugging optimizer issues</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">  </span><span class="nt">optimizer</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;@optimizer&quot;</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">  </span><span class="nt">T_max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="c1"># Environment-specific components</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="nt">profiler</span><span class="p">:</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pytorch_lightning.profilers.PyTorchProfiler</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="w">  </span><span class="nt">_disabled_</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$not</span><span class="nv"> </span><span class="s">os.environ.get(&#39;ENABLE_PROFILER&#39;)&quot;</span><span class="w">  </span><span class="c1"># Expression support</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="c1"># A/B testing configurations</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="nt">augmentation</span><span class="p">:</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="w">  </span><span class="nt">_target_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torchvision.transforms.RandomErasing</span>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="w">  </span><span class="nt">_disabled_</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">  </span><span class="c1"># Toggle between experiments</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="w">  </span><span class="nt">p</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span>
+</span></code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Disabled vs Deleted</p>
+<p>Use <code>_disabled_</code> when you want to keep the config for future use. Use the delete operator (<code>~key: null</code>) when you want to permanently remove a key.</p>
+</div>
 <h3 id="other-special-keys">Other Special Keys</h3>
 <ul>
 <li><code>_target_</code>: Class or function path to instantiate (required)</li>
 <li><code>_args_</code>: List of positional arguments to pass</li>
-<li><code>_disabled_</code>: Skip instantiation if <code>True</code></li>
+<li><code>_disabled_</code>: Skip instantiation if <code>true</code> (removed from parent)</li>
 <li><code>_requires_</code>: Dependencies to resolve first</li>
 <li><code>_mode_</code>: Instantiation mode (<code>"default"</code>, <code>"callable"</code>, or <code>"debug"</code>)</li>
 </ul>
