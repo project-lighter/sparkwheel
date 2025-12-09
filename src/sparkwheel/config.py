@@ -821,7 +821,7 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
         - In 'key=value' → assignment operator (CLI syntax)
         - In '=key=value' → replace operator prefix (config operator)
     """
-    import ast
+    import yaml
 
     overrides: dict[str, Any] = {}
 
@@ -839,8 +839,8 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
             key, value = rest.split("=", 1)
             key = "=" + key  # Add back the = prefix to the key
             try:
-                value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
+                value = yaml.safe_load(value)
+            except yaml.YAMLError:
                 pass  # Keep as string
             overrides[key] = value
             continue
@@ -849,8 +849,8 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
         if "=" in arg:
             key, value = arg.split("=", 1)
             try:
-                value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
+                value = yaml.safe_load(value)
+            except yaml.YAMLError:
                 pass  # Keep as string
             overrides[key] = value
             continue

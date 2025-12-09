@@ -1276,26 +1276,106 @@ class TestParseOverrides:
         assert result == {"~old_param": None, "~model::deprecated": None}
 
     def test_parse_type_inference(self):
-        """Test automatic type inference."""
+        """Test automatic type inference using YAML parsing."""
         from sparkwheel import parse_overrides
 
         args = [
+            # Numbers
             "lr=0.001",
             "epochs=100",
-            "debug=True",
+            "neg=-5",
+            # Booleans (YAML style)
+            "debug=true",
+            "verbose=false",
+            "enabled=yes",
+            "disabled=no",
+            "on_flag=on",
+            "off_flag=off",
+            # Strings
             "name=my_model",
-            "devices=[0,1,2]",
-            "config={'lr':0.001}",
+            "spaced=hello world",
+            # Collections
+            "devices=[0, 1, 2]",
+            "empty_list=[]",
+            "config={lr: 0.001}",
+            "empty_dict={}",
+            # Null
+            "nothing=null",
+            "also_null=~",
+            # Note: Python's None stays as string in YAML
+            "py_none=None",
         ]
         result = parse_overrides(args)
         assert result == {
             "lr": 0.001,
             "epochs": 100,
+            "neg": -5,
             "debug": True,
+            "verbose": False,
+            "enabled": True,
+            "disabled": False,
+            "on_flag": True,
+            "off_flag": False,
             "name": "my_model",
+            "spaced": "hello world",
             "devices": [0, 1, 2],
+            "empty_list": [],
             "config": {"lr": 0.001},
+            "empty_dict": {},
+            "nothing": None,
+            "also_null": None,
+            "py_none": "None",  # YAML keeps Python's None as string
         }
+
+    def test_parse_yaml_style_booleans(self):
+        """Test YAML-style boolean parsing (true/false/yes/no)."""
+        from sparkwheel import parse_overrides
+
+        args = [
+            "a=true",
+            "b=false",
+            "c=yes",
+            "d=no",
+            "e=True",
+            "f=False",
+        ]
+        result = parse_overrides(args)
+        assert result == {
+            "a": True,
+            "b": False,
+            "c": True,
+            "d": False,
+            "e": True,
+            "f": False,
+        }
+
+    def test_parse_yaml_null(self):
+        """Test YAML-style null parsing."""
+        from sparkwheel import parse_overrides
+
+        args = ["value=null", "tilde=~"]
+        result = parse_overrides(args)
+        assert result["value"] is None
+        # ~ is also YAML null
+        assert result["tilde"] is None
+
+    def test_parse_yaml_style_in_replace_operator(self):
+        """Test YAML-style values work with replace operator."""
+        from sparkwheel import parse_overrides
+
+        args = ["=debug=true", "=value=null"]
+        result = parse_overrides(args)
+        assert result == {"=debug": True, "=value": None}
+
+    def test_parse_invalid_yaml_keeps_string(self):
+        """Test that invalid YAML values are kept as strings."""
+        from sparkwheel import parse_overrides
+
+        # Unclosed quotes cause YAMLError, should fall back to string
+        args = ['msg="unclosed', "=other='unclosed"]
+        result = parse_overrides(args)
+        assert result["msg"] == '"unclosed'
+        assert result["=other"] == "'unclosed"
 
     def test_parse_nested_paths(self):
         """Test parsing deeply nested paths."""
