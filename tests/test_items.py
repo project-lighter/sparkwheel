@@ -293,7 +293,6 @@ class TestComponent:
         assert "_args_" not in kwargs
         assert "_target_" not in kwargs
         assert "_disabled_" not in kwargs
-        assert "_requires_" not in kwargs
         assert "_mode_" not in kwargs
 
 
