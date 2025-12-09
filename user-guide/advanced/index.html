@@ -925,11 +925,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#globals-for-expressions" class="md-nav__link">
+  <a href="#imports-for-expressions" class="md-nav__link">
     <span class="md-ellipsis">
-      Globals for Expressions
+      Imports for Expressions
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Imports for Expressions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-1-_imports_-key-in-yaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method 1: _imports_ Key in YAML
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-2-imports-parameter-in-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method 2: imports Parameter in Python
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#combining-both-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Combining Both Methods
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1836,11 +1869,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#globals-for-expressions" class="md-nav__link">
+  <a href="#imports-for-expressions" class="md-nav__link">
     <span class="md-ellipsis">
-      Globals for Expressions
+      Imports for Expressions
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Imports for Expressions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-1-_imports_-key-in-yaml" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method 1: _imports_ Key in YAML
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method-2-imports-parameter-in-python" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method 2: imports Parameter in Python
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#combining-both-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Combining Both Methods
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1971,8 +2037,8 @@
 <ul>
 <li><code>_target_</code>: Class or function path to instantiate (e.g., <code>"torch.nn.Linear"</code>)</li>
 <li><code>_disabled_</code>: Skip instantiation if <code>true</code> (removed from parent). See <a href="../instantiation/#_disabled_-skip-instantiation">Instantiation</a> for details.</li>
-<li><code>_requires_</code>: List of dependencies to evaluate/instantiate first</li>
 <li><code>_mode_</code>: Operating mode for instantiation (see below)</li>
+<li><code>_imports_</code>: Declare imports available to all expressions (see <a href="#imports-for-expressions">Imports</a> below)</li>
 </ul>
 <h3 id="_mode_-instantiation-modes"><code>_mode_</code> - Instantiation Modes</h3>
 <p>The <code>_mode_</code> key controls how the target is instantiated:</p>
@@ -2105,26 +2171,49 @@
 </span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>    <span class="c1">#   - model::num_layers</span>
 </span></code></pre></div>
 <p>Color output is auto-detected and respects <code>NO_COLOR</code> environment variable.</p>
-<h2 id="globals-for-expressions">Globals for Expressions</h2>
-<p>Pre-import modules for use in expressions:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkwheel</span><span class="w"> </span><span class="kn">import</span> <span class="n">Config</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="c1"># Pre-import torch for all expressions</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">(</span><span class="nb">globals</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;torch&quot;</span><span class="p">:</span> <span class="s2">&quot;torch&quot;</span><span class="p">,</span> <span class="s2">&quot;np&quot;</span><span class="p">:</span> <span class="s2">&quot;numpy&quot;</span><span class="p">})</span>
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+<h2 id="imports-for-expressions">Imports for Expressions</h2>
+<p>Make modules available to all expressions. There are two ways to do this:</p>
+<h3 id="method-1-_imports_-key-in-yaml">Method 1: <code>_imports_</code> Key in YAML</h3>
+<p>Declare imports directly in your config file:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># config.yaml</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nt">_imports_</span><span class="p">:</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">torch</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">torch</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="nt">np</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">numpy</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">  </span><span class="nt">Path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pathlib.Path</span>
 </span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
-</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># Now expressions can use torch and np without importing</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="c1"># Now use them in expressions</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="nt">device</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$torch.device(&#39;cuda&#39;</span><span class="nv"> </span><span class="s">if</span><span class="nv"> </span><span class="s">torch.cuda.is_available()</span><span class="nv"> </span><span class="s">else</span><span class="nv"> </span><span class="s">&#39;cpu&#39;)&quot;</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$np.array([1,</span><span class="nv"> </span><span class="s">2,</span><span class="nv"> </span><span class="s">3])&quot;</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="nt">save_path</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$Path(&#39;/data/models&#39;)&quot;</span>
 </span></code></pre></div>
-<p>Example config:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">device</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$torch.device(&#39;cuda&#39;</span><span class="nv"> </span><span class="s">if</span><span class="nv"> </span><span class="s">torch.cuda.is_available()</span><span class="nv"> </span><span class="s">else</span><span class="nv"> </span><span class="s">&#39;cpu&#39;)&quot;</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;$np.array([1,</span><span class="nv"> </span><span class="s">2,</span><span class="nv"> </span><span class="s">3])&quot;</span>
+<p>The <code>_imports_</code> key is removed from the config after processing—it won't appear in your resolved config.</p>
+<h3 id="method-2-imports-parameter-in-python">Method 2: <code>imports</code> Parameter in Python</h3>
+<p>Pass imports when creating the Config:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkwheel</span><span class="w"> </span><span class="kn">import</span> <span class="n">Config</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># Pre-import modules for all expressions</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">(</span><span class="n">imports</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;torch&quot;</span><span class="p">:</span> <span class="s2">&quot;torch&quot;</span><span class="p">,</span> <span class="s2">&quot;np&quot;</span><span class="p">:</span> <span class="s2">&quot;numpy&quot;</span><span class="p">})</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># Now expressions can use torch and np without importing</span>
+</span></code></pre></div>
+<h3 id="combining-both-methods">Combining Both Methods</h3>
+<p>You can use both approaches together—they merge:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">(</span><span class="n">imports</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Counter&quot;</span><span class="p">:</span> <span class="n">Counter</span><span class="p">})</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">({</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="s2">&quot;_imports_&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;json&quot;</span><span class="p">:</span> <span class="s2">&quot;json&quot;</span><span class="p">},</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="s1">&#39;$json.dumps({&quot;a&quot;: 1})&#39;</span><span class="p">,</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>    <span class="s2">&quot;counts&quot;</span><span class="p">:</span> <span class="s2">&quot;$Counter([1, 1, 2])&quot;</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="p">})</span>
 </span></code></pre></div>
 <h2 id="type-hints">Type Hints</h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkwheel</span><span class="w"> </span><span class="kn">import</span> <span class="n">Config</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">config</span><span class="p">:</span> <span class="n">Config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">()</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">resolved</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkwheel</span><span class="w"> </span><span class="kn">import</span> <span class="n">Config</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">config</span><span class="p">:</span> <span class="n">Config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">()</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">config</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="n">resolved</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
 </span></code></pre></div>
 <p>For complete details, see the <a href="../reference/">API Reference</a>.</p>
 
