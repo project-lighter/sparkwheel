@@ -134,17 +134,127 @@ class TestConfigBasics:
         assert isinstance(parser._data, dict)
         assert parser._data == {}
 
-    def test_init_with_globals_dict(self):
-        """Test Config init with globals dict."""
-        parser = Config({}, globals={"pd": "pandas"})
-        assert "pd" in parser._globals
+    def test_init_with_imports_dict(self):
+        """Test Config init with imports dict."""
+        parser = Config({}, imports={"pd": "pandas"})
+        assert "pd" in parser._imports
 
-    def test_init_with_globals_callable(self):
-        """Test Config init with globals containing callables."""
+    def test_init_with_imports_callable(self):
+        """Test Config init with imports containing callables."""
         from collections import Counter
 
-        parser = Config({}, globals={"Counter": Counter})
-        assert parser._globals["Counter"] is Counter
+        parser = Config({}, imports={"Counter": Counter})
+        assert parser._imports["Counter"] is Counter
+
+
+class TestConfigImports:
+    """Test _imports_ key handling."""
+
+    def test_imports_key_basic(self):
+        """Test _imports_ key makes modules available to expressions."""
+        config = Config().update(
+            {
+                "_imports_": {"json": "json"},
+                "data": '$json.dumps({"a": 1})',
+            }
+        )
+        result = config.resolve("data")
+        assert result == '{"a": 1}'
+
+    def test_imports_key_multiple_modules(self):
+        """Test _imports_ with multiple modules."""
+        config = Config().update(
+            {
+                "_imports_": {
+                    "os": "os",
+                    "Path": "pathlib.Path",
+                },
+                "sep": "$os.sep",
+                "path_type": "$Path",
+            }
+        )
+        import os
+        from pathlib import Path
+
+        assert config.resolve("sep") == os.sep
+        assert config.resolve("path_type") is Path
+
+    def test_imports_key_removed_from_data(self):
+        """Test _imports_ key is removed from config data after processing."""
+        config = Config().update(
+            {
+                "_imports_": {"json": "json"},
+                "data": '$json.dumps({"a": 1})',
+            }
+        )
+        config.resolve()  # Trigger parsing
+        assert "_imports_" not in config._data
+
+    def test_imports_key_combined_with_imports_parameter(self):
+        """Test _imports_ key works with imports parameter."""
+        from collections import Counter
+
+        config = Config(imports={"Counter": Counter}).update(
+            {
+                "_imports_": {"json": "json"},
+                "counter": "$Counter([1, 1, 2])",
+                "data": '$json.dumps({"a": 1})',
+            }
+        )
+        assert config.resolve("counter") == Counter([1, 1, 2])
+        assert config.resolve("data") == '{"a": 1}'
+
+    def test_imports_key_invalid_value_ignored(self):
+        """Test _imports_ with invalid value is ignored gracefully."""
+        config = Config().update(
+            {
+                "_imports_": "not a dict",
+                "value": 42,
+            }
+        )
+        result = config.resolve("value")
+        assert result == 42
+
+    def test_imports_key_with_dotted_class_path(self):
+        """Test _imports_ with dotted path to a class (e.g., pathlib.Path)."""
+        from collections import Counter
+
+        config = Config().update(
+            {
+                "_imports_": {"Counter": "collections.Counter"},
+                "counts": "$Counter([1, 1, 2, 2, 2])",
+            }
+        )
+        result = config.resolve("counts")
+        assert result == Counter([1, 1, 2, 2, 2])
+
+    def test_imports_key_with_dotted_module_path(self):
+        """Test _imports_ with dotted path to a submodule (e.g., os.path)."""
+        import os.path
+
+        config = Config().update(
+            {
+                "_imports_": {"ospath": "os.path"},
+                "sep": "$ospath.sep",
+            }
+        )
+        result = config.resolve("sep")
+        assert result == os.path.sep
+
+    def test_imports_key_with_non_string_value(self):
+        """Test _imports_ with non-string value (already imported module)."""
+        import json
+
+        # Pass the module directly via imports parameter, then use _imports_ with non-string
+        # Note: Can't put module in _imports_ dict in update() due to deepcopy,
+        # so we test via direct _data manipulation before parse
+        config = Config()
+        config._data = {
+            "_imports_": {"my_json": json},
+            "data": '$my_json.dumps({"a": 1})',
+        }
+        result = config.resolve("data")
+        assert result == '{"a": 1}'
 
 
 class TestConfigReferences:

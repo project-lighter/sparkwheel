@@ -102,7 +102,6 @@ class TestComponent:
         config = {
             "_target_": "collections.Counter",
             "_disabled_": False,
-            "_requires_": [],
             "_mode_": "default",
             "iterable": [1, 2, 2],
         }
@@ -112,6 +111,7 @@ class TestComponent:
         assert kwargs == {"iterable": [1, 2, 2]}
         assert "_target_" not in kwargs
         assert "_disabled_" not in kwargs
+        assert "_mode_" not in kwargs
 
     def test_is_disabled_false(self):
         """Test is_disabled returns False."""

@@ -148,7 +148,7 @@ class Config:
         ```
 
     Args:
-        globals: Pre-imported packages for expressions (e.g., {"torch": "torch"})
+        imports: Pre-imported packages for expressions (e.g., {"torch": "torch"})
         schema: Dataclass schema for continuous validation
         coerce: Auto-convert compatible types (default: True)
         strict: Reject fields not in schema (default: True)
@@ -159,7 +159,7 @@ class Config:
         self,
         data: dict[str, Any] | None = None,  # Internal/testing use only
         *,  # Rest are keyword-only
-        globals: dict[str, Any] | None = None,
+        imports: dict[str, Any] | None = None,
         schema: type | None = None,
         coerce: bool = True,
         strict: bool = True,
@@ -171,7 +171,7 @@ class Config:
 
         Args:
             data: Initial data (internal/testing use only, not validated)
-            globals: Pre-imported packages for expression evaluation
+            imports: Pre-imported packages for expression evaluation
             schema: Dataclass schema for continuous validation
             coerce: Auto-convert compatible types
             strict: Reject fields not in schema
@@ -196,14 +196,14 @@ class Config:
         self._strict: bool = strict
         self._allow_missing: bool = allow_missing
 
-        # Process globals (import string module paths)
-        self._globals: dict[str, Any] = {}
-        if isinstance(globals, dict):
-            for k, v in globals.items():
-                self._globals[k] = optional_import(v)[0] if isinstance(v, str) else v
+        # Process imports (import string module paths)
+        self._imports: dict[str, Any] = {}
+        if isinstance(imports, dict):
+            for k, v in imports.items():
+                self._imports[k] = optional_import(v)[0] if isinstance(v, str) else v
 
         self._loader = Loader()
-        self._preprocessor = Preprocessor(self._loader, self._globals)
+        self._preprocessor = Preprocessor(self._loader, self._imports)
 
     def get(self, id: str = "", default: Any = None) -> Any:
         """Get raw config value (unresolved).
@@ -683,6 +683,10 @@ class Config:
         if reset:
             self._resolver.reset()
 
+        # Process _imports_ key if present in config data
+        # This allows YAML-based imports that become available to all expressions
+        self._process_imports_key()
+
         # Phase 2: Expand local raw references (%key) now that all composition is complete
         # CLI overrides have been applied, so local refs will see final values
         self._data = self._preprocessor.process_raw_refs(
@@ -693,13 +697,59 @@ class Config:
         self._data = self._preprocessor.process(self._data, self._data, id="")
 
         # Stage 2: Parse config tree to create Items
-        parser = Parser(globals=self._globals, metadata=self._locations)
+        parser = Parser(globals=self._imports, metadata=self._locations)
         items = parser.parse(self._data)
 
         # Stage 3: Add items to resolver
         self._resolver.add_items(items)
 
         self._is_parsed = True
+
+    def _process_imports_key(self) -> None:
+        """Process _imports_ key from config data.
+
+        The _imports_ key allows declaring imports directly in YAML:
+
+        ```yaml
+        _imports_:
+          torch: torch
+          np: numpy
+          Path: pathlib.Path
+
+        model:
+          device: "$torch.device('cuda')"
+        ```
+
+        These imports become available to all expressions in the config.
+        The _imports_ key is removed from the data after processing.
+        """
+        imports_key = "_imports_"
+        if imports_key not in self._data:
+            return
+
+        imports_config = self._data.pop(imports_key)
+        if not isinstance(imports_config, dict):
+            return
+
+        # Process each import
+        for name, module_path in imports_config.items():
+            if isinstance(module_path, str):
+                # Handle dotted paths like "pathlib.Path" or "collections.Counter"
+                # Split into module and attribute if needed
+                if "." in module_path:
+                    parts = module_path.rsplit(".", 1)
+                    # First try as a module (e.g., "os.path")
+                    module_obj, success = optional_import(module_path)
+                    if not success:
+                        # Try as module.attribute (e.g., "pathlib.Path")
+                        module_obj, success = optional_import(parts[0], name=parts[1])
+                    self._imports[name] = module_obj
+                else:
+                    # Simple module name like "json"
+                    self._imports[name] = optional_import(module_path)[0]
+            else:
+                # Already a module or callable
+                self._imports[name] = module_path
 
     def _get_by_id(self, id: str) -> Any:
         """Get config value by ID path.
@@ -789,7 +839,8 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
     """Parse CLI argument overrides with automatic type inference.
 
     Supports only key=value syntax with operator prefixes.
-    Types are automatically inferred using ast.literal_eval().
+    Values are parsed using YAML syntax (via ``yaml.safe_load``), ensuring
+    CLI overrides behave identically to values in YAML config files.
 
     Args:
         args: List of argument strings to parse (e.g., from argparse)
@@ -805,11 +856,11 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
 
     Examples:
         >>> # Basic overrides (compose/merge)
-        >>> parse_overrides(["model::lr=0.001", "debug=True"])
+        >>> parse_overrides(["model::lr=0.001", "debug=true"])
         {"model::lr": 0.001, "debug": True}
 
         >>> # With operators
-        >>> parse_overrides(["=model={'_target_': 'ResNet'}", "~old_param"])
+        >>> parse_overrides(["=model={_target_: ResNet}", "~old_param"])
         {"=model": {'_target_': 'ResNet'}, "~old_param": None}
 
         >>> # Nested paths with operators
@@ -817,9 +868,12 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
         {"=optimizer::lr": 0.01, "~model::old_param": None}
 
     Note:
-        The '=' character serves dual purpose:
-        - In 'key=value' → assignment operator (CLI syntax)
-        - In '=key=value' → replace operator prefix (config operator)
+        - The '=' character serves dual purpose:
+          - In 'key=value' → assignment operator (CLI syntax)
+          - In '=key=value' → replace operator prefix (config operator)
+        - Values use YAML syntax: ``true``/``false``, ``yes``/``no``, ``on``/``off``
+          for booleans, ``null`` or ``~`` for None, ``{key: value}`` for dicts.
+        - Python's ``None`` is parsed as the string ``"None"`` (use ``null`` instead).
     """
     import yaml
 

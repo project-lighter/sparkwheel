@@ -409,10 +409,10 @@ Sparkwheel reserves certain keys with special meaning:
 
 - `_target_`: Specifies a class to instantiate
 - `_disabled_`: Skip instantiation if true
-- `_requires_`: Dependencies that must be resolved first
 - `_mode_`: Instantiation mode (default, callable, debug)
+- `_imports_`: Declare imports available to all expressions
 
-These are covered in detail in [Instantiation Guide](instantiation.md).
+These are covered in detail in [Instantiation Guide](instantiation.md) and [Advanced Features](advanced.md).
 
 ## Common Patterns
 

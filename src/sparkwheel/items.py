@@ -116,7 +116,6 @@ class Component(Item, Instantiable):
 
         - `_target_`: Full module path (e.g., "collections.Counter")
         - `_args_`: List of positional arguments to pass to the target
-        - `_requires_`: Dependencies to evaluate/instantiate first
         - `_disabled_`: Skip instantiation if True
         - `_mode_`: Instantiation mode:
             - `"default"`: Returns component(*args, **kwargs)
@@ -124,7 +123,7 @@ class Component(Item, Instantiable):
             - `"debug"`: Returns pdb.runcall(component, *args, **kwargs)
     """
 
-    non_arg_keys = {"_target_", "_disabled_", "_requires_", "_mode_", "_args_"}
+    non_arg_keys = {"_target_", "_disabled_", "_mode_", "_args_"}
 
     def __init__(self, config: Any, id: str = "", source_location: Location | None = None) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
