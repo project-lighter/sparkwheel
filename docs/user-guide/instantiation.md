@@ -224,7 +224,6 @@ augmentation:
 - `_target_`: Class or function path to instantiate (required)
 - `_args_`: List of positional arguments to pass
 - `_disabled_`: Skip instantiation if `true` (removed from parent)
-- `_requires_`: Dependencies to resolve first
 - `_mode_`: Instantiation mode (`"default"`, `"callable"`, or `"debug"`)
 
 For complete details, see the [Advanced Features](advanced.md) and [API Reference](../reference/).

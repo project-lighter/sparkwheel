@@ -117,8 +117,8 @@ Sparkwheel recognizes these special keys in configuration:
 
 - `_target_`: Class or function path to instantiate (e.g., `"torch.nn.Linear"`)
 - `_disabled_`: Skip instantiation if `true` (removed from parent). See [Instantiation](instantiation.md#_disabled_-skip-instantiation) for details.
-- `_requires_`: List of dependencies to evaluate/instantiate first
 - `_mode_`: Operating mode for instantiation (see below)
+- `_imports_`: Declare imports available to all expressions (see [Imports](#imports-for-expressions) below)
 
 ### `_mode_` - Instantiation Modes
 
@@ -289,25 +289,56 @@ except ConfigKeyError as e:
 
 Color output is auto-detected and respects `NO_COLOR` environment variable.
 
-## Globals for Expressions
+## Imports for Expressions
 
-Pre-import modules for use in expressions:
+Make modules available to all expressions. There are two ways to do this:
+
+### Method 1: `_imports_` Key in YAML
+
+Declare imports directly in your config file:
+
+```yaml
+# config.yaml
+_imports_:
+  torch: torch
+  np: numpy
+  Path: pathlib.Path
+
+# Now use them in expressions
+device: "$torch.device('cuda' if torch.cuda.is_available() else 'cpu')"
+data: "$np.array([1, 2, 3])"
+save_path: "$Path('/data/models')"
+```
+
+The `_imports_` key is removed from the config after processing—it won't appear in your resolved config.
+
+### Method 2: `imports` Parameter in Python
+
+Pass imports when creating the Config:
 
 ```python
 from sparkwheel import Config
 
-# Pre-import torch for all expressions
-config = Config(globals={"torch": "torch", "np": "numpy"})
+# Pre-import modules for all expressions
+config = Config(imports={"torch": "torch", "np": "numpy"})
 config.update("config.yaml")
 
 # Now expressions can use torch and np without importing
 ```
 
-Example config:
+### Combining Both Methods
 
-```yaml
-device: "$torch.device('cuda' if torch.cuda.is_available() else 'cpu')"
-data: "$np.array([1, 2, 3])"
+You can use both approaches together—they merge:
+
+```python
+from collections import Counter
+
+config = Config(imports={"Counter": Counter})
+config.update({
+    "_imports_": {"json": "json"},
+    "data": '$json.dumps({"a": 1})',
+    "counts": "$Counter([1, 1, 2])"
+})
 ```
 
 ## Type Hints
