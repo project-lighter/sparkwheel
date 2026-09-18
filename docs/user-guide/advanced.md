@@ -515,4 +515,4 @@ config.update("config.yaml")
 resolved: dict = config.resolve()
 ```
 
-For complete details, see the [API Reference](../reference/).
+For complete details, see the [API Reference](../reference/index.md).

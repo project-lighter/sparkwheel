@@ -239,7 +239,7 @@ Sparkwheel has two types of references with distinct purposes:
 
     Complete API documentation and reference
 
-    [:octicons-arrow-right-24: Browse API](reference/)
+    [:octicons-arrow-right-24: Browse API](reference/index.md)
 
 </div>
 

@@ -246,4 +246,4 @@ augmentation:
 - `_disabled_`: Skip instantiation if `true` (removed from parent)
 - `_mode_`: Instantiation mode (`"default"`, `"callable"`, or `"debug"`)
 
-For complete details, see the [Advanced Features](advanced.md) and [API Reference](../reference/).
+For complete details, see the [Advanced Features](advanced.md) and [API Reference](../reference/index.md).
