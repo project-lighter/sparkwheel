@@ -112,6 +112,15 @@ from .utils.exceptions import ConfigKeyError, build_missing_key_error
 __all__ = ["Config", "parse_overrides"]
 
 
+def _copy_containers(value: Any) -> Any:
+    """Copy configuration containers without cloning opaque Python inputs."""
+    if isinstance(value, dict):
+        return {key: _copy_containers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_containers(item) for item in value]
+    return value
+
+
 class Config:
     """Configuration management with continuous validation, coercion, resolved references, and instantiation.
 
@@ -197,10 +206,11 @@ class Config:
         self._allow_missing: bool = allow_missing
 
         # Process imports (import string module paths)
-        self._imports: dict[str, Any] = {}
+        self._provided_imports: dict[str, Any] = {}
         if isinstance(imports, dict):
             for k, v in imports.items():
-                self._imports[k] = optional_import(v)[0] if isinstance(v, str) else v
+                self._provided_imports[k] = optional_import(v)[0] if isinstance(v, str) else v
+        self._imports = dict(self._provided_imports)
 
         self._loader = Loader()
         self._preprocessor = Preprocessor(self._loader, self._imports)
@@ -213,7 +223,9 @@ class Config:
 
         - Returns `@` references as strings (e.g., "@model::lr")
         - Returns `$` expressions as strings (e.g., "$@lr * 2")
-        - Returns `%` raw references already expanded (eager expansion during update())
+        - Retains local `%` definitions and `_imports_`, even after resolution
+        - External `%file.yaml` includes are snapshots expanded during update()
+        - Does not import, instantiate, or evaluate expressions
         - Fast, no resolution overhead
 
         Use this when you need to:
@@ -596,7 +608,7 @@ class Config:
         Editing the config or passing lazy=False invalidates all modes.
 
         Processing stages:
-        - `%` raw references: Already expanded during update() (eager)
+        - `%` raw references: External includes expanded on update; local copies compiled here
         - `@` resolved references: Resolved now (lazy, supports circular deps)
         - `$` expressions: Evaluated now (lazy)
         - `_target_` components: Instantiated now (lazy)
@@ -685,29 +697,31 @@ class Config:
         if reset:
             self._resolver.reset()
 
-        # Process _imports_ key if present in config data
-        # This allows YAML-based imports that become available to all expressions
-        self._process_imports_key()
+        # Compile a separate tree. Source imports, local copies and relative
+        # references must remain available for export and the next generation.
+        working_data = _copy_containers(self._data)
+        self._imports = dict(self._provided_imports)
+        self._process_imports_key(working_data)
 
         # Phase 2: Expand local raw references (%key) now that all composition is complete
         # CLI overrides have been applied, so local refs will see final values
-        self._data = self._preprocessor.process_raw_refs(
-            self._data, self._data, id="", locations=self._locations, external_only=False
+        working_data = self._preprocessor.process_raw_refs(
+            working_data, working_data, id="", locations=self._locations, external_only=False
         )
 
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        self._data = self._preprocessor.process(self._data, self._data, id="")
+        working_data = self._preprocessor.process(working_data, working_data, id="")
 
         # Stage 2: Parse config tree to create Items
         parser = Parser(globals=self._imports, metadata=self._locations)
-        items = parser.parse(self._data)
+        items = parser.parse(working_data)
 
         # Stage 3: Add items to resolver
         self._resolver.add_items(items)
 
         self._is_parsed = True
 
-    def _process_imports_key(self) -> None:
+    def _process_imports_key(self, working_data: dict[str, Any]) -> None:
         """Process _imports_ key from config data.
 
         The _imports_ key allows declaring imports directly in YAML:
@@ -723,13 +737,14 @@ class Config:
         ```
 
         These imports become available to all expressions in the config.
-        The _imports_ key is removed from the data after processing.
+        The _imports_ key is removed only from the working compilation tree.
+        The authored declaration remains available through get() and export.
         """
         imports_key = "_imports_"
-        if imports_key not in self._data:
+        if imports_key not in working_data:
             return
 
-        imports_config = self._data.pop(imports_key)
+        imports_config = working_data.pop(imports_key)
         if not isinstance(imports_config, dict):
             return
 
@@ -772,6 +787,8 @@ class Config:
         """Invalidate cached resolution (called when config changes)."""
         self._is_parsed = False
         self._resolver.reset()
+        # Replacing the namespace preserves objects held from older generations.
+        self._imports = dict(self._provided_imports)
 
     def __getitem__(self, id: str) -> Any:
         """Get config value by ID (subscript access).

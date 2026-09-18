@@ -1,5 +1,31 @@
 # Advanced Features
 
+## Source inspection and resolution generations
+
+`get()` and subscript access return source values without importing modules,
+constructing targets, or evaluating expressions. Resolution compiles a separate
+working tree: the source keeps its local `%` copies, relative references and
+`_imports_` declarations. External `%file.yaml` includes are still expanded into
+snapshots when `update()` loads them.
+
+```python
+config = Config().update({"n": 2, "copy": "%n"})
+assert config.resolve("copy") == 2
+assert config.get("copy") == "%n"
+config.set("n", 7)
+assert config.resolve("copy") == 7
+```
+
+Successful edits clear cached runtime values. Objects already returned to your
+code are not rewritten; subsequent resolution builds a new generation. Raw
+container views remain mutable: use `set()`/`update()` for changes that should
+invalidate the runtime cache. Source export preserves configuration data, not
+Python module state or arbitrary prebuilt objects. Migration: code that previously
+read expanded local `%` values through `get()` after resolution should call
+`resolve(path)` instead. Constructor `imports=` values
+are supplied by the caller; declare serializable import paths in `_imports_`
+when a standalone YAML export needs them.
+
 ## Resolution modes and object sharing
 
 `resolve()` caches results separately for each pair of `instantiate` and
@@ -338,7 +364,15 @@ data: "$np.array([1, 2, 3])"
 save_path: "$Path('/data/models')"
 ```
 
-The `_imports_` key is removed from the config after processing—it won't appear in your resolved config.
+The `_imports_` key is retained in the source returned by `get()`, including after
+resolution. It is omitted only from the resolved runtime dictionary. This lets
+`Config.export_config_file(config.get(), path)` preserve imports for replay in a
+fresh process. After an edit, resolution starts a fresh expression namespace;
+removed YAML imports and `$import ...` aliases no longer remain available. Imports
+provided through the Python constructor remain available across generations.
+
+Migration: code that expected resolution to delete `_imports_` from `get()` should
+use `resolve()` when it needs the runtime dictionary without that declaration.
 
 ### Method 2: `imports` Parameter in Python
 
