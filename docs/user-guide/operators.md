@@ -539,3 +539,20 @@ Sparkwheel differs from Hydra:
 
 - **[Configuration Basics](basics.md)** - Core config management
 - **[Advanced Features](advanced.md)** - Macros and power features
+
+### Operators in newly introduced values
+
+`update()` applies nested operators consistently even when a parent mapping does
+not exist yet, is replaced, or appears inside a new list entry. For example,
+`Config().update({"group": {"=n": 1}})` produces `{"group": {"n": 1}}`.
+Replacements and new entries are interpreted against an empty container; trying
+to remove a nonexistent nested key rejects the entire update. Existing untouched
+values are preserved, and `set()` remains an exact assignment operation.
+
+Migration for 0.1: earlier versions could leave nested `=` or `~` keys as literal
+data when the parent was new. These are now consistently interpreted as update
+operators, including in appended list entries.
+
+This normalization applies to values supplied in the update, before raw `%`
+copy expansion. A copied raw definition is not subsequently reinterpreted as a
+new update instruction; existing source and raw-copy semantics stay distinct.

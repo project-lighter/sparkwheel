@@ -101,7 +101,14 @@ from typing import TYPE_CHECKING, Any
 
 from .loader import Loader
 from .locations import LocationRegistry
-from .operators import MergeContext, _copy_containers, _validate_delete_operator, apply_operators, validate_operators
+from .operators import (
+    MergeContext,
+    _copy_containers,
+    _normalize_update_value,
+    _validate_delete_operator,
+    apply_operators,
+    validate_operators,
+)
 from .parser import Parser
 from .path_utils import get_by_id, split_id
 from .preprocessor import Preprocessor
@@ -524,13 +531,15 @@ class Config:
         """Apply nested path updates (e.g., model::lr=value, =model=replace, ~old::param=null)."""
         for key, value in source.items():
             if not isinstance(key, str):
-                self._set_inplace(str(key), value)  # type: ignore[unreachable]
+                context = MergeContext(locations=self._locations, current_path=str(key))  # type: ignore[unreachable]
+                self._set_inplace(str(key), _normalize_update_value(value, context))
                 continue
 
             if key.startswith(REPLACE_KEY):
                 # Replace operator: =key (explicit override)
                 actual_key = key[1:]
-                self._set_inplace(actual_key, value)
+                context = MergeContext(locations=self._locations, current_path=actual_key)
+                self._set_inplace(actual_key, _normalize_update_value(value, context))
 
             elif key.startswith(REMOVE_KEY):
                 # Delete operator: ~key
@@ -577,10 +586,12 @@ class Config:
                     merged = apply_operators(self[key], value, context=context)
                     self._set_inplace(key, merged)
                 elif key in self and isinstance(self[key], list) and isinstance(value, list):
-                    self._set_inplace(key, self[key] + value)
+                    context = MergeContext(locations=self._locations, current_path=key)
+                    self._set_inplace(key, self[key] + _normalize_update_value(value, context))
                 else:
                     # Normal set (handles nested paths with ::)
-                    self._set_inplace(key, value)
+                    context = MergeContext(locations=self._locations, current_path=key)
+                    self._set_inplace(key, _normalize_update_value(value, context))
 
     def _delete_nested_key(self, key: str) -> None:
         """Delete a key, supporting nested paths with ::."""

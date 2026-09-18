@@ -191,6 +191,15 @@ def validate_operators(config: dict[str, Any], parent_key: str = "") -> None:
             validate_operators(value, full_key)
 
 
+def _normalize_update_value(value: Any, context: MergeContext) -> Any:
+    """Apply operators in newly introduced containers without touching old data."""
+    if isinstance(value, dict):
+        return apply_operators({}, value, context=context)
+    if isinstance(value, list):
+        return [_normalize_update_value(item, context.child_path(str(index))) for index, item in enumerate(value)]
+    return value
+
+
 def apply_operators(
     base: dict[str, Any],
     override: dict[str, Any],
@@ -263,13 +272,13 @@ def apply_operators(
 
     for key, value in override.items():
         if not isinstance(key, str):
-            result[key] = _copy_containers(value)  # type: ignore[unreachable]
+            result[key] = _normalize_update_value(value, context.child_path(str(key)))  # type: ignore[unreachable]
             continue
 
         # Process replace operator (=key)
         if key.startswith(REPLACE_KEY):
             actual_key = key[1:]
-            result[actual_key] = _copy_containers(value)
+            result[actual_key] = _normalize_update_value(value, context.child_path(actual_key))
             continue
 
         # Process remove operator (~key)
@@ -361,13 +370,13 @@ def apply_operators(
 
             # For lists: EXTEND (composition)
             if isinstance(base_val, list) and isinstance(value, list):
-                result[key] = base_val + _copy_containers(value)
+                result[key] = base_val + _normalize_update_value(value, context.child_path(key))
                 continue
 
             # For scalars: REPLACE
             # For type mismatches: REPLACE
 
         # Set/replace (for new keys or non-matching types)
-        result[key] = _copy_containers(value)
+        result[key] = _normalize_update_value(value, context.child_path(key))
 
     return result
