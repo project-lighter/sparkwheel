@@ -190,7 +190,12 @@ class Config:
         """
         self._data: dict[str, Any] = data or {}  # Start with provided data or empty
         self._locations = LocationRegistry()
-        self._resolver = Resolver()
+        if schema is None:
+            self._resolver = Resolver()
+        else:
+            from .schema_resolver import _SchemaResolver
+
+            self._resolver = _SchemaResolver(self)
         self._is_parsed = False
         self._frozen = False  # Set via freeze() method later
 
@@ -304,8 +309,17 @@ class Config:
 
     def _publish_edit(self, candidate: "Config") -> None:
         if self._schema:
+            from .schema import _coerce_field
             from .schema import validate as validate_schema
 
+            if self._coerce:
+                candidate._data = _coerce_field(
+                    candidate._data,
+                    self._schema,
+                    metadata=candidate._locations,
+                    allow_missing=self._allow_missing,
+                    strict=self._strict,
+                )
             validate_schema(
                 candidate._data,
                 self._schema,

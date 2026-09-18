@@ -1217,8 +1217,10 @@ class TestValidatorExceptionHandling:
                 # This validator won't run if __init__ fails
                 assert self.value > 0
 
-        # Should still validate the types even if instance creation fails
-        validate({"value": -5}, Config)
+        # Validator setup must not silently turn a failure into success.
+        with pytest.raises(ValidationError, match="Value must be positive") as error:
+            validate({"value": -5}, Config)
+        assert isinstance(error.value.__cause__, ValueError)
 
 
 class TestUnionValidationSuccess:

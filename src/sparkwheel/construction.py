@@ -33,6 +33,8 @@ class RetainedConfig:
     """A container snapshot without runtime caches; obtain through Config.retain()."""
 
     def __init__(self, config: Config):
+        if config._schema is not None:
+            raise NotImplementedError("Retained scopes do not yet support attached schemas; use Config.resolve()")
         self._source = _copy_containers(config.get())
         self._imports = dict(config._provided_imports)
         self._locations = deepcopy(config._locations)

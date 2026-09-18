@@ -37,7 +37,7 @@ Example:
 
 import dataclasses
 import types
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from .utils.exceptions import BaseError, Location
 
@@ -106,6 +106,25 @@ def validator(func):
     return func
 
 
+def _schema_hints(schema: type) -> dict[str, Any]:
+    try:
+        return get_type_hints(schema)
+    except (NameError, TypeError) as error:
+        raise TypeError(f"Cannot resolve annotations for schema {schema.__name__}: {error}") from error
+
+
+def _has_deferred(value: Any) -> bool:
+    if isinstance(value, _MissingSentinel):
+        return True
+    if isinstance(value, str):
+        return value.startswith(("@", "$", "%"))
+    if isinstance(value, dict):
+        return any(_has_deferred(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_deferred(item) for item in value)
+    return False
+
+
 def _get_validators(schema_type: type) -> list[Any]:
     """Get all validator methods from a dataclass."""
     validators = []
@@ -126,6 +145,7 @@ def _run_validators(
     schema: type,
     field_path: str = "",
     metadata: Any = None,
+    allow_unresolved: bool = True,
 ) -> None:
     """Run all @validator methods on a dataclass.
 
@@ -142,21 +162,19 @@ def _run_validators(
     if not validators:
         return
 
-    # Skip validation for configs with references/expressions/macros
-    # They'll be validated after resolution
-    for value in config.values():
-        if isinstance(value, str) and value.startswith(("@", "$", "%")):
-            # Has unresolved references - skip custom validation
-            return
-
-    # Create instance to call validators on
-    try:
-        instance = schema(**config)
-    except Exception:
-        # Can't create instance - skip validation
+    # Framework metadata and lenient extra fields are not dataclass init args.
+    values = {field.name: config[field.name] for field in dataclasses.fields(schema) if field.init and field.name in config}
+    if allow_unresolved and _has_deferred(values):
         return
-
     source_loc = _get_source_location(metadata, field_path) if metadata else None
+    try:
+        instance = schema(**values)
+    except Exception as error:
+        raise _ValidatorExecutionError(
+            f"Cannot construct validation instance for {schema.__name__}: {type(error).__name__}: {error}",
+            field_path=field_path,
+            source_location=source_loc,
+        ) from error
 
     for validator_method in validators:
         try:
@@ -168,7 +186,7 @@ def _run_validators(
                 source_location=source_loc,
             ) from e
         except Exception as e:
-            raise ValidationError(
+            raise _ValidatorExecutionError(
                 f"Validator '{validator_method.__name__}' raised {type(e).__name__}: {e}",
                 field_path=field_path,
                 source_location=source_loc,
@@ -222,6 +240,10 @@ class ValidationError(BaseError):
         super().__init__(full_message, source_location=source_location)
 
 
+class _ValidatorExecutionError(ValidationError):
+    """Unexpected user-code errors must not be treated as a union mismatch."""
+
+
 def validate(
     config: dict[str, Any],
     schema: type,
@@ -229,6 +251,8 @@ def validate(
     metadata: Any = None,
     allow_missing: bool = False,
     strict: bool = True,
+    allow_unresolved: bool = True,
+    _run_custom: bool = True,
 ) -> None:
     """Validate configuration against a dataclass schema.
 
@@ -278,6 +302,7 @@ def validate(
 
     # Get all fields from the dataclass
     schema_fields = {f.name: f for f in dataclasses.fields(schema)}
+    hints = _schema_hints(schema)
 
     # Check for required fields
     for field_name, field_info in schema_fields.items():
@@ -293,17 +318,20 @@ def validate(
             raise ValidationError(
                 f"Missing required field '{field_name}'",
                 field_path=current_path,
-                expected_type=field_info.type,  # type: ignore[arg-type]
+                expected_type=hints[field_name],
                 source_location=source_loc,
             )
 
         # Validate the field value
         _validate_field(
             config[field_name],
-            field_info.type,  # type: ignore[arg-type]
+            hints[field_name],
             current_path,
             metadata,
             allow_missing=allow_missing,
+            strict=strict,
+            allow_unresolved=allow_unresolved,
+            _run_custom=_run_custom,
         )
 
     # Check for unexpected fields - only if strict mode
@@ -324,7 +352,8 @@ def validate(
             )
 
     # Run custom validators
-    _run_validators(config, schema, field_path, metadata)
+    if _run_custom:
+        _run_validators(config, schema, field_path, metadata, allow_unresolved=allow_unresolved)
 
 
 def _find_discriminator(union_types: tuple[Any, ...]) -> tuple[bool, str | None]:
@@ -344,7 +373,7 @@ def _find_discriminator(union_types: tuple[Any, ...]) -> tuple[bool, str | None]
     from typing import Literal
 
     # Filter to dataclasses only
-    dataclass_types = [t for t in union_types if dataclasses.is_dataclass(t)]
+    dataclass_types = [t for t in union_types if isinstance(t, type) and dataclasses.is_dataclass(t)]
     if len(dataclass_types) < 2:
         return False, None
 
@@ -352,10 +381,10 @@ def _find_discriminator(union_types: tuple[Any, ...]) -> tuple[bool, str | None]
     all_fields: dict[str, list[Any]] = {}
     for dc_type in dataclass_types:
         for f in dataclasses.fields(dc_type):
-            if get_origin(f.type) is Literal:
+            if get_origin(_schema_hints(dc_type)[f.name]) is Literal:
                 if f.name not in all_fields:
                     all_fields[f.name] = []
-                literal_values = get_args(f.type)
+                literal_values = get_args(_schema_hints(dc_type)[f.name])
                 all_fields[f.name].append({"type": dc_type, "values": literal_values})
 
     # Find a field present in all types with unique values
@@ -387,6 +416,10 @@ def _validate_discriminated_union(
     discriminator_field: str,
     field_path: str,
     metadata: Any = None,
+    allow_missing: bool = False,
+    strict: bool = True,
+    allow_unresolved: bool = True,
+    _run_custom: bool = True,
 ) -> None:
     """Validate a discriminated union by checking the discriminator.
 
@@ -412,7 +445,7 @@ def _validate_discriminated_union(
 
     # Check discriminator field exists
     if discriminator_field not in value:
-        dataclass_types = [t for t in union_types if dataclasses.is_dataclass(t)]
+        dataclass_types = [t for t in union_types if isinstance(t, type) and dataclasses.is_dataclass(t)]
         type_names = ", ".join(t.__name__ if isinstance(t, type) else type(t).__name__ for t in dataclass_types)
         raise ValidationError(
             f"Missing discriminator field '{discriminator_field}' (required for union of {type_names})",
@@ -423,14 +456,18 @@ def _validate_discriminated_union(
 
     discriminator_value = value[discriminator_field]
 
+    if allow_unresolved and isinstance(discriminator_value, str) and discriminator_value.startswith(("@", "$", "%")):
+        # The selected branch is not known until resolution.
+        return
+
     # Find matching type
-    dataclass_types = [t for t in union_types if dataclasses.is_dataclass(t)]
+    dataclass_types = [t for t in union_types if isinstance(t, type) and dataclasses.is_dataclass(t)]
     matching_type = None
 
     for dc_type in dataclass_types:
         for f in dataclasses.fields(dc_type):
             if f.name == discriminator_field:
-                literal_values = get_args(f.type)
+                literal_values = get_args(_schema_hints(dc_type)[f.name])
                 if discriminator_value in literal_values:
                     matching_type = dc_type
                     break
@@ -443,7 +480,7 @@ def _validate_discriminated_union(
         for dc_type in dataclass_types:
             for f in dataclasses.fields(dc_type):
                 if f.name == discriminator_field:
-                    literal_values = get_args(f.type)
+                    literal_values = get_args(_schema_hints(dc_type)[f.name])
                     for val in literal_values:
                         type_name = dc_type.__name__ if isinstance(dc_type, type) else type(dc_type).__name__
                         valid_values.append(f"'{val}' ({type_name})")
@@ -458,202 +495,110 @@ def _validate_discriminated_union(
 
     # Validate against the selected type
     assert isinstance(matching_type, type)
-    validate(value, matching_type, field_path, metadata, allow_missing=False, strict=True)
+    validate(
+        value,
+        matching_type,
+        field_path,
+        metadata,
+        allow_missing=allow_missing,
+        strict=strict,
+        allow_unresolved=allow_unresolved,
+        _run_custom=_run_custom,
+    )
 
 
 def _validate_field(
     value: Any,
-    expected_type: type,
+    expected_type: Any,
     field_path: str,
     metadata: Any = None,
     allow_missing: bool = False,
+    strict: bool = True,
+    allow_unresolved: bool = True,
+    _run_custom: bool = True,
 ) -> None:
-    """Validate a single field value against its expected type.
-
-    Args:
-        value: The value to validate
-        expected_type: The expected type (may be generic like list[int])
-        field_path: Dot-separated path to this field
-        metadata: Optional metadata registry for source locations
-        allow_missing: If True, allow MISSING sentinel values for partial configs
-
-    Raises:
-        ValidationError: If validation fails
-    """
+    """Validate a value with the same policy at every nested boundary."""
     source_loc = _get_source_location(metadata, field_path) if metadata else None
-
-    # Handle MISSING values
+    policy = dict(allow_missing=allow_missing, strict=strict, allow_unresolved=allow_unresolved, _run_custom=_run_custom)
     if isinstance(value, _MissingSentinel):
         if allow_missing:
-            return  # OK for partial configs
-        else:
-            raise ValidationError(
-                "Field has MISSING value but MISSING not allowed",
-                field_path=field_path,
-                expected_type=expected_type,
-                actual_value=value,
-                source_location=source_loc,
-            )
-
-    # Handle None values
-    origin = get_origin(expected_type)
-    args = get_args(expected_type)
-
-    # Handle Optional[T] (which is Union[T, None])
-    if _is_union_type(origin):
-        # Check for discriminated union first
-        has_discriminator, discriminator_field = _find_discriminator(args)
-        if has_discriminator and discriminator_field:
-            _validate_discriminated_union(value, args, discriminator_field, field_path, metadata)
             return
-
-        # Check if None is allowed
-        if type(None) in args:
-            if value is None:
-                return  # None is valid
-            # Remove None from the union and validate against remaining types
-            non_none_types = [t for t in args if t is not type(None)]
-            if len(non_none_types) == 1:
-                # Simple Optional[T] case - recursively validate with the single type
-                _validate_field(value, non_none_types[0], field_path, metadata, allow_missing)
-                return
-            else:
-                # Union with multiple non-None types - try each and collect errors
-                errors = []
-                for union_type in non_none_types:
-                    try:
-                        _validate_field(value, union_type, field_path, metadata, allow_missing)
-                        return  # Validation succeeded
-                    except ValidationError as e:
-                        type_name = getattr(union_type, "__name__", str(union_type))
-                        # Extract just the error message without field path prefix
-                        error_msg = str(e).split("\n")[0]
-                        if f"Validation error at '{field_path}': " in error_msg:
-                            error_msg = error_msg.replace(f"Validation error at '{field_path}': ", "")
-                        errors.append(f"  Tried {type_name}: {error_msg}")
-
-                # All failed - build comprehensive error message
-                union_str = _format_union_type(tuple(non_none_types))
-                error_details = "\n".join(errors)
-                raise ValidationError(
-                    f"Value doesn't match any type in {union_str}\n{error_details}",
-                    field_path=field_path,
-                    expected_type=expected_type,
-                    actual_value=value,
-                    source_location=source_loc,
-                )
-        else:
-            # Non-Optional Union - try each type and collect errors
-            errors = []
-            for union_type in args:
-                try:
-                    _validate_field(value, union_type, field_path, metadata, allow_missing)
-                    return  # Validation succeeded
-                except ValidationError as e:
-                    type_name = getattr(union_type, "__name__", str(union_type))
-                    # Extract just the error message without field path prefix
-                    error_msg = str(e).split("\n")[0]
-                    if f"Validation error at '{field_path}': " in error_msg:
-                        error_msg = error_msg.replace(f"Validation error at '{field_path}': ", "")
-                    errors.append(f"  Tried {type_name}: {error_msg}")
-
-            # All failed - build comprehensive error message
-            union_str = _format_union_type(args)
-            error_details = "\n".join(errors)
-            raise ValidationError(
-                f"Value doesn't match any type in {union_str}\n{error_details}",
-                field_path=field_path,
-                expected_type=expected_type,
-                actual_value=value,
-                source_location=source_loc,
-            )
-
-    # Handle references and expressions early
-    # Accept resolved references (@), raw references (%), and expressions ($) as strings
-    # since they'll be resolved/expanded later - we can't validate their type until resolution
-    if isinstance(value, str) and (value.startswith("@") or value.startswith("$") or value.startswith("%")):
+        raise ValidationError(
+            "Field has MISSING value but MISSING not allowed",
+            field_path=field_path,
+            expected_type=expected_type,
+            actual_value=value,
+            source_location=source_loc,
+        )
+    if allow_unresolved and isinstance(value, str) and value.startswith(("@", "$", "%")):
         return
-
-    # Handle list[T]
+    if expected_type is Any:
+        return
+    origin, args = get_origin(expected_type), get_args(expected_type)
+    if _is_union_type(origin):
+        if value is None and type(None) in args:
+            return
+        branches = tuple(branch for branch in args if branch is not type(None)) if type(None) in args else args
+        has_discriminator, discriminator = _find_discriminator(branches)
+        if (
+            has_discriminator
+            and discriminator
+            and all(isinstance(branch, type) and dataclasses.is_dataclass(branch) for branch in branches)
+        ):
+            _validate_discriminated_union(value, branches, discriminator, field_path, metadata, **policy)
+            return
+        errors = []
+        for branch in branches:
+            try:
+                _validate_field(value, branch, field_path, metadata, **policy)
+                return
+            except _ValidatorExecutionError:
+                raise
+            except ValidationError as error:
+                name = getattr(branch, "__name__", str(branch))
+                message = str(error).split("\n")[0].removeprefix(f"Validation error at '{field_path}': ")
+                errors.append(f"  Tried {name}: {message}")
+        raise ValidationError(
+            f"Value doesn't match any type in {_format_union_type(branches)}\n" + "\n".join(errors),
+            field_path=field_path,
+            expected_type=expected_type,
+            actual_value=value,
+            source_location=source_loc,
+        )
     if origin is list:
         if not isinstance(value, list):
             raise ValidationError(
-                "Expected list",
-                field_path=field_path,
-                expected_type=list,
-                actual_value=value,
-                source_location=source_loc,
+                "Expected list", field_path=field_path, expected_type=list, actual_value=value, source_location=source_loc
             )
         if args:
-            item_type = args[0]
-            # Skip validation for List[Any] - accept any item types
-            if item_type is not Any:
-                for i, item in enumerate(value):
-                    _validate_field(
-                        item,
-                        item_type,
-                        f"{field_path}[{i}]",
-                        metadata,
-                        allow_missing,
-                    )
+            for i, item in enumerate(value):
+                _validate_field(item, args[0], f"{field_path}[{i}]", metadata, **policy)
         return
-
-    # Handle dict[K, V]
     if origin is dict:
         if not isinstance(value, dict):
             raise ValidationError(
-                "Expected dict",
-                field_path=field_path,
-                expected_type=dict,
-                actual_value=value,
-                source_location=source_loc,
+                "Expected dict", field_path=field_path, expected_type=dict, actual_value=value, source_location=source_loc
             )
-        if args and len(args) == 2:
-            key_type, value_type = args
-            # For Dict[K, Any], only validate keys and allow arbitrary values
-            if value_type is Any:
-                for k in value.keys():
-                    if not isinstance(k, key_type):
-                        raise ValidationError(
-                            "Dict key has wrong type",
-                            field_path=f"{field_path}[{k!r}]",
-                            expected_type=key_type,
-                            actual_value=k,
-                            source_location=source_loc,
-                        )
-                return
-            # Otherwise validate both keys and values
-            for k, v in value.items():
-                # Validate key type
-                if not isinstance(k, key_type):
+        if len(args) == 2:
+            for key, item in value.items():
+                if args[0] is not Any and not isinstance(key, args[0]):
                     raise ValidationError(
                         "Dict key has wrong type",
-                        field_path=f"{field_path}[{k!r}]",
-                        expected_type=key_type,
-                        actual_value=k,
+                        field_path=f"{field_path}[{key!r}]",
+                        expected_type=args[0],
+                        actual_value=key,
                         source_location=source_loc,
                     )
-                # Validate value type
-                _validate_field(
-                    v,
-                    value_type,
-                    f"{field_path}[{k!r}]",
-                    metadata,
-                    allow_missing,
-                )
+                _validate_field(item, args[1], f"{field_path}[{key!r}]", metadata, **policy)
         return
-
-    # Handle nested dataclasses
-    if dataclasses.is_dataclass(expected_type):
-        validate(value, expected_type, field_path, metadata, allow_missing, strict=True)
+    if isinstance(expected_type, type) and dataclasses.is_dataclass(expected_type):
+        validate(value, expected_type, field_path, metadata, **policy)
         return
-
-    # Handle Literal types
     from typing import Literal
 
     if origin is Literal:
-        if value not in args:
-            valid_values = ", ".join(repr(v) for v in args)
+        if not any(type(value) is type(candidate) and value == candidate for candidate in args):
+            valid_values = ", ".join(repr(candidate) for candidate in args)
             raise ValidationError(
                 f"Value must be one of {valid_values}, got {value!r}",
                 field_path=field_path,
@@ -662,24 +607,127 @@ def _validate_field(
                 source_location=source_loc,
             )
         return
-
-    # Handle Any type - accept any value
-    if expected_type == Any:
+    # Preserve integer compatibility for float annotations, without treating bool
+    # as a numeric parameter just because bool subclasses int in Python.
+    if expected_type is float and type(value) is int:
         return
-
-    # Handle basic types (int, str, float, bool, etc.)
-    if not isinstance(value, expected_type):
-        # Special case: allow int for float
-        if expected_type is float and isinstance(value, int):
-            return
-
+    numeric_bool = expected_type in (int, float) and type(value) is bool
+    if numeric_bool or not isinstance(value, expected_type):
         raise ValidationError(
-            "Type mismatch",
-            field_path=field_path,
-            expected_type=expected_type,
-            actual_value=value,
-            source_location=source_loc,
+            "Type mismatch", field_path=field_path, expected_type=expected_type, actual_value=value, source_location=source_loc
         )
+
+
+def _coerce_field(
+    value: Any,
+    expected_type: Any,
+    field_path: str = "",
+    metadata: Any = None,
+    *,
+    strict: bool = True,
+    allow_missing: bool = False,
+    allow_unresolved: bool = True,
+    _preserve: set[int] | None = None,
+) -> Any:
+    """Conservative normalization; never execute targets, validators or defaults."""
+    if _preserve and id(value) in _preserve:
+        return value
+
+    options = dict(strict=strict, allow_missing=allow_missing, allow_unresolved=allow_unresolved)
+    if isinstance(value, _MissingSentinel) or expected_type is Any:
+        return value
+    if allow_unresolved and isinstance(value, str) and value.startswith(("@", "$", "%")):
+        return value
+    origin, args = get_origin(expected_type), get_args(expected_type)
+    if _is_union_type(origin):
+        _, discriminator = _find_discriminator(args)
+        if allow_unresolved and discriminator and isinstance(value, dict) and _has_deferred(value.get(discriminator)):
+            return value
+        # Preserve already-valid alternatives, especially a literal string in
+        # str|int. Type checks here never run user validators.
+        for branch in args:
+            try:
+                _validate_field(value, branch, field_path, metadata, _run_custom=False, **options)
+            except ValidationError:
+                continue
+            return _coerce_field(value, branch, field_path, metadata, **options, _preserve=_preserve)
+        candidates = []
+        for branch in args:
+            try:
+                candidate = _coerce_field(value, branch, field_path, metadata, **options, _preserve=_preserve)
+                _validate_field(candidate, branch, field_path, metadata, _run_custom=False, **options)
+                candidates.append(candidate)
+            except ValidationError:
+                continue
+        if len(candidates) > 1:
+            raise ValidationError(
+                f"Ambiguous coercion to {_format_union_type(args)}; supply an explicitly typed value",
+                field_path=field_path,
+                actual_value=value,
+                source_location=_get_source_location(metadata, field_path),
+            )
+        return candidates[0] if candidates else value
+    if isinstance(expected_type, type) and dataclasses.is_dataclass(expected_type) and isinstance(value, dict):
+        result = dict(value)
+        for name, annotation in _schema_hints(expected_type).items():
+            if name in result:
+                path = f"{field_path}.{name}" if field_path else name
+                result[name] = _coerce_field(result[name], annotation, path, metadata, **options, _preserve=_preserve)
+        return result
+    if origin is list and isinstance(value, list) and args:
+        return [
+            _coerce_field(item, args[0], f"{field_path}[{i}]", metadata, **options, _preserve=_preserve)
+            for i, item in enumerate(value)
+        ]
+    if origin is dict and isinstance(value, dict) and len(args) == 2:
+        # Keys retain their identity and spelling: coercing keys can collapse two
+        # distinct entries. Their declared types are validated normally.
+        return {
+            key: _coerce_field(item, args[1], f"{field_path}[{key!r}]", metadata, **options, _preserve=_preserve)
+            for key, item in value.items()
+        }
+    try:
+        if expected_type is int:
+            if type(value) is str:
+                return int(value)
+            if type(value) is float and value.is_integer():
+                return int(value)
+        elif expected_type is float:
+            if type(value) is str:
+                return float(value)
+            if type(value) is int:
+                try:
+                    converted = float(value)
+                except OverflowError as error:
+                    raise ValidationError(
+                        "Integer cannot be represented as float",
+                        field_path=field_path,
+                        actual_value=value,
+                        source_location=_get_source_location(metadata, field_path),
+                    ) from error
+                if int(converted) != value:
+                    raise ValidationError(
+                        "Integer cannot be represented exactly as float",
+                        field_path=field_path,
+                        actual_value=value,
+                        source_location=_get_source_location(metadata, field_path),
+                    )
+                return converted
+        elif expected_type is bool:
+            if type(value) is str:
+                normalized = value.strip().lower()
+                if normalized in {"true", "yes", "1"}:
+                    return True
+                if normalized in {"false", "no", "0"}:
+                    return False
+            elif type(value) is int and value in (0, 1):
+                return bool(value)
+        elif expected_type is str and type(value) in (int, float, bool):
+            return str(value)
+    except (ValueError, OverflowError):
+        # Ordinary validation produces the source-aware type error.
+        pass
+    return value
 
 
 def _get_source_location(metadata: Any, field_path: str) -> Location | None:

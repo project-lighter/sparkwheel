@@ -2,31 +2,27 @@
 
 Validate configurations at runtime using Python dataclasses with **continuous validation** - errors caught immediately when you mutate the config.
 
-## Type Coercion Matrix
+## Coercion policy
 
-Sparkwheel automatically converts compatible types when coercion is enabled (default: `True`):
+`Config(schema=Schema, coerce=True)` normalizes compatible concrete values during
+transactional `set()`/`update()` and checks resolved arguments during `resolve()`.
+`validate(mapping, Schema)` and `config.validate(Schema)` check types without
+coercing or executing configured references and expressions.
 
-| From ↓ To → | `int` | `float` | `str` | `bool` | `list` | `dict` |
-|-------------|-------|---------|-------|--------|--------|--------|
-| **int** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **float** | ✅* | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **str** | ✅** | ✅** | ✅ | ✅*** | ❌ | ❌ |
-| **bool** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **list** | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ |
-| **dict** | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
+| Input | Declared type | Conversion |
+|---|---|---|
+| Numeric string | `int` / `float` | Parse a valid integer / float |
+| Integral float, such as `3.0` | `int` | Convert without truncation |
+| Integer | `float` | Convert only when exactly representable |
+| `"true"`, `"yes"`, `"1"` / `"false"`, `"no"`, `"0"` | `bool` | Case-insensitive, ignoring surrounding whitespace |
+| Integer `0` / `1` | `bool` | `False` / `True` |
+| Integer, float, boolean | `str` | Built-in string conversion |
 
-\* Truncates decimal part (e.g., `3.14` → `3`)
-\*\* Requires valid format (e.g., `"42"` for int, `"3.14"` for float)
-\*\*\* Accepts: `"true"`, `"false"`, `"1"`, `"0"`, `"yes"`, `"no"` (case-insensitive)
-
-!!! success "Default Behavior"
-    Type coercion is **enabled by default** to handle common cases like environment variables and CLI arguments (which are always strings).
-
-!!! warning "Disable for Strict Validation"
-    Set `coerce=False` for strict type checking:
-    ```python
-    config = Config(schema=AppConfigSchema, coerce=False)
-    ```
+Booleans do not satisfy numeric fields, and lists/dicts are not converted to
+strings. Dictionary keys are checked without coercion. Coercion recurses through
+annotated containers and dataclasses. An already valid union branch wins, so
+`int | str` preserves `"002"`; ambiguous conversions such as `"2"` to
+`int | float` raise `ValidationError`. Set `coerce=False` to disable conversion.
 
 ## Quick Start
 
@@ -89,7 +85,15 @@ config.update({"port": "8080"})
 
 ## Defining Schemas
 
-Schemas are Python dataclasses with type hints.
+Schemas are Python dataclasses with type hints. Postponed annotations are
+resolved in the defining module; unresolved annotation names raise a clear error.
+`strict` and `allow_missing` apply recursively, including selected union branches.
+
+Dataclass defaults make fields optional for validation; they are not inserted
+into the authored source or constructor arguments. Type-only validation does not
+call default factories. A target's own Python signature determines its runtime
+defaults. Custom validators do create a schema instance, so its defaults,
+`default_factory`, and `__post_init__` may execute.
 
 ### Basic Types
 
@@ -137,7 +141,7 @@ Corresponding YAML:
 database:
   host: localhost
   port: 5432
-  # pool_size uses default
+  # pool_size may be omitted; the schema does not insert it
 
 secret_key: my-secret
 ```
@@ -249,7 +253,13 @@ class ConfigSchema:
             raise ValueError(f"value ({self.value}) exceeds max_value ({self.max_value})")
 ```
 
-**Note:** Validators run after type checking. If types are wrong, validation stops there.
+Validators run after type checking. Framework metadata such as `_target_` and
+lenient extra keys are excluded from the schema instance's initializer. Setup
+failures and unexpected validator exceptions propagate as contextual
+`ValidationError` with their original cause, including inside unions. Validator
+code can have external effects; configuration rollback cannot undo them. Prefer
+pure checks. Nested argument dictionaries remain dictionaries in validator
+instances; schemas do not recursively instantiate nested dataclasses for you.
 
 ## Discriminated Unions
 
@@ -515,6 +525,33 @@ config.update({
 
 ## Validation Timing
 
+`set()` and `update()` validate the staged authored source once and publish it
+only on success. Deferred `@`, `$`, and `%` values are checked when resolved. A
+deferred union discriminator postpones branch checks until the branch is known.
+
+`resolve(path)` validates that node and its ordinary dependencies. It also
+resolves a deferred union discriminator when needed to select that node's schema,
+so parent values and later child resolutions use the same coerced cache. It does not
+construct unrelated nodes to run a root-level cross-field validator; use
+`resolve()` to validate the complete resolved argument tree. For `_target_`
+nodes, schemas describe **constructor arguments**, not the object returned by
+the target. Invalid resolved arguments fail before that target is called.
+Dependencies, imports, and expressions may already have executed; resolution is
+not an effect rollback mechanism.
+
+Nested components and aliases are checked using their resolved argument
+mappings while constructors receive their native objects. Existing shared
+container/component identities are preserved. An alias cannot coerce an
+already-built object's argument mapping into a different schema. Expression
+coercion affects runtime values and preserves the authored expression string.
+`instantiate=False` still checks resolved arguments; `eval_expr=False` keeps
+wrappers and postpones resolved-value checks.
+
+Retained construction scopes currently reject attached schemas explicitly.
+Use schema-aware `Config.resolve()` for these configurations; a retained scope
+must not silently discard a schema policy.
+
+
 ### Continuous (Recommended)
 
 ```python
@@ -575,9 +612,9 @@ class APIConfigSchema:
 class AppConfigSchema:
     app_name: str
     environment: str
-    debug: bool = False
     api: APIConfigSchema
     database: DatabaseConfigSchema
+    debug: bool = False
 
 # Load and validate continuously
 config = Config(schema=AppConfigSchema)
