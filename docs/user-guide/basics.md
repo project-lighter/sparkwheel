@@ -32,10 +32,7 @@ config.update("config.yaml")
 ### Loading from Dictionary
 
 ```python
-config_dict = {
-    "name": "Test",
-    "value": 42
-}
+config_dict = {"name": "Test", "value": 42}
 
 # Load from dict
 config = Config()
@@ -46,9 +43,7 @@ config.update(config_dict)
 
 ```python
 # Load and merge multiple config files (method chaining!)
-config = (Config()
-          .update("base.yaml")
-          .update("override.yaml"))
+config = Config().update("base.yaml").update("override.yaml")
 ```
 
 ## Accessing Configuration Values
@@ -115,6 +110,7 @@ Both syntaxes have their place:
 # 1. Passing paths as function arguments
 def get_param(config, path: str):
     return config.get(path)
+
 
 lr = get_param(config, "model::optimizer::lr")
 
@@ -250,12 +246,14 @@ Sparkwheel supports automatic validation using Python dataclasses with **continu
 from dataclasses import dataclass
 from sparkwheel import Config
 
+
 @dataclass
 class AppConfigSchema:
     name: str
     version: str
     port: int
     debug: bool = False
+
 
 # Continuous validation - validates on every update/set!
 config = Config(schema=AppConfigSchema)
@@ -375,9 +373,7 @@ from sparkwheel import Config
 import ast
 
 # Method 1: Chain updates (recommended!)
-config = (Config()
-          .update("base_config.yaml")
-          .update("prod_config.yaml"))
+config = Config().update("base_config.yaml").update("prod_config.yaml")
 
 # Method 2: Sequential updates
 config = Config()

@@ -39,7 +39,7 @@ from sparkwheel import Config
 
 config = Config().update({"object": {"_target_": "builtins.dict", "value": 8}})
 definition = config.resolve("object", instantiate=False)  # Component wrapper
-instance = config.resolve("object")                     # {"value": 8}
+instance = config.resolve("object")  # {"value": 8}
 assert config.resolve("object") is instance
 assert config.resolve("object", instantiate=False) is definition
 ```
@@ -62,10 +62,12 @@ Framework integrations can capture a configuration definition and create isolate
 runtime graphs without adding YAML syntax:
 
 ```python
-config = Config().update({
-    "network": {"_target_": "myproject.Network"},
-    "optimizer": {"_target_": "myproject.Optimizer", "network": "@network"},
-})
+config = Config().update(
+    {
+        "network": {"_target_": "myproject.Network"},
+        "optimizer": {"_target_": "myproject.Optimizer", "network": "@network"},
+    }
+)
 recipe = config.retain()
 network_scope = recipe.scope(blocked_paths={"optimizer"})
 network = network_scope.resolve("network")
@@ -207,22 +209,27 @@ Support partial configs with required-but-not-yet-set values:
 from sparkwheel import Config, MISSING
 from dataclasses import dataclass
 
+
 @dataclass
 class APIConfigSchema:
     api_key: str
     endpoint: str
     timeout: int = 30
 
+
 # Build config incrementally with MISSING values
 config = Config(schema=APIConfigSchema, allow_missing=True)
-config.update({
-    "api_key": MISSING,  # Will be set later
-    "endpoint": "https://api.example.com",
-    "timeout": 60
-})
+config.update(
+    {
+        "api_key": MISSING,  # Will be set later
+        "endpoint": "https://api.example.com",
+        "timeout": 60,
+    }
+)
 
 # Fill in missing values from environment
 import os
+
 config.set("api_key", os.getenv("API_KEY"))
 
 # Validate that nothing is MISSING anymore
@@ -241,12 +248,7 @@ config.freeze()
 
 ```python
 # Template configs with placeholders
-base_config = {
-    "database::host": MISSING,
-    "database::port": MISSING,
-    "database::name": "myapp",
-    "api_key": MISSING
-}
+base_config = {"database::host": MISSING, "database::port": MISSING, "database::name": "myapp", "api_key": MISSING}
 
 # Environment-specific configs fill in MISSING values
 config = Config(schema=MySchema, allow_missing=True)
@@ -395,11 +397,13 @@ config.update("config.yaml")
 config.set("model::hidden_size", 1024)
 
 # Use operators
-config.update({
-    "optimizer": {"lr": 0.01},         # Compose (merge by default)
-    "=database": {"host": "prod.db"},  # Replace
-    "~training::old_param": None,      # Delete
-})
+config.update(
+    {
+        "optimizer": {"lr": 0.01},  # Compose (merge by default)
+        "=database": {"host": "prod.db"},  # Replace
+        "~training::old_param": None,  # Delete
+    }
+)
 ```
 
 ## Relative ID References
@@ -431,10 +435,7 @@ Sparkwheel provides helpful error messages with suggestions:
 from sparkwheel import Config, ConfigKeyError
 
 config = Config()
-config.update({
-    "model": {"hidden_size": 512, "num_layers": 4},
-    "training": {"batch_size": 32}
-})
+config.update({"model": {"hidden_size": 512, "num_layers": 4}, "training": {"batch_size": 32}})
 
 try:
     # Typo in key name
@@ -504,11 +505,7 @@ You can use both approaches together—they merge:
 from collections import Counter
 
 config = Config(imports={"Counter": Counter})
-config.update({
-    "_imports_": {"json": "json"},
-    "data": '$json.dumps({"a": 1})',
-    "counts": "$Counter([1, 1, 2])"
-})
+config.update({"_imports_": {"json": "json"}, "data": '$json.dumps({"a": 1})', "counts": "$Counter([1, 1, 2])"})
 ```
 
 ## Type Hints

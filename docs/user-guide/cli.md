@@ -40,6 +40,7 @@ Override configuration values from the command line with automatic file and over
     import click
     from sparkwheel import Config
 
+
     @click.command()
     @click.argument("inputs", nargs=-1, required=True)
     def train(inputs):
@@ -48,6 +49,7 @@ Override configuration values from the command line with automatic file and over
             config.update(item)
 
         model = config.resolve("model")
+
 
     if __name__ == "__main__":
         train()
@@ -65,6 +67,7 @@ Override configuration values from the command line with automatic file and over
 
     app = typer.Typer()
 
+
     @app.command()
     def train(inputs: list[str] = typer.Argument(None)):
         config = Config()
@@ -72,6 +75,7 @@ Override configuration values from the command line with automatic file and over
             config.update(item)
 
         model = config.resolve("model")
+
 
     if __name__ == "__main__":
         app()
@@ -87,6 +91,7 @@ Override configuration values from the command line with automatic file and over
     import fire
     from sparkwheel import Config
 
+
     class TrainCLI:
         def train(self, *inputs):
             config = Config()
@@ -94,6 +99,7 @@ Override configuration values from the command line with automatic file and over
                 config.update(item)
 
             model = config.resolve("model")
+
 
     if __name__ == "__main__":
         fire.Fire(TrainCLI)
@@ -158,11 +164,13 @@ import argparse
 from dataclasses import dataclass
 from sparkwheel import Config
 
+
 @dataclass
 class TrainingConfig:
     model: dict
     optimizer: dict
     trainer: dict
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("inputs", nargs="+")

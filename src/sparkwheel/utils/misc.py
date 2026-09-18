@@ -3,7 +3,7 @@ import warnings
 from collections.abc import Iterable
 from typing import Any, TypeVar
 
-from yaml import SafeLoader  # type: ignore[import-untyped]
+from yaml import SafeLoader
 from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 

@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from .locations import LocationRegistry
 from .path_utils import is_yaml_file
@@ -157,7 +157,7 @@ class Loader:
         """Load YAML and populate metadata registry during construction.
 
         Args:
-            stream: File stream to load from
+            stream (Any): File stream to load from
             filepath: Path string for error messages
             registry: LocationRegistry to populate
 

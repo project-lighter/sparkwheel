@@ -922,7 +922,7 @@ class Config:
             filepath: Target file path
             kwargs: Additional arguments for yaml.safe_dump
         """
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         filepath_str = str(Path(filepath))
         with open(filepath_str, "w") as f:

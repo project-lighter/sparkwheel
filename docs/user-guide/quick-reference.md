@@ -19,7 +19,7 @@ A one-page cheat sheet for Sparkwheel syntax and features.
     |------------|-------------|---------|
     | `$(@a + @b)` | Math operations | `$(@lr * 0.1)` |
     | `$(@name + "_v2")` | String concatenation | `$(@model_name + "_trained")` |
-    | `$(@debug ? "dev" : "prod")` | Ternary conditional | `$(@is_training ? 0.5 : 0.0)` |
+    | `$"dev" if @debug else "prod"` | Ternary conditional | `$0.5 if @is_training else 0.0` |
     | `$(@items[0])` | Dynamic indexing | `$(@datasets[@mode])` |
     | `$len(@items)` | Built-in functions | `$len(@layers)` |
 
@@ -28,7 +28,7 @@ A one-page cheat sheet for Sparkwheel syntax and features.
     | Operator | Purpose | Example | Result |
     |----------|---------|---------|--------|
     | `=key` | Replace (don't merge) | `=optimizer: sgd` | Replaces entire dict/value |
-    | `~key` | Delete key | `~debug: true` | Removes the key |
+    | `~key` | Delete key | `~debug: null` | Removes the key |
     | `~list: [0, 2]` | Delete list items | `~layers: [1, 3]` | Removes items at indices 1 and 3 |
     | (none) | Default: Merge | `model: {size: 512}` | Merges with existing dict |
 
@@ -123,14 +123,21 @@ model:
 
 ## Type Coercion
 
-| From | To | Supported | Notes |
-|------|----|-----------| ------|
-| str → int | ✅ | `"42"` → `42` |
-| str → float | ✅ | `"3.14"` → `3.14` |
-| str → bool | ✅ | `"true"` → `True` | Accepts: true/false, yes/no, 1/0 |
-| int → float | ✅ | `42` → `42.0` |
-| float → int | ✅ | `3.14` → `3` | Truncates decimal |
-| Any → str | ✅ | Universal |
+With `Config(schema=MySchema, coerce=True)`, unambiguous compatible values can
+be normalized before validation:
+
+| Conversion | Example | Boundary |
+|------------|---------|----------|
+| str → int | `"42"` → `42` | Must be valid integer text |
+| str → float | `"3.14"` → `3.14` | Must be valid floating-point text |
+| str → bool | `"true"` → `True` | true/false, yes/no, 1/0 |
+| int → float | `42` → `42.0` | Must be exactly representable |
+| float → int | `3.0` → `3` | Fractional values such as `3.14` are rejected |
+| int/float/bool → str | `42` → `"42"` | Arbitrary objects are not stringified |
+
+Boolean values do not satisfy numeric schema fields. Ambiguous union coercions
+fail; already-valid alternatives keep their type. Defaults are checked without
+injecting them into authored constructor arguments.
 
 ## CLI Overrides
 
@@ -143,23 +150,23 @@ model:
 === "Nested Keys"
 
     ```bash
-    python train.py model.hidden_size=1024 optimizer.lr=0.001
+    python train.py model::hidden_size=1024 optimizer::lr=0.001
     ```
 
 === "List Values"
 
     ```bash
-    python train.py layers=[128,256,512]
+    python train.py 'layers=[128,256,512]'
     ```
 
 === "Replace vs Merge"
 
     ```bash
     # Merge (default)
-    python train.py model.dropout=0.2
+    python train.py model::dropout=0.2
 
     # Replace entire section
-    python train.py =model={hidden_size:1024}
+    python train.py '=model={hidden_size: 1024}'
     ```
 
 ## Schema Validation
@@ -167,6 +174,7 @@ model:
 ```python
 from dataclasses import dataclass
 from sparkwheel import Config, validator
+
 
 @dataclass
 class AppConfigSchema:
@@ -179,6 +187,7 @@ class AppConfigSchema:
         if not (1024 <= self.port <= 65535):
             raise ValueError(f"Invalid port: {self.port}")
 
+
 # Continuous validation (validates on every mutation)
 config = Config(schema=AppConfigSchema)
 
@@ -190,13 +199,14 @@ config.validate(AppConfigSchema)
 
 ## Resolution Order
 
-References are resolved in dependency order:
+References resolve on access and share their per-mode cache. Python expressions
+only access the branches Python selects:
 
 ```yaml
 a: 10
-b: "@a"              # Resolved first (depends on a)
-c: "$@a + @b"        # Resolved after a and b
-d: "$@c * 2"         # Resolved last (depends on c)
+b: "@a"              # Resolves a when b is requested
+c: "$@a + @b"        # Uses a and b from the same cache
+d: "$@c * 2"         # Resolves c when d is requested
 ```
 
 !!! danger "Avoid Circular References"
@@ -210,8 +220,8 @@ d: "$@c * 2"         # Resolved last (depends on c)
 
 !!! success "Do This"
     - ✅ Use `@` references for DRY config
-    - ✅ Enable schema validation for type safety
-    - ✅ Leverage composition-by-default (no operators needed)
+    - ✅ Enable schema validation for argument checks
+    - ✅ Use composition by default
     - ✅ Use expressions for computed values
     - ✅ Keep configs simple and readable
 
@@ -230,7 +240,8 @@ d: "$@c * 2"         # Resolved last (depends on c)
 | **Type mismatch** | Schema expects `int`, got `str` | Enable coercion or fix type |
 | **Expression error** | Invalid Python in `$()` | Check syntax and references |
 | **Unexpected merge** | Dict merged when you wanted replace | Use `=key` to replace |
-| **List not extending** | List replaced instead of extended | This is default for scalars, expected |
+| **List not extending** | `=key` explicitly replaces a list | Use plain `key` to append entries |
+| **Duplicate YAML key** | The same key appears twice in one mapping | Keep one definition or compose separate files |
 
 ## File Organization
 
@@ -274,18 +285,15 @@ project/
 
 ## Performance Tips
 
-!!! info "Expression Evaluation"
-    Expressions are evaluated at **access time**. For frequently accessed values:
+!!! info "Cached Resolution"
+    Repeated `config.resolve("computed_value")` calls in the same mode return the
+    cached result. Successful source edits or `resolve(lazy=False)` start a fresh
+    generation. Old returned callbacks and generators retain their build
+    generation; they do not silently switch to edited definitions.
 
     ```python
-    # Slow: Re-evaluates expression each time
-    for i in range(1000):
-        x = config.resolve("computed_value")
-
-    # Fast: Evaluate once
-    computed = config.resolve("computed_value")
-    for i in range(1000):
-        x = computed
+    first = config.resolve("computed_value")
+    assert config.resolve("computed_value") is first
     ```
 
 ## Next Steps

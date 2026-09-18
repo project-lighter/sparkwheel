@@ -50,9 +50,7 @@ model:
 ```
 
 ```python
-config = (Config()
-          .update("base.yaml")
-          .update("override.yaml"))
+config = Config().update("base.yaml").update("override.yaml")
 # Result:
 # model:
 #   hidden_size: 1024   (updated)
@@ -90,9 +88,7 @@ When you need to completely replace something, use `=key`:
 ```
 
 ```python
-config = (Config()
-          .update("base.yaml")
-          .update("override.yaml"))
+config = Config().update("base.yaml").update("override.yaml")
 # Result:
 # model:
 #   hidden_size: 1024  (only this remains)
@@ -280,21 +276,20 @@ config.update({"model": {"hidden_size": 1024}})
 config.update({"=optimizer": {"type": "sgd", "lr": 0.1}})
 
 # Delete keys
-config.update({
-    "~training::old_param": None,
-    "~model::dropout": None
-})
+config.update({"~training::old_param": None, "~model::dropout": None})
 
 # Combine operations
-config.update({
-    "model": {                      # Merge
-        "hidden_size": 1024,        # Update
-        "~dropout": None            # Delete
-    },
-    "=database": {                  # Replace
-        "host": "prod.example.com"
+config.update(
+    {
+        "model": {  # Merge
+            "hidden_size": 1024,  # Update
+            "~dropout": None,  # Delete
+        },
+        "=database": {  # Replace
+            "host": "prod.example.com"
+        },
     }
-})
+)
 
 # Remove list items by index
 config.update({"~plugins": [0, 2, 4]})
@@ -377,12 +372,14 @@ plugins:
 
 ```python
 # Build configs in layers (all compose naturally!)
-config = (Config()
-          .update("defaults.yaml")
-          .update("models/resnet50.yaml")
-          .update("datasets/imagenet.yaml")
-          .update("experiments/exp_042.yaml")
-          .update("env/production.yaml"))
+config = (
+    Config()
+    .update("defaults.yaml")
+    .update("models/resnet50.yaml")
+    .update("datasets/imagenet.yaml")
+    .update("experiments/exp_042.yaml")
+    .update("env/production.yaml")
+)
 ```
 
 ## Best Practices

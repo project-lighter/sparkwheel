@@ -82,9 +82,7 @@ training:
 Load both configs:
 
 ```python
-config = (Config()
-          .update("config.yaml")
-          .update("experiment_large.yaml"))
+config = Config().update("config.yaml").update("experiment_large.yaml")
 
 model = config.resolve("model")  # Linear(1568, 10) - merged automatically!
 lr = config["training::learning_rate"]  # 0.0001

@@ -131,9 +131,7 @@ If you're tired of **hardcoding parameters** and want **configuration-driven wor
     import sys
 
     # Load base + experiment (composes automatically!)
-    config = (Config()
-              .update("config.yaml")
-              .update("experiment_large.yaml"))
+    config = Config().update("config.yaml").update("experiment_large.yaml")
 
     # Or override from CLI (parse args yourself)
     config = Config()
@@ -144,6 +142,7 @@ If you're tired of **hardcoding parameters** and want **configuration-driven wor
             # Simple parsing - use ast.literal_eval for type conversion
             try:
                 import ast
+
                 value = ast.literal_eval(value)
             except (ValueError, SyntaxError):
                 pass  # Keep as string

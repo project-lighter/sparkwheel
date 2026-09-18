@@ -32,11 +32,13 @@ Define a schema with dataclasses:
 from dataclasses import dataclass
 from sparkwheel import Config
 
+
 @dataclass
 class AppConfigSchema:
     name: str
     port: int
     debug: bool = False
+
 
 # Continuous validation - validates on every update/set!
 config = Config(schema=AppConfigSchema)  # (1)!
@@ -113,6 +115,7 @@ class ConfigSchema:
 ```python
 from typing import Optional
 
+
 @dataclass
 class ConfigSchema:
     required: str
@@ -128,6 +131,7 @@ class DatabaseConfigSchema:
     host: str
     port: int
     pool_size: int = 10
+
 
 @dataclass
 class AppConfigSchema:
@@ -154,6 +158,7 @@ class PluginConfigSchema:
     name: str
     enabled: bool = True
 
+
 @dataclass
 class AppConfigSchema:
     plugins: list[PluginConfigSchema]
@@ -176,6 +181,7 @@ class ModelConfigSchema:
     hidden_size: int
     dropout: float
 
+
 @dataclass
 class ConfigSchema:
     models: dict[str, ModelConfigSchema]
@@ -197,6 +203,7 @@ Add validation logic with `@validator`:
 
 ```python
 from sparkwheel import validator
+
 
 @dataclass
 class TrainingConfigSchema:
@@ -268,17 +275,20 @@ Use tagged unions for type-safe variants:
 ```python
 from typing import Literal, Union
 
+
 @dataclass
 class SGDOptimizerSchema:
     type: Literal["sgd"]  # Discriminator
     lr: float
     momentum: float = 0.9
 
+
 @dataclass
 class AdamOptimizerSchema:
     type: Literal["adam"]  # Discriminator
     lr: float
     beta1: float = 0.9
+
 
 @dataclass
 class ConfigSchema:
@@ -327,17 +337,20 @@ class ServerConfigSchema:
     timeout: float
     enabled: bool
 
+
 # Coercion enabled by default
 config = Config(schema=ServerConfigSchema)
-config.update({
-    "port": "8080",        # str → int
-    "timeout": "30.5",     # str → float
-    "enabled": "true"      # str → bool
-})
+config.update(
+    {
+        "port": "8080",  # str → int
+        "timeout": "30.5",  # str → float
+        "enabled": "true",  # str → bool
+    }
+)
 
-print(config["port"])      # 8080 (int, not str!)
-print(config["timeout"])   # 30.5 (float)
-print(config["enabled"])   # True (bool)
+print(config["port"])  # 8080 (int, not str!)
+print(config["timeout"])  # 30.5 (float)
+print(config["enabled"])  # True (bool)
 ```
 
 **Supported coercions:**
@@ -351,9 +364,11 @@ print(config["enabled"])   # True (bool)
 
 ```python
 config = Config(schema=ServerConfigSchema, coerce=False)
-config.update({
-    "port": "8080"  # ValidationError: expected int, got str
-})
+config.update(
+    {
+        "port": "8080"  # ValidationError: expected int, got str
+    }
+)
 ```
 
 ## Strict vs Lenient Mode
@@ -365,19 +380,24 @@ Control whether extra fields are rejected:
 class MySchema:
     required_field: int
 
+
 # Strict mode (default) - rejects extra fields
 config = Config(schema=MySchema, strict=True)
-config.update({
-    "required_field": 42,
-    "extra_field": "oops"  # ✗ ValidationError!
-})
+config.update(
+    {
+        "required_field": 42,
+        "extra_field": "oops",  # ✗ ValidationError!
+    }
+)
 
 # Lenient mode - allows extra fields
 config = Config(schema=MySchema, strict=False)
-config.update({
-    "required_field": 42,
-    "extra_field": "ok"  # ✓ Allowed
-})
+config.update(
+    {
+        "required_field": 42,
+        "extra_field": "ok",  # ✓ Allowed
+    }
+)
 ```
 
 Use lenient mode for:
@@ -392,21 +412,21 @@ Support partial configs with required-but-not-yet-set values:
 ```python
 from sparkwheel import Config, MISSING
 
+
 @dataclass
 class APIConfigSchema:
     api_key: str
     endpoint: str
     timeout: int = 30
 
+
 # Partial config - api_key not set yet
 config = Config(schema=APIConfigSchema, allow_missing=True)
-config.update({
-    "api_key": MISSING,
-    "endpoint": "https://api.example.com"
-})
+config.update({"api_key": MISSING, "endpoint": "https://api.example.com"})
 
 # Later, fill in the missing value
 import os
+
 config.set("api_key", os.getenv("API_KEY"))
 
 # Now validate that nothing is MISSING
@@ -424,7 +444,7 @@ config.freeze()
 
 # Mutations now raise FrozenConfigError
 config.set("model::lr", 0.001)  # ✗ FrozenConfigError!
-config.update({"new": "data"})   # ✗ FrozenConfigError!
+config.update({"new": "data"})  # ✗ FrozenConfigError!
 
 # Read operations still work
 value = config.get("model::lr")
@@ -447,11 +467,14 @@ class ConfigSchema:
     base_lr: float
     optimizer_lr: float  # Can be a reference
 
+
 config = Config(schema=ConfigSchema)
-config.update({
-    "base_lr": 0.001,
-    "optimizer_lr": "@base_lr"  # Reference allowed
-})
+config.update(
+    {
+        "base_lr": 0.001,
+        "optimizer_lr": "@base_lr",  # Reference allowed
+    }
+)
 ```
 
 ### Expressions
@@ -462,11 +485,14 @@ class ConfigSchema:
     batch_size: int
     total_steps: int  # Computed
 
+
 config = Config(schema=ConfigSchema)
-config.update({
-    "batch_size": 32,
-    "total_steps": "$@batch_size * 100"  # Expression allowed
-})
+config.update(
+    {
+        "batch_size": 32,
+        "total_steps": "$@batch_size * 100",  # Expression allowed
+    }
+)
 ```
 
 ### Instantiation
@@ -479,12 +505,15 @@ class OptimizerConfigSchema:
     lr: float
     momentum: float = 0.9
 
+
 config = Config(schema=OptimizerConfigSchema)
-config.update({
-    "_target_": "torch.optim.SGD",  # Ignored by validation
-    "lr": 0.001,
-    "momentum": 0.95
-})
+config.update(
+    {
+        "_target_": "torch.optim.SGD",  # Ignored by validation
+        "lr": 0.001,
+        "momentum": 0.95,
+    }
+)
 ```
 
 ## Error Messages
@@ -587,6 +616,7 @@ from dataclasses import dataclass
 from typing import Optional
 from sparkwheel import Config, validator
 
+
 @dataclass
 class DatabaseConfigSchema:
     host: str
@@ -596,6 +626,7 @@ class DatabaseConfigSchema:
     password: str
     pool_size: int = 10
     timeout: int = 30
+
 
 @dataclass
 class APIConfigSchema:
@@ -608,6 +639,7 @@ class APIConfigSchema:
         if not (1024 <= self.port <= 65535):
             raise ValueError(f"port must be 1024-65535, got {self.port}")
 
+
 @dataclass
 class AppConfigSchema:
     app_name: str
@@ -615,6 +647,7 @@ class AppConfigSchema:
     api: APIConfigSchema
     database: DatabaseConfigSchema
     debug: bool = False
+
 
 # Load and validate continuously
 config = Config(schema=AppConfigSchema)
