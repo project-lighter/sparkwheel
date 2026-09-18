@@ -186,6 +186,8 @@ class Resolver:
         if id in resolved:
             return resolved[id]
 
+        self._prepare_item(id)
+
         # Look up the item
         try:
             item = look_up_option(id, self._items, print_all_options=False, default=default or "no_default")
@@ -230,9 +232,7 @@ class Resolver:
         waiting_list.add(id)
 
         # First, resolve any import expressions (they need to run first)
-        for t, v in self._items.items():
-            if t not in resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
-                resolved[t] = v.evaluate() if eval_expr else v
+        self._resolve_imports(resolved, eval_expr)
 
         # Find all references in this item's config
         refs = self.find_refs_in_config(config=item_config, id=id)
@@ -248,6 +248,7 @@ class Resolver:
 
             # Resolve dependency if not already resolved
             if dep_id not in resolved:
+                self._prepare_item(dep_id)
                 try:
                     look_up_option(dep_id, self._items, print_all_options=False)
                 except ValueError as err:
@@ -274,7 +275,7 @@ class Resolver:
                 waiting_list.discard(dep_id)
 
         # All dependencies resolved, now resolve this item
-        new_config = self.update_config_with_refs(config=item_config, id=id, refs=resolved)
+        new_config = self._substitute_refs(config=item_config, id=id, refs=resolved)
         # Replacing references is mode-specific. Keep the registered definition
         # intact so another mode never inherits instantiated objects or wrappers.
         # A shallow copy retains opaque Python inputs without cloning them;
@@ -291,6 +292,17 @@ class Resolver:
             resolved[id] = new_config
 
         return resolved[id]
+
+    def _prepare_item(self, id: str) -> None:
+        """Extension point for scoped, on-demand definitions."""
+
+    def _resolve_imports(self, resolved: dict[str, Any], eval_expr: bool) -> None:
+        for id, item in self._items.items():
+            if id not in resolved and isinstance(item, Expression) and item.is_import_statement(item.get_config()):
+                resolved[id] = item.evaluate() if eval_expr else item
+
+    def _substitute_refs(self, config: Any, id: str, refs: dict[str, Any]) -> Any:
+        return self.update_config_with_refs(config=config, id=id, refs=refs)
 
     @classmethod
     def normalize_id(cls, id: str | int) -> str:

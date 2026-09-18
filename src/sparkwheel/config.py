@@ -96,7 +96,7 @@ See Config class docstring for full API details.
 """
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .loader import Loader
 from .locations import LocationRegistry
@@ -108,6 +108,9 @@ from .resolver import Resolver
 from .utils import PathLike, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
 from .utils.exceptions import ConfigKeyError, build_missing_key_error
+
+if TYPE_CHECKING:
+    from .construction import RetainedConfig
 
 __all__ = ["Config", "parse_overrides"]
 
@@ -585,6 +588,16 @@ class Config:
         """Parse and apply a single override string (e.g., 'key=value', '=key=value', '~key')."""
         overrides_dict = parse_overrides([override])
         self._apply_path_updates(overrides_dict)
+
+    def retain(self) -> "RetainedConfig":
+        """Capture source and caller imports for independent construction scopes.
+
+        This does not resolve, import, or construct configured objects. Opaque
+        Python inputs retain their identity; existing runtime caches are excluded.
+        """
+        from .construction import RetainedConfig
+
+        return RetainedConfig(self)
 
     def resolve(
         self,

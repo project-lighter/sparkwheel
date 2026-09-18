@@ -54,6 +54,60 @@ resolved value should use `resolve()`.
 These options are not a pure static-inspection API: configuration
 imports can still run, and either enabled option can execute Python code.
 
+## Retained recipes and construction scopes
+
+Framework integrations can capture a configuration definition and create isolated
+runtime graphs without adding YAML syntax:
+
+```python
+config = Config().update({
+    "network": {"_target_": "myproject.Network"},
+    "optimizer": {"_target_": "myproject.Optimizer", "network": "@network"},
+})
+recipe = config.retain()
+network_scope = recipe.scope(blocked_paths={"optimizer"})
+network = network_scope.resolve("network")
+optimizer_scope = recipe.scope(bindings={"network": network})
+optimizer = optimizer_scope.resolve("optimizer")
+```
+
+`retain()` captures source containers, locations, and caller-provided import
+bindings, without copying runtime caches. Opaque Python leaves retain their
+identity. Creating a recipe or scope executes no configured imports or targets;
+resolution creates a fresh namespace and cache for that scope. Local `%` copies
+remain independent recipes; `@` aliases share resolved objects within one scope.
+New scopes share only explicitly supplied bindings or caller-owned opaque inputs.
+
+Bindings are authoritative **exact source paths**, checked before their recipes
+or dependencies are traversed. A bound parent suppresses its subtree when
+resolving that parent or an ancestor. Explicitly resolving an unbound descendant
+still builds that descendant's source recipe; it does not read an attribute from
+the bound object. For example, binding `model` and `model::network` still permits
+resolving `model::optimizer` from its definition.
+
+Blocked paths prohibit their nodes and descendants. Explicit reachable references
+are checked before imports or construction; bound subtrees are pruned from that
+check. Binding a parent and blocking one of its descendants is valid. Binding at
+or beneath a blocked path fails. This is graph checking, not static analysis of
+arbitrary Python code inside expressions or constructors.
+
+`scope.bind(path, value)` adds a binding for a valid source path. The same identity
+may be bound repeatedly. A different identity cannot replace a value already
+resolved or consumed by a cached ancestor: create a fresh scope instead. This
+prevents cached parents from silently retaining old children.
+
+`scope.materialized_components()` returns a defensive mapping of `_target_` paths
+to objects constructed in the scope. It excludes merely supplied bindings,
+disabled components, expressions and iterator outputs (including iterators returned by a target). The mapped objects
+remain live objects; modifying the returned dictionary does not change scope
+bookkeeping.
+
+Use `Config.update()` to snapshot external `%file.yaml` includes before retaining.
+Direct `Config(data=...)` inputs containing unexpanded external includes are not
+loaded later by a scope. Retention is not a serializer or a guarantee of deep
+immutability for opaque inputs. Ordinary `Config.resolve()` retains its existing
+cache and ownership behavior.
+
 ## Frozen Configs
 
 Prevent modifications after initialization:
