@@ -299,7 +299,17 @@ class Resolver:
     def _resolve_imports(self, resolved: dict[str, Any], eval_expr: bool) -> None:
         for id, item in self._items.items():
             if id not in resolved and isinstance(item, Expression) and item.is_import_statement(item.get_config()):
-                resolved[id] = item.evaluate() if eval_expr else item
+                self._resolve_import_item(item, id, resolved, eval_expr)
+
+    @staticmethod
+    def _resolve_import_item(item: Expression, id: str, resolved: dict[str, Any], eval_expr: bool) -> None:
+        if not eval_expr:
+            # Each requested wrapper still needs ordinary dependency preparation;
+            # global declaration discovery must not cache untouched definitions.
+            return
+        imported = item.load_imports()
+        if item.is_import_only():
+            resolved[id] = imported
 
     def _substitute_refs(self, config: Any, id: str, refs: dict[str, Any]) -> Any:
         return self.update_config_with_refs(config=config, id=id, refs=refs)

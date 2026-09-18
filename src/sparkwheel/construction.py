@@ -248,7 +248,7 @@ class _ScopedResolver(Resolver):
             if id not in self._scope._active_paths and any(_within(id, parent) for parent in self._scope._bindings):
                 continue
             if id not in resolved and isinstance(item, Expression) and item.is_import_statement(item.get_config()):
-                resolved[id] = item.evaluate() if eval_expr else item
+                self._resolve_import_item(item, id, resolved, eval_expr)
 
     def _substitute_refs(self, config: Any, id: str, refs: dict[str, Any]) -> Any:
         if id in self._scope._bindings:

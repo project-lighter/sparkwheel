@@ -28,6 +28,22 @@ training:
   steps_per_epoch: "$@training::total_samples // @training::batch_size"
 ```
 
+Quoted Python strings, raw strings, triple-quoted strings and comments keep their
+literal `@` text; `$'me@example.com'` returns the email address. Ordinary Python
+matrix multiplication remains an operator. Whole-value references such as
+`"@learning-rate"` can address hyphenated keys; expression references retain the
+`@word::path` grammar. Use a referenced mapping and normal Python indexing for
+punctuated nested keys, such as `$@settings["learning-rate"]`.
+
+F-string literal text is preserved, including `@`. Configuration reference syntax
+inside f-string replacement fields is not supported; use ordinary Python string
+formatting such as `$"value={}".format(@value)`.
+
+Configuration references are currently resolved before evaluating the Python
+expression. `$@a if True else @bad` therefore resolves both referenced nodes.
+Python-only expressions such as `$1 if True else 1/0` short-circuit normally.
+This graph-reference behavior remains an explicit limitation.
+
 ## Importing Modules
 
 Import Python libraries in expressions:
@@ -43,6 +59,21 @@ device: "$import torch; 'cuda' if torch.cuda.is_available() else 'cpu'"
 # Get environment variable
 db_host: "$import os; os.getenv('DB_HOST', 'localhost')"
 ```
+
+An import prefix may contain one or more `import`/`from` statements, followed by
+one final Python expression. All aliases are bound with Python's normal import
+rules, and the final expression supplies the value. A bare import retains the
+first imported binding as its result. Arbitrary statement blocks and assignments
+are not part of this expression form.
+
+Import declarations are made available to the configuration generation before
+ordinary expression evaluation. A trailing expression runs only when its node
+is requested or is a dependency, after its references resolve. For example,
+`$import math; math.sqrt(@n)` imports `math`, resolves `n`, then evaluates the square root.
+
+Migration: older versions ignored all but the first alias and discarded the
+expression after an import. All listed aliases now import, and the final
+expression now executes and returns its value; failures are no longer hidden.
 
 ## Complex Expressions
 
