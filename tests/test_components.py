@@ -786,3 +786,25 @@ class TestResolver:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.parametrize("options", [{"instantiate": False}, {"eval_expr": False}])
+def test_resolver_reset_clears_nondefault_mode(options):
+    resolver = Resolver(items=[Component({"_target_": "builtins.dict", "value": 1}, id="component")])
+    resolver.resolve("component", **options)
+    assert resolver.is_resolved()
+    resolver.reset()
+    assert not resolver.is_resolved()
+    assert resolver.get_item("component") is None
+
+
+def test_get_item_resolve_populates_requested_mode_without_rewriting_source():
+    source = {"_target_": "builtins.dict", "value": "@number"}
+    item = Component(source, id="component")
+    resolver = Resolver(items=[item, Expression("$2 * 4", id="number")])
+    assert resolver.get_item("component", resolve=True, instantiate=False, eval_expr=False) is item
+    built = resolver.resolve("component")
+    assert built == {"value": 8}
+    assert resolver.get_item("component", resolve=True) is item
+    assert resolver.resolve("component") is built
+    assert item.get_config() == source

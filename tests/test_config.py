@@ -13,12 +13,14 @@ This module contains all tests for the Config class, organized by functionality:
 """
 
 import tempfile
+from copy import deepcopy
+from itertools import permutations
 from pathlib import Path
 
 import pytest
 import yaml
 
-from sparkwheel import Config, apply_operators
+from sparkwheel import Component, Config, Expression, Item, apply_operators
 from sparkwheel.path_utils import resolve_relative_ids, split_file_and_id
 
 
@@ -1578,3 +1580,78 @@ class TestConfigFreeze:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestResolutionModeIsolation:
+    """Resolving in one mode must not change another mode's representation."""
+
+    MODES = [(True, True), (True, False), (False, True), (False, False)]
+
+    @staticmethod
+    def recipe():
+        return {
+            "base": 4,
+            "number": "$@base * 2",
+            "component": {
+                "_target_": "builtins.dict",
+                "value": "@number",
+                "nested": {"_target_": "builtins.list", "_args_": [["@base"]]},
+            },
+            "alias": "@component",
+        }
+
+    @classmethod
+    def representation(cls, value):
+        if isinstance(value, Item):
+            return (type(value), cls.representation(value.get_config()))
+        if isinstance(value, dict):
+            return {key: cls.representation(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls.representation(item) for item in value]
+        return value
+
+    @pytest.mark.parametrize("first_mode,second_mode", list(permutations(MODES, 2)))
+    def test_modes_match_fresh_configs_in_both_orders(self, first_mode, second_mode):
+        source = self.recipe()
+        config = Config(data=deepcopy(source))
+        results = []
+        for instantiate, eval_expr in (first_mode, second_mode):
+            options = {"instantiate": instantiate, "eval_expr": eval_expr}
+            actual = config.resolve(**options)
+            fresh = Config(data=self.recipe()).resolve(**options)
+            assert self.representation(actual) == self.representation(fresh)
+            assert actual["alias"] is actual["component"]
+            if instantiate:
+                assert isinstance(actual["component"], dict)
+            else:
+                assert isinstance(actual["component"], Component)
+            if eval_expr:
+                assert actual["number"] == 8
+            else:
+                assert isinstance(actual["number"], Expression)
+            results.append(actual)
+
+        # Returning to a previous mode must retain its own shared objects.
+        for mode, result in zip((first_mode, second_mode), results, strict=True):
+            assert config.resolve(instantiate=mode[0], eval_expr=mode[1]) is result
+            assert config.resolve("alias", instantiate=mode[0], eval_expr=mode[1]) is result["component"]
+        assert config.get() == source
+
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("edit", ["set", "update", "lazy_false"])
+    def test_edit_invalidates_all_resolution_modes(self, mode, edit):
+        config = Config(data=self.recipe())
+        before = {options: config.resolve(instantiate=options[0], eval_expr=options[1]) for options in self.MODES}
+        if edit == "set":
+            config.set("base", 7)
+        elif edit == "update":
+            config.update({"=base": 7})
+        else:
+            config.resolve(lazy=False)
+        after = config.resolve(instantiate=mode[0], eval_expr=mode[1])
+        fresh_source = self.recipe()
+        if edit != "lazy_false":
+            fresh_source["base"] = 7
+        fresh = Config(data=fresh_source).resolve(instantiate=mode[0], eval_expr=mode[1])
+        assert after is not before[mode]
+        assert self.representation(after) == self.representation(fresh)

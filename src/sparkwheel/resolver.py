@@ -2,6 +2,7 @@
 
 import warnings
 from collections.abc import Iterator
+from copy import copy
 from typing import Any
 
 from .items import Component, Expression, Item
@@ -53,7 +54,9 @@ class Resolver:
             items: Optional list of Items to add during initialization
         """
         self._items: dict[str, Item] = {}
+        # Keep the default cache available for existing internal integrations.
         self._resolved: dict[str, Any] = {}
+        self._resolved_by_mode: dict[tuple[bool, bool], dict[str, Any]] = {(True, True): self._resolved}
 
         if items:
             for item in items:
@@ -63,10 +66,11 @@ class Resolver:
         """Clear all items and resolved content."""
         self._items = {}
         self._resolved = {}
+        self._resolved_by_mode = {(True, True): self._resolved}
 
     def is_resolved(self) -> bool:
         """Check if any items have been resolved."""
-        return bool(self._resolved)
+        return any(self._resolved_by_mode.values())
 
     def add_item(self, item: Item) -> None:
         """Add a Item to resolve.
@@ -96,7 +100,7 @@ class Resolver:
             self.add_item(item)
 
     def get_item(self, id: str, resolve: bool = False, **kwargs: Any) -> Item | None:
-        """Get Item by id, optionally resolved.
+        """Get the registered Item by id, optionally populating the resolution cache.
 
         Args:
             id: ID of the config item
@@ -104,10 +108,10 @@ class Resolver:
             **kwargs: Additional arguments for resolution
 
         Returns:
-            Item if found, None otherwise (or resolved value if resolve=True)
+            The original Item if found, None otherwise. Use resolve() for its resolved value.
         """
         id = self.normalize_id(id)
-        if resolve and id not in self._resolved:
+        if resolve:
             self._resolve_one_item(id=id, **kwargs)
         return self._items.get(id)
 
@@ -121,7 +125,9 @@ class Resolver:
         """Resolve a config item and return the result.
 
         Resolves all references, instantiates components (if requested), and
-        evaluates expressions (if requested). Results are cached for efficiency.
+        evaluates expressions (if requested). Each (instantiate, eval_expr) pair
+        has a separate cache. Repeated calls in the same mode share resolved objects,
+        including after calls in a different mode.
 
         Args:
             id: ID of item to resolve (empty string for root)
@@ -174,9 +180,11 @@ class Resolver:
 
         id = self.normalize_id(id)
 
+        resolved = self._resolved_by_mode.setdefault((instantiate, eval_expr), {})
+
         # Return cached result if available
-        if id in self._resolved:
-            return self._resolved[id]
+        if id in resolved:
+            return resolved[id]
 
         # Look up the item
         try:
@@ -223,8 +231,8 @@ class Resolver:
 
         # First, resolve any import expressions (they need to run first)
         for t, v in self._items.items():
-            if t not in self._resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
-                self._resolved[t] = v.evaluate() if eval_expr else v
+            if t not in resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
+                resolved[t] = v.evaluate() if eval_expr else v
 
         # Find all references in this item's config
         refs = self.find_refs_in_config(config=item_config, id=id)
@@ -239,7 +247,7 @@ class Resolver:
                 )
 
             # Resolve dependency if not already resolved
-            if dep_id not in self._resolved:
+            if dep_id not in resolved:
                 try:
                     look_up_option(dep_id, self._items, print_all_options=False)
                 except ValueError as err:
@@ -266,18 +274,23 @@ class Resolver:
                 waiting_list.discard(dep_id)
 
         # All dependencies resolved, now resolve this item
-        new_config = self.update_config_with_refs(config=item_config, id=id, refs=self._resolved)
+        new_config = self.update_config_with_refs(config=item_config, id=id, refs=resolved)
+        # Replacing references is mode-specific. Keep the registered definition
+        # intact so another mode never inherits instantiated objects or wrappers.
+        # A shallow copy retains opaque Python inputs without cloning them;
+        # update_config_with_refs has already rebuilt the config containers.
+        item = copy(item)
         item.update_config(config=new_config)
 
         # Generate final resolved value based on item type
         if isinstance(item, Component):
-            self._resolved[id] = item.instantiate() if instantiate else item
+            resolved[id] = item.instantiate() if instantiate else item
         elif isinstance(item, Expression):
-            self._resolved[id] = item.evaluate(globals={f"{self._vars}": self._resolved}) if eval_expr else item
+            resolved[id] = item.evaluate(globals={f"{self._vars}": resolved}) if eval_expr else item
         else:
-            self._resolved[id] = new_config
+            resolved[id] = new_config
 
-        return self._resolved[id]
+        return resolved[id]
 
     @classmethod
     def normalize_id(cls, id: str | int) -> str:

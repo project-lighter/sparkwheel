@@ -1,5 +1,33 @@
 # Advanced Features
 
+## Resolution modes and object sharing
+
+`resolve()` caches results separately for each pair of `instantiate` and
+`eval_expr` options. Switching options cannot return a representation left by an
+earlier call. Within the same mode, repeated resolution and `@` references retain
+shared object identity, including after switching away and back.
+
+```python
+from sparkwheel import Config
+
+config = Config().update({"object": {"_target_": "builtins.dict", "value": 8}})
+definition = config.resolve("object", instantiate=False)  # Component wrapper
+instance = config.resolve("object")                     # {"value": 8}
+assert config.resolve("object") is instance
+assert config.resolve("object", instantiate=False) is definition
+```
+
+`instantiate=False` returns `Component` wrappers; `eval_expr=False` returns
+`Expression` wrappers. References inside these wrappers are still resolved in the
+selected mode. Different modes may construct separate objects and evaluate
+expressions separately. Successful config edits or `resolve(lazy=False)` clear all
+resolution modes. `Resolver.get_item()` now consistently keeps the registered
+Item definition, including after `get_item(resolve=True)`; callers needing a
+resolved value should use `resolve()`.
+
+These options are not a pure static-inspection API: configuration
+imports can still run, and either enabled option can execute Python code.
+
 ## Frozen Configs
 
 Prevent modifications after initialization:

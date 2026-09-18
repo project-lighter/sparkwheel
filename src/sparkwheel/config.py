@@ -591,7 +591,9 @@ class Config:
         4. Caches results in a separate resolution cache (`_resolver._resolved`)
 
         Unlike get(), which always returns raw `_data`, resolve() performs full processing
-        and uses a separate cache for efficiency.
+        and uses a separate cache for each (instantiate, eval_expr) pair. Repeating
+        a mode preserves its shared objects even after resolving in another mode.
+        Editing the config or passing lazy=False invalidates all modes.
 
         Processing stages:
         - `%` raw references: Already expanded during update() (eager)
@@ -642,8 +644,8 @@ class Config:
             >>> type(optimizer).__name__
             'Adam'
 
-            >>> # Disable instantiation (useful for inspection)
-            >>> config.resolve("optimizer", instantiate=False)
+            >>> # Disable instantiation (returns a Component wrapper)
+            >>> config.resolve("optimizer", instantiate=False).get_config()
             {'_target_': 'torch.optim.Adam', 'lr': 0.001}
 
             >>> # With default value
