@@ -97,6 +97,13 @@ check. Binding a parent and blocking one of its descendants is valid. Binding at
 or beneath a blocked path fails. This is graph checking, not static analysis of
 arbitrary Python code inside expressions or constructors.
 
+A static true `_disabled_` guard (including an exact literal guard binding) prunes
+its payload before preflight. The guard itself remains subject to bindings and
+blocks. Dynamic guards keep conservative preflight: a blocked argument is rejected
+before the guard executes, even if that guard would later disable the node.
+This preserves the scope's check-before-effects guarantee. Ordinary `Config`
+resolution has no declared block set and evaluates a dynamic guard first.
+
 `scope.bind(path, value)` adds a binding for a valid source path. The same identity
 may be bound repeatedly. A different identity cannot replace a value already
 resolved or consumed by a cached ancestor: create a fresh scope instead. This

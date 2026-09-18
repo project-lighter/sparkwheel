@@ -186,13 +186,33 @@ callbacks:
 
 **Behavior:**
 
-- When `_disabled_: true`, the component is skipped entirely
+- When `_disabled_: true`, the target and its runtime argument dependencies are skipped
 - **Inline in lists/dicts**: Disabled components are **removed** from the parent structure
 - **Direct resolution**: `config.resolve("disabled_component")` returns `None`
 - **References**: `@disabled_component` resolves to `None`
 - Default is `false` (component is enabled)
 - Accepts boolean values (`true`/`false`) or strings (`"true"`/`"false"`, case-insensitive)
 - The config is preserved—you can re-enable by setting `_disabled_: false`
+
+The guard is resolved before target arguments. A true guard skips nested targets,
+argument expressions, unused `@` dependencies and import statements inside that
+payload. A dynamic guard may run its own dependencies; a false result enables
+normal construction. Resolving a child path explicitly still resolves that
+child's definition independently of the parent guard.
+
+With `instantiate=False`, a disabled node returns a `Component` wrapper containing
+its untouched payload. With `eval_expr=False`, an unresolved guard also returns a
+wrapper rather than guessing its truth value or constructing a target. Modes
+retain independent caches; repeating the same mode shares its result.
+
+This is a runtime construction boundary. Root `_imports_` declarations still
+belong to configuration compilation, external `%file.yaml` includes are loaded
+during `update()`, and ordinary `Config` still validates/expands local copy syntax
+while compiling its source. A disabled node does not bypass those stages.
+
+Migration: older versions could execute payload dependencies before checking the
+guard. Payload side effects are now suppressed; declare setup outside disabled
+payloads when it is intentionally needed elsewhere.
 
 **Use cases:**
 

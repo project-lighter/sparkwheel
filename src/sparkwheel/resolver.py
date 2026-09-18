@@ -6,6 +6,7 @@ from copy import copy
 from typing import Any
 
 from .items import Component, Expression, Item
+from .operators import _copy_containers
 from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
 from .utils.constants import ID_SEP_KEY, RESOLVED_REF_KEY
@@ -57,6 +58,9 @@ class Resolver:
         # Keep the default cache available for existing internal integrations.
         self._resolved: dict[str, Any] = {}
         self._resolved_by_mode: dict[tuple[bool, bool], dict[str, Any]] = {(True, True): self._resolved}
+        self._guard_states: dict[tuple[bool, bool], dict[str, bool]] = {}
+        self._resolution_mode = (True, True)
+        self._current_path = ""
 
         if items:
             for item in items:
@@ -67,6 +71,7 @@ class Resolver:
         self._items = {}
         self._resolved = {}
         self._resolved_by_mode = {(True, True): self._resolved}
+        self._guard_states = {}
 
     def is_resolved(self) -> bool:
         """Check if any items have been resolved."""
@@ -180,7 +185,8 @@ class Resolver:
 
         id = self.normalize_id(id)
 
-        resolved = self._resolved_by_mode.setdefault((instantiate, eval_expr), {})
+        self._resolution_mode = (instantiate, eval_expr)
+        resolved = self._resolved_by_mode.setdefault(self._resolution_mode, {})
 
         # Return cached result if available
         if id in resolved:
@@ -231,11 +237,45 @@ class Resolver:
             waiting_list = set()
         waiting_list.add(id)
 
-        # First, resolve any import expressions (they need to run first)
+        if isinstance(item, Component):
+            disabled = self._literal_disabled(item_config)
+            guard = item_config.get("_disabled_", False)
+            if disabled is None:
+                guard_id = f"{id}::_disabled_" if id else "_disabled_"
+                self._prepare_item(guard_id)
+                guard = self._resolve_one_item(
+                    guard_id, waiting_list, _depth + 1, instantiate=instantiate, eval_expr=eval_expr
+                )
+                waiting_list.discard(guard_id)
+                if not eval_expr and isinstance(guard, Item):
+                    # The guard cannot be decided in this mode. Preserve its
+                    # wrapper without constructing or touching the payload.
+                    result = copy(item)
+                    config = _copy_containers(item_config)
+                    config["_disabled_"] = guard
+                    result.update_config(config)
+                    resolved[id] = result
+                    return result
+                disabled = Component({"_disabled_": guard}).is_disabled()
+            self._guard_states.setdefault(self._resolution_mode, {})[id] = disabled
+            if disabled:
+                if instantiate:
+                    resolved[id] = None
+                else:
+                    result = copy(item)
+                    config = _copy_containers(item_config)
+                    config["_disabled_"] = guard
+                    result.update_config(config)
+                    resolved[id] = result
+                return resolved[id]
+
+        self._prepare_enabled_item(id, waiting_list, _depth, instantiate, eval_expr)
+        # Import declarations in inactive component payloads stay inactive.
+        self._current_path = id
         self._resolve_imports(resolved, eval_expr)
 
-        # Find all references in this item's config
-        refs = self.find_refs_in_config(config=item_config, id=id)
+        # A nested component owns its argument dependencies and guard boundary.
+        refs = self._dependency_refs(config=item_config, id=id)
 
         # Resolve dependencies first
         for dep_id in refs.keys():
@@ -296,9 +336,17 @@ class Resolver:
     def _prepare_item(self, id: str) -> None:
         """Extension point for scoped, on-demand definitions."""
 
+    def _prepare_enabled_item(self, id: str, waiting_list: set[str], depth: int, instantiate: bool, eval_expr: bool) -> None:
+        """Extension point after a component's guard permits argument work."""
+
     def _resolve_imports(self, resolved: dict[str, Any], eval_expr: bool) -> None:
         for id, item in self._items.items():
-            if id not in resolved and isinstance(item, Expression) and item.is_import_statement(item.get_config()):
+            if (
+                id not in resolved
+                and isinstance(item, Expression)
+                and item.is_import_statement(item.get_config())
+                and self._import_visible(id)
+            ):
                 self._resolve_import_item(item, id, resolved, eval_expr)
 
     @staticmethod
@@ -310,6 +358,57 @@ class Resolver:
         imported = item.load_imports()
         if item.is_import_only():
             resolved[id] = imported
+
+    @staticmethod
+    def _literal_disabled(config: Any) -> bool | None:
+        """Return a literal guard state without calling opaque Python objects."""
+        if not Component.is_instantiable(config):
+            return False
+        value = config.get("_disabled_", False)
+        if type(value) is str:
+            return None if value.startswith(("@", "$", "%")) else value.lower().strip() == "true"
+        if Component.is_instantiable(value):
+            return None
+        if value is None or type(value) in (bool, int, float, complex, tuple, list, dict):
+            return bool(value)
+        return None
+
+    @classmethod
+    def _dependency_refs(cls, config: Any, id: str) -> dict[str, int]:
+        """Discover immediate graph dependencies, preserving component guards."""
+        if Component.is_instantiable(config) and cls._literal_disabled(config) is True:
+            return {}
+        if isinstance(config, str):
+            return cls.match_refs_pattern(config)
+        refs: dict[str, int] = {}
+        if isinstance(config, (dict, list)):
+            for _, path, value in cls.iter_subconfigs(id, config):
+                if Component.is_instantiable(value) or Expression.is_expression(value):
+                    refs[path] = refs.get(path, 0) + 1
+                else:
+                    for dependency, count in cls._dependency_refs(value, path).items():
+                        refs[dependency] = refs.get(dependency, 0) + count
+        return refs
+
+    def _import_visible(self, path: str) -> bool:
+        """Only collect imports from enabled components or the requested subtree."""
+        parts = path.split(self.sep)
+        states = self._guard_states.get(self._resolution_mode, {})
+        for length in range(len(parts)):
+            parent = self.sep.join(parts[:length])
+            item = self._items.get(parent)
+            if not isinstance(item, Component):
+                continue
+            state = states.get(parent, self._literal_disabled(item.get_config()))
+            if state is False:
+                continue
+            # A requested descendant is independent of its disabled parent;
+            # imports must still belong to that explicitly requested subtree.
+            inside_parent = self._current_path != parent and (not parent or self._current_path.startswith(parent + self.sep))
+            inside_request = path == self._current_path or path.startswith(self._current_path + self.sep)
+            if not (inside_parent and inside_request):
+                return False
+        return True
 
     def _substitute_refs(self, config: Any, id: str, refs: dict[str, Any]) -> Any:
         return self.update_config_with_refs(config=config, id=id, refs=refs)

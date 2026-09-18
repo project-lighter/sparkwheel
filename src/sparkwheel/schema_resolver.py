@@ -81,6 +81,9 @@ class _SchemaResolver(Resolver):
     def _prepare_discriminators(self, path: str, waiting: set[str], depth: int) -> None:
         """Resolve only discriminator dependencies needed to type this path."""
         parts = path.split("::") if path else []
+        if "_disabled_" in parts:
+            # Guard evaluation must not pull in unrelated variant arguments.
+            return
         for length in range(len(parts) + 1):
             parent = "::".join(parts[:length])
             annotation = self._annotation(parent)
@@ -167,6 +170,10 @@ class _SchemaResolver(Resolver):
         projections[id] = self._check(projected, annotation, id)
         return self._normalize(actual, annotation, id)
 
+    def _prepare_enabled_item(self, id: str, waiting_list: set[str], depth: int, instantiate: bool, eval_expr: bool) -> None:
+        if eval_expr and isinstance(self._items.get(id), Component):
+            self._prepare_discriminators(id, waiting_list, depth)
+
     def _resolve_one_item(
         self,
         id: str,
@@ -179,7 +186,12 @@ class _SchemaResolver(Resolver):
         id = self.normalize_id(id)
         self._mode = (instantiate, eval_expr)
         cache = self._resolved_by_mode.setdefault(self._mode, {})
-        if eval_expr and id in self._items and _depth < self.max_resolution_depth:
+        if (
+            eval_expr
+            and id in self._items
+            and _depth < self.max_resolution_depth
+            and not isinstance(self._items[id], Component)
+        ):
             self._prepare_discriminators(id, waiting_list or set(), _depth)
         result = super()._resolve_one_item(id, waiting_list, _depth, instantiate, eval_expr, default)
         if eval_expr and isinstance(self._items.get(id), Expression) and id not in self._projections.get(self._mode, {}):

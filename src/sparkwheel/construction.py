@@ -163,9 +163,19 @@ class ResolutionScope:
         self._resolver._prepare_item(path)
         visiting.add(path)
         item = self._resolver._items[path]
-        for dependency in self._resolver.find_refs_in_config(item.get_config(), path):
+        for dependency in self._resolver._dependency_refs(item.get_config(), path):
             self._preflight(dependency, visiting)
         visiting.remove(path)
+
+    def _literal_guard(self, value: Any, path: str) -> tuple[bool | None, Any]:
+        if not Component.is_instantiable(value):
+            return False, value
+        guard_path = _child(path, "_disabled_")
+        if any(_within(guard_path, blocked) for blocked in self._blocked):
+            return None, value
+        if guard_path in self._bindings:
+            value = {**value, "_disabled_": self._bindings[guard_path]}
+        return Resolver._literal_disabled(value), value
 
     def _compile(self, value: Any, path: str, origin: str, seen: frozenset[str] = frozenset()) -> Any:
         if path in self._bindings or any(_within(path, blocked) for blocked in self._blocked):
@@ -183,6 +193,9 @@ class ResolutionScope:
                 raise ValueError("Load external includes with Config.update() before retaining")
             copied, copied_origin = self._recipe._definition(target)
             return self._compile(copied, path, copied_origin, seen | {reference})
+        disabled, guarded = self._literal_guard(value, path)
+        if disabled is True:
+            return _copy_containers(guarded)
         if isinstance(value, dict):
             return {
                 key: self._compile(item, _child(path, key), _child(origin, key), seen)
@@ -199,6 +212,8 @@ class ResolutionScope:
 
         def collect(value: Any, path: str) -> None:
             if path in self._bindings or any(_within(path, blocked) for blocked in self._blocked):
+                return
+            if self._literal_guard(value, path)[0] is True:
                 return
             if isinstance(value, dict):
                 for key, child in value.items():
@@ -227,8 +242,19 @@ class _ScopedResolver(Resolver):
         # Boundaries must be dependencies even when their source is a scalar.
         compiled = self._reference_boundaries(compiled)
         parser = Parser(globals=self._scope._config._imports, metadata=self._scope._recipe._locations)
-        for item in parser.parse(compiled, id_prefix=id):
-            if item.get_id() not in self._items:
+        items = parser.parse(compiled, id_prefix=id)
+        disabled_paths = {
+            item.get_id()
+            for item in items
+            if isinstance(item, Component) and self._literal_disabled(item.get_config()) is True
+        }
+        for item in items:
+            path = item.get_id()
+            # Preserve definitions for a later explicit descendant request: a
+            # disabled parent's untouched children have not been compiled yet.
+            if any(path != parent and _within(path, parent) for parent in disabled_paths):
+                continue
+            if path not in self._items:
                 self.add_item(item)
 
     @classmethod
@@ -247,7 +273,12 @@ class _ScopedResolver(Resolver):
                 continue
             if id not in self._scope._active_paths and any(_within(id, parent) for parent in self._scope._bindings):
                 continue
-            if id not in resolved and isinstance(item, Expression) and item.is_import_statement(item.get_config()):
+            if (
+                id not in resolved
+                and isinstance(item, Expression)
+                and item.is_import_statement(item.get_config())
+                and self._import_visible(id)
+            ):
                 self._resolve_import_item(item, id, resolved, eval_expr)
 
     def _substitute_refs(self, config: Any, id: str, refs: dict[str, Any]) -> Any:
@@ -287,6 +318,11 @@ class _ScopedResolver(Resolver):
         result = super()._resolve_one_item(
             id, waiting_list=waiting_list, _depth=_depth, instantiate=instantiate, eval_expr=eval_expr, default=default
         )
+        item = self._items.get(id)
+        if not cached and id not in self._scope._bindings and isinstance(item, Component):
+            guard_path = _child(id, "_disabled_")
+            if "_disabled_" in item.get_config():
+                self._scope._consumed[guard_path] = self._resolved.get(guard_path, item.get_config()["_disabled_"])
         if (
             not cached
             and id not in self._scope._bindings
