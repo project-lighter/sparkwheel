@@ -72,6 +72,11 @@ optimizer_scope = recipe.scope(bindings={"network": network})
 optimizer = optimizer_scope.resolve("optimizer")
 ```
 
+`recipe.definition(path="")` returns a detached source-container snapshot of one
+retained node. It follows the local `%` copy chain needed to select that node,
+without expanding its children or executing imports, `@` references, expressions,
+or constructors. Missing paths raise `ConfigKeyError`; opaque leaves retain identity.
+
 `retain()` captures source containers, locations, and caller-provided import
 bindings, without copying runtime caches. Opaque Python leaves retain their
 identity. Creating a recipe or scope executes no configured imports or targets;

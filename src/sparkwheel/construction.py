@@ -37,6 +37,22 @@ class RetainedConfig:
         self._imports = dict(config._provided_imports)
         self._locations = deepcopy(config._locations)
 
+    def definition(self, path: str = "") -> Any:
+        """Inspect one retained definition without running configured Python.
+
+        Follow only local raw-copy chains needed to select the node. References
+        and expressions inside the returned container remain authored strings.
+        Containers are detached; opaque Python leaves retain their identity.
+        """
+        if not isinstance(path, str):
+            raise TypeError("Definition paths must be strings")
+        try:
+            value, origin = self._definition(path)
+            value, _ = self._unwrap(value, origin, frozenset())
+        except (KeyError, TypeError, IndexError) as error:
+            raise ConfigKeyError(f"Unknown definition path '{path}'", missing_key=path) from error
+        return _copy_containers(value)
+
     def scope(
         self,
         *,

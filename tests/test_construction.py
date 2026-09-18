@@ -2,7 +2,7 @@
 
 import pytest
 
-from sparkwheel import Config, ConfigKeyError
+from sparkwheel import CircularReferenceError, Config, ConfigKeyError
 
 
 def test_retaining_and_creating_scope_do_not_import_or_construct(monkeypatch):
@@ -317,3 +317,40 @@ def test_materialized_components_excludes_component_returned_iterators():
     scope = Config(data={"iterator": {"_target_": "builtins.iter", "_args_": [[1, 2]]}}).retain().scope()
     assert list(scope.resolve("iterator")) == [1, 2]
     assert scope.materialized_components() == {}
+
+
+def test_definition_follows_selected_copy_chain_without_executing_or_expanding_siblings():
+    opaque = object()
+    recipe = Config(
+        data={
+            "_imports_": {"never": "missing.module"},
+            "template": {
+                "_target_": "missing.Target",
+                "network": "%missing",
+                "opaque": opaque,
+                "alias": "@missing",
+                "expression": "$1 / 0",
+            },
+            "model": "%template",
+            "copy": "%model",
+            "broken": "%broken",
+        }
+    ).retain()
+    definition = recipe.definition("copy")
+    assert definition == recipe.definition("template")
+    assert definition["opaque"] is opaque
+    assert definition["network"] == "%missing"
+    assert definition["alias"] == "@missing"
+    assert recipe.definition("copy::_target_") == "missing.Target"
+    definition.clear()
+    assert recipe.definition("model")["_target_"] == "missing.Target"
+    assert recipe.definition()["model"] == "%template"
+
+
+def test_definition_handles_relative_copy_none_missing_and_cycles():
+    recipe = Config(data={"group": {"value": None, "copy": "%::value"}, "bad": "%bad"}).retain()
+    assert recipe.definition("group::copy") is None
+    with pytest.raises(ConfigKeyError, match="Unknown definition path"):
+        recipe.definition("missing")
+    with pytest.raises(CircularReferenceError):
+        recipe.definition("bad")
