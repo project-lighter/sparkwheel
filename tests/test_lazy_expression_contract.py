@@ -295,3 +295,13 @@ def test_failed_expression_clears_active_state_for_retry():
     assert config.resolve("result") == 3
     assert len(attempts) == 2
     assert not any(config._resolver._active_resolutions.values())
+
+
+def test_lazy_cycle_reports_the_owning_expression_location(tmp_path):
+    authored = tmp_path / "authored.yaml"
+    authored.write_text("a: '$@b'\nb: '$@a'\n")
+    config = Config().update(authored)
+    with pytest.raises(CircularReferenceError) as caught:
+        config.resolve("a")
+    assert caught.value.source_location.filepath == str(authored)
+    assert caught.value.source_location.line == 2

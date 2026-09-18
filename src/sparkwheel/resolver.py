@@ -28,7 +28,11 @@ class _ExpressionReferences:
 
     def __getitem__(self, path: str) -> Any:
         if path not in self._cache and path in self._waiting:
-            raise CircularReferenceError(f"Circular reference detected: '{path}' references back to '{self._path}'")
+            item = self._resolver._items.get(self._path)
+            raise CircularReferenceError(
+                f"Circular reference detected: '{path}' references back to '{self._path}'",
+                source_location=item.source_location if item is not None else None,
+            )
         return self._resolver._resolve_one_item(
             path,
             waiting_list=set(self._waiting),
