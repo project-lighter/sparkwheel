@@ -17,9 +17,10 @@ assert config.resolve("copy") == 7
 ```
 
 Successful edits clear cached runtime values. Objects already returned to your
-code are not rewritten; subsequent resolution builds a new generation. Raw
-container views remain mutable: use `set()`/`update()` for changes that should
-invalidate the runtime cache. Source export preserves configuration data, not
+code are not rewritten; subsequent resolution builds a new generation. Unfrozen
+raw container views remain mutable: use `set()`/`update()` for changes that should
+invalidate the runtime cache. Frozen configurations return detached
+container snapshots. Source export preserves configuration data, not
 Python module state or arbitrary prebuilt objects. Migration: code that previously
 read expanded local `%` values through `get()` after resolution should call
 `resolve(path)` instead. Constructor `imports=` values
@@ -108,9 +109,33 @@ loaded later by a scope. Retention is not a serializer or a guarantee of deep
 immutability for opaque inputs. Ordinary `Config.resolve()` retains its existing
 cache and ownership behavior.
 
+## Atomic edits and container paths
+
+`set()` and `update()` stage a candidate source tree, apply the complete edit,
+and validate it against the configured raw schema before publishing. If an edit,
+external include, or validation fails, the prior source, source locations,
+expression namespace and cached runtime identities remain intact. Multi-field
+updates are validated together; `set()` is a single-field transaction.
+
+Path edits respect existing dictionaries and lists. `set("layers::1::width", 64)`
+updates the second list item without replacing the list. Traversing a scalar or
+using an out-of-range list index raises instead of erasing unrelated content.
+Missing dictionary paths are created as dictionaries; extend lists with normal
+list composition instead of assigning a sparse index.
+
+`update("~layers::0")` removes one list element. Removing several items with
+`update({"~group::layers": [0, 2]})` has the same meaning as the structural form
+`update({"group": {"~layers": [0, 2]}})`. Both remove those indices from the list
+as it existed before that batch of removals.
+
+The transaction protects Config state, not external side effects performed by
+custom validators or file reads. Raw validation still permits unresolved
+references/expressions; this does not establish final runtime-value validation or
+implement schema coercion. Opaque Python inputs retain identity during edits.
+
 ## Frozen Configs
 
-Prevent modifications after initialization:
+Prevent source modifications after initialization:
 
 ```python
 from sparkwheel import Config
@@ -139,6 +164,17 @@ if config.is_frozen():
 config.unfreeze()
 config.set("model::lr", 0.001)  # Now works
 ```
+
+`freeze()` detaches source containers from views handed out earlier. While frozen,
+`get()` and subscript access return defensive ordinary dictionaries/lists, so
+editing such a view cannot change the stored source or invalidate a cached run.
+These snapshots remain easy to export as YAML. Opaque Python leaves, such as a
+prebuilt network or module, and resolved runtime objects are not deeply frozen.
+Use `unfreeze()` followed by `set()`/`update()` to change the source again.
+
+Migration: nested mutation of a frozen raw view now affects only that snapshot.
+Path writes into an existing list now address list elements, and nested batch
+removals preserve their declared item-removal meaning.
 
 **Use cases:**
 - Prevent accidental modifications in production

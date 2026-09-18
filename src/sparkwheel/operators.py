@@ -1,6 +1,5 @@
 """Configuration merging with composition-by-default and operators (=, ~)."""
 
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +11,15 @@ from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
 from .utils.exceptions import ConfigMergeError, build_missing_key_error
 
 __all__ = ["apply_operators", "validate_operators", "_validate_delete_operator", "MergeContext"]
+
+
+def _copy_containers(value: Any) -> Any:
+    """Copy source containers while preserving caller-owned opaque inputs."""
+    if isinstance(value, dict):
+        return {key: _copy_containers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_containers(item) for item in value]
+    return value
 
 
 @dataclass
@@ -249,19 +257,19 @@ def apply_operators(
         context = MergeContext()
 
     if not isinstance(base, dict) or not isinstance(override, dict):
-        return deepcopy(override)  # type: ignore[unreachable]
+        return _copy_containers(override)  # type: ignore[unreachable]
 
-    result = deepcopy(base)
+    result: dict[str, Any] = _copy_containers(base)
 
     for key, value in override.items():
         if not isinstance(key, str):
-            result[key] = deepcopy(value)  # type: ignore[unreachable]
+            result[key] = _copy_containers(value)  # type: ignore[unreachable]
             continue
 
         # Process replace operator (=key)
         if key.startswith(REPLACE_KEY):
             actual_key = key[1:]
-            result[actual_key] = deepcopy(value)
+            result[actual_key] = _copy_containers(value)
             continue
 
         # Process remove operator (~key)
@@ -353,13 +361,13 @@ def apply_operators(
 
             # For lists: EXTEND (composition)
             if isinstance(base_val, list) and isinstance(value, list):
-                result[key] = base_val + value
+                result[key] = base_val + _copy_containers(value)
                 continue
 
             # For scalars: REPLACE
             # For type mismatches: REPLACE
 
         # Set/replace (for new keys or non-matching types)
-        result[key] = deepcopy(value)
+        result[key] = _copy_containers(value)
 
     return result

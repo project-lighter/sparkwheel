@@ -5,8 +5,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from .config import Config, _copy_containers
+from .config import Config
 from .items import Component, Expression
+from .operators import _copy_containers
 from .parser import Parser
 from .path_utils import get_by_id, resolve_relative_ids, split_file_and_id, split_id
 from .resolver import Resolver

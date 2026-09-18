@@ -1028,12 +1028,8 @@ class TestConfigMerging:
         assert config["dataloaders"] == {"val": {}}
 
     def test_delete_list_items_batch_vs_individual(self):
-        """Test that batch deletion is the only way to delete list items.
-
-        Path notation like ~plugins::0 doesn't work for lists - you MUST use
-        the batch syntax ~plugins: [0, 2] to delete list items.
-        """
-        # Batch deletion - the correct way
+        """Batch and sequential deletions use indices in the current list."""
+        # Batch deletion uses the list before any of these indices are removed.
         config1 = Config().update({"plugins": ["a", "b", "c", "d", "e"]})
         config1.update({"~plugins": [0, 2]})
         assert config1["plugins"] == ["b", "d", "e"]  # Removed "a" and "c"

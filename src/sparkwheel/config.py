@@ -95,12 +95,13 @@ config.update("~model::old_param")  # Delete
 See Config class docstring for full API details.
 """
 
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .loader import Loader
 from .locations import LocationRegistry
-from .operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
+from .operators import MergeContext, _copy_containers, _validate_delete_operator, apply_operators, validate_operators
 from .parser import Parser
 from .path_utils import get_by_id, split_id
 from .preprocessor import Preprocessor
@@ -113,15 +114,6 @@ if TYPE_CHECKING:
     from .construction import RetainedConfig
 
 __all__ = ["Config", "parse_overrides"]
-
-
-def _copy_containers(value: Any) -> Any:
-    """Copy configuration containers without cloning opaque Python inputs."""
-    if isinstance(value, dict):
-        return {key: _copy_containers(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_copy_containers(item) for item in value]
-    return value
 
 
 class Config:
@@ -273,7 +265,8 @@ class Config:
             999
         """
         try:
-            return self._get_by_id(id)
+            value = self._get_by_id(id)
+            return _copy_containers(value) if self._frozen else value
         except (KeyError, IndexError, TypeError):
             return default
 
@@ -299,28 +292,57 @@ class Config:
         if self._frozen:
             raise FrozenConfigError("Cannot modify frozen config", field_path=id)
 
+        candidate = self._edit_candidate()
+        candidate._set_inplace(id, value)
+        self._publish_edit(candidate)
+
+    def _edit_candidate(self) -> "Config":
+        """Stage source/metadata without borrowing the live resolver or namespace."""
+        candidate = Config(data=_copy_containers(self._data))
+        candidate._locations = deepcopy(self._locations)
+        return candidate
+
+    def _publish_edit(self, candidate: "Config") -> None:
+        if self._schema:
+            from .schema import validate as validate_schema
+
+            validate_schema(
+                candidate._data,
+                self._schema,
+                metadata=candidate._locations,
+                allow_missing=self._allow_missing,
+                strict=self._strict,
+            )
+        self._data = candidate._data
+        self._locations = candidate._locations
+        self._invalidate_resolution()
+
+    def _set_inplace(self, id: str, value: Any) -> None:
+        """Apply one path assignment to a staged source tree."""
+        value = _copy_containers(value)
         if id == "":
             self._data = value
             self._invalidate_resolution()
             return
-
         keys = split_id(id)
-
-        # Ensure root is dict
         if not isinstance(self._data, dict):
             self._data = {}  # type: ignore[unreachable]
-
-        # Create missing intermediate paths
-        current = self._data
-        for k in keys[:-1]:
-            if k not in current:
-                current[k] = {}
-            elif not isinstance(current[k], dict):
-                current[k] = {}
-            current = current[k]
-
-        # Set final value
-        current[keys[-1]] = value
+        current: Any = self._data
+        for key in keys[:-1]:
+            if isinstance(current, dict):
+                if key not in current:
+                    current[key] = {}
+                current = current[key]
+            elif isinstance(current, list):
+                current = current[int(key)]
+            else:
+                raise TypeError(f"Cannot traverse scalar while setting '{id}'")
+        if isinstance(current, dict):
+            current[keys[-1]] = value
+        elif isinstance(current, list):
+            current[int(keys[-1])] = value
+        else:
+            raise TypeError(f"Cannot assign a child of a scalar while setting '{id}'")
         self._invalidate_resolution()
 
     def validate(self, schema: type) -> None:
@@ -355,13 +377,17 @@ class Config:
         - set() raises FrozenConfigError
         - update() raises FrozenConfigError
         - resolve() still works (read-only)
-        - get() still works (read-only)
+        - get()/subscript access return detached container snapshots
+        - previously returned source containers cannot mutate the frozen source
+        - opaque Python leaves and runtime objects remain caller-owned
 
         Example:
             >>> config = Config(schema=MySchema).update("config.yaml")
             >>> config.freeze()
             >>> config.set("model::lr", 0.001)  # Raises FrozenConfigError
         """
+        # Detach containers already handed out before freezing.
+        self._data = _copy_containers(self._data)
         self._frozen = True
 
     def unfreeze(self) -> None:
@@ -441,6 +467,13 @@ class Config:
         if self._frozen:
             raise FrozenConfigError("Cannot update frozen config")
 
+        candidate = self._edit_candidate()
+        candidate._update_inplace(source)
+        self._publish_edit(candidate)
+        return self
+
+    def _update_inplace(self, source: PathLike | dict[str, Any] | "Config" | str) -> None:
+        """Apply a complete update to a staged candidate before validation."""
         if isinstance(source, Config):
             self._update_from_config(source)
         elif isinstance(source, dict):
@@ -462,21 +495,6 @@ class Config:
             self._data, self._data, id="", locations=self._locations, external_only=True
         )
 
-        # Validate after raw ref expansion if schema exists
-        # This validates the final structure, not intermediate raw reference strings
-        if self._schema:
-            from .schema import validate as validate_schema
-
-            validate_schema(
-                self._data,
-                self._schema,
-                metadata=self._locations,
-                allow_missing=self._allow_missing,
-                strict=self._strict,
-            )
-
-        return self  # Enable chaining
-
     def _update_from_config(self, source: "Config") -> None:
         """Update from another Config instance."""
         context = MergeContext(locations=source.locations)
@@ -492,13 +510,13 @@ class Config:
         """Apply nested path updates (e.g., model::lr=value, =model=replace, ~old::param=null)."""
         for key, value in source.items():
             if not isinstance(key, str):
-                self.set(str(key), value)  # type: ignore[unreachable]
+                self._set_inplace(str(key), value)  # type: ignore[unreachable]
                 continue
 
             if key.startswith(REPLACE_KEY):
                 # Replace operator: =key (explicit override)
                 actual_key = key[1:]
-                self.set(actual_key, value)
+                self._set_inplace(actual_key, value)
 
             elif key.startswith(REMOVE_KEY):
                 # Delete operator: ~key
@@ -531,19 +549,24 @@ class Config:
                         available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
 
                     raise build_missing_key_error(error_key, available_keys, source_location, parent_key=parent_key_name)
-                self._delete_nested_key(actual_key)
+                if isinstance(value, list):
+                    context = MergeContext(locations=self._locations, current_path=actual_key)
+                    remaining = apply_operators({"value": self._get_by_id(actual_key)}, {"~value": value}, context=context)
+                    self._set_inplace(actual_key, remaining["value"])
+                else:
+                    self._delete_nested_key(actual_key)
 
             else:
                 # Default: compose (merge dict or extend list)
                 if key in self and isinstance(self[key], dict) and isinstance(value, dict):
                     context = MergeContext(locations=self._locations, current_path=key)
                     merged = apply_operators(self[key], value, context=context)
-                    self.set(key, merged)
+                    self._set_inplace(key, merged)
                 elif key in self and isinstance(self[key], list) and isinstance(value, list):
-                    self.set(key, self[key] + value)
+                    self._set_inplace(key, self[key] + value)
                 else:
                     # Normal set (handles nested paths with ::)
-                    self.set(key, value)
+                    self._set_inplace(key, value)
 
     def _delete_nested_key(self, key: str) -> None:
         """Delete a key, supporting nested paths with ::."""
@@ -553,6 +576,8 @@ class Config:
             parent = self[parent_id] if parent_id else self._data
             if isinstance(parent, dict) and keys[-1] in parent:
                 del parent[keys[-1]]
+            elif isinstance(parent, list):
+                del parent[int(keys[-1])]
         else:
             # Top-level key
             if isinstance(self._data, dict) and key in self._data:
@@ -817,7 +842,8 @@ class Config:
             >>> config["model::lr"]
             0.001
         """
-        return self._get_by_id(id)
+        value = self._get_by_id(id)
+        return _copy_containers(value) if self._frozen else value
 
     def __setitem__(self, id: str, value: Any) -> None:
         """Set config value by ID (subscript access).
