@@ -119,8 +119,9 @@ class TestMiscUtils:
         result = check_key_duplicates(pairs)
         assert result == {"a": 1, "b": 2, "c": 3}
 
-    def test_check_key_duplicates_with_duplicates_warning(self):
+    def test_check_key_duplicates_with_duplicates_warning(self, monkeypatch):
         """Test check_key_duplicates warns on duplicates."""
+        monkeypatch.setenv("SPARKWHEEL_STRICT_KEYS", "0")
         pairs = [("a", 1), ("b", 2), ("a", 3)]
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -143,8 +144,9 @@ class TestMiscUtils:
             else:
                 os.environ["SPARKWHEEL_STRICT_KEYS"] = original
 
-    def test_yaml_loader_duplicate_warning(self):
+    def test_yaml_loader_duplicate_warning(self, monkeypatch):
         """Test CheckKeyDuplicatesYamlLoader warns on duplicates."""
+        monkeypatch.setenv("SPARKWHEEL_STRICT_KEYS", "0")
         import yaml
 
         yaml_str = """

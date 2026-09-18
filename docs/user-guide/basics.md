@@ -461,3 +461,21 @@ database:
 - [Expressions](expressions.md) - Execute Python code
 - [Instantiation](instantiation.md) - Create objects from config
 - [Advanced Features](advanced.md) - Power user techniques
+
+### Duplicate YAML keys
+
+Sparkwheel 0.1 rejects duplicate authored YAML keys by default, at every mapping
+level. Errors identify both source locations. Keys that YAML interprets as equal
+also count as duplicates, such as `true` and `1`. This prevents an accidental
+second definition from silently changing an experiment.
+
+Legal YAML `<<` merge-anchor overrides retain PyYAML's precedence: an explicit
+key overrides an inherited value, and earlier mappings in a merge sequence take
+precedence over later ones. Separate configuration files and explicit `update()`
+calls remain intentional composition operations.
+
+For migration only, `SPARKWHEEL_STRICT_KEYS=0` restores warning/last-wins handling
+of duplicate authored keys. `SPARKWHEEL_STRICT_KEYS=1` explicitly enables strict
+handling. Earlier releases warned by default and could miss root-level
+collisions. A rejected file or external include leaves an existing `Config`
+generation and its resolved objects unchanged.
