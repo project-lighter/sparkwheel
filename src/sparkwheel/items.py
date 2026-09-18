@@ -146,7 +146,7 @@ class Component(Item, Instantiable):
         No automatic module discovery is performed.
 
         Returns:
-            Any: The module path or callable from _target_.
+            target (Any): The module path or callable from _target_.
         """
         config = dict(self.get_config())
         target = config.get("_target_")
@@ -161,7 +161,7 @@ class Component(Item, Instantiable):
         Utility function used in `instantiate()` to resolve the arguments from current config content.
 
         Returns:
-            tuple[list[Any], dict[str, Any]]: A tuple of (args, kwargs) where:
+            arguments (tuple[list[Any], dict[str, Any]]): A tuple of (args, kwargs) where:
                 - args is a list of positional arguments from _args_ (or empty list if not present)
                 - kwargs is a dict of keyword arguments (excluding special keys)
         """
