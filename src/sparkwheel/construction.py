@@ -99,6 +99,7 @@ class ResolutionScope:
         self._consumed: dict[str, Any] = {}
         self._components: dict[str, Any] = {}
         self._active_paths: set[str] = set()
+        self._reserved_paths: set[str] = set()
         self._config = Config()
         self._config._imports = dict(recipe._imports)
         self._imports_loaded = False
@@ -127,6 +128,9 @@ class ResolutionScope:
         """Bind a valid exact source path, rejecting incompatible prior use."""
         self._validate_path(path)
         self._check_block(path)
+        known = any(path in values for values in (self._bindings, self._resolver._resolved, self._consumed))
+        if not known and any(_within(path, reserved) or _within(reserved, path) for reserved in self._reserved_paths):
+            raise ValueError(f"Cannot bind '{path}' after use in a published expression; create a fresh scope")
         for values in (self._bindings, self._resolver._resolved, self._consumed):
             if path in values:
                 if values[path] is not value:
@@ -280,6 +284,12 @@ class _ScopedResolver(Resolver):
                 and self._import_visible(id)
             ):
                 self._resolve_import_item(item, id, resolved, eval_expr)
+
+    def _publish_expression_references(self, paths: set[str]) -> None:
+        # Returned Python values may retain their reference mapping (for example
+        # lambdas or generators). Reserve lexical paths without running them or
+        # inspecting arbitrary returned object graphs.
+        self._scope._reserved_paths.update(paths)
 
     def _substitute_refs(self, config: Any, id: str, refs: dict[str, Any]) -> Any:
         if id in self._scope._bindings:

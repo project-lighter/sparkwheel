@@ -8,7 +8,7 @@ from typing import Any
 from .path_utils import replace_references, scan_references
 from .utils import CompInitMode, instantiate, run_debug, run_eval
 from .utils.constants import EXPR_KEY
-from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
+from .utils.exceptions import BaseError, EvaluationError, InstantiationError, Location, TargetNotFoundError
 
 __all__ = ["Item", "Expression", "Component", "Instantiable"]
 
@@ -406,6 +406,9 @@ class Expression(Item):
         if not run_debug:
             try:
                 return eval(compile(expression, "<sparkwheel expression>", "eval"), globals_, locals)
+            except BaseError:
+                # Lazy graph lookups retain structured dependency/schema errors.
+                raise
             except Exception as e:
                 raise EvaluationError(
                     f"Failed to evaluate expression: '{value[len(self.prefix) :]}'",

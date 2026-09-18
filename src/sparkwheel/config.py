@@ -95,7 +95,7 @@ config.update("~model::old_param")  # Delete
 See Config class docstring for full API details.
 """
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -758,7 +758,7 @@ class Config:
         """
         # Reset resolver if requested
         if reset:
-            self._resolver.reset()
+            self._replace_resolver()
 
         # Compile a separate tree. Source imports, local copies and relative
         # references must remain available for export and the next generation.
@@ -846,10 +846,21 @@ class Config:
         """
         return get_by_id(self._data, id)
 
+    def _replace_resolver(self) -> None:
+        """Start a generation without mutating resolvers held by escaped values."""
+        if self._schema is None:
+            self._resolver = Resolver()
+        else:
+            from .schema_resolver import _SchemaResolver
+
+            # Schema policy and source locations belong to this generation too.
+            # Copy the owner record, not opaque inputs or runtime graph objects.
+            self._resolver = _SchemaResolver(copy(self))
+
     def _invalidate_resolution(self) -> None:
         """Invalidate cached resolution (called when config changes)."""
         self._is_parsed = False
-        self._resolver.reset()
+        self._replace_resolver()
         # Replacing the namespace preserves objects held from older generations.
         self._imports = dict(self._provided_imports)
 

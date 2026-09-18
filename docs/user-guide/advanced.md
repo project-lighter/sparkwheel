@@ -47,8 +47,9 @@ assert config.resolve("object", instantiate=False) is definition
 `instantiate=False` returns `Component` wrappers; `eval_expr=False` returns
 `Expression` wrappers. References inside these wrappers are still resolved in the
 selected mode. Different modes may construct separate objects and evaluate
-expressions separately. Successful config edits or `resolve(lazy=False)` clear all
-resolution modes. `Resolver.get_item()` now consistently keeps the registered
+expressions separately. Successful config edits or `resolve(lazy=False)` start a
+fresh generation for all resolution modes. Published lambdas and generators keep
+their original generation, including its reference cache and import namespace. `Resolver.get_item()` now consistently keeps the registered
 Item definition, including after `get_item(resolve=True)`; callers needing a
 resolved value should use `resolve()`.
 
@@ -142,8 +143,13 @@ as it existed before that batch of removals.
 
 The transaction protects Config state, not external side effects performed by
 custom validators or file reads. Raw validation still permits unresolved
-references/expressions; this does not establish final runtime-value validation or
-implement schema coercion. Opaque Python inputs retain identity during edits.
+references/expressions; resolved values receive their separate schema check when
+requested. Opaque Python inputs retain identity during edits.
+
+Schema-enabled configurations validate resolved argument values before calling
+a target constructor. Defaults are validation aids and do not silently become
+authored arguments; see [Schema Validation](schema-validation.md) for coercion,
+union and partial-resolution rules.
 
 ## Frozen Configs
 

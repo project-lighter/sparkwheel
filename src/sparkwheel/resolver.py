@@ -15,6 +15,29 @@ from .utils.exceptions import CircularReferenceError, ConfigKeyError
 __all__ = ["Resolver"]
 
 
+class _ExpressionReferences:
+    """Resolve Python-selected references within one immutable build generation."""
+
+    def __init__(self, resolver: "Resolver", path: str, waiting: set[str], depth: int, mode: tuple[bool, bool]):
+        self._resolver = resolver
+        self._path = path
+        self._waiting = waiting | {path}
+        self._depth = depth
+        self._mode = mode
+        self._cache = resolver._resolved_by_mode[mode]
+
+    def __getitem__(self, path: str) -> Any:
+        if path not in self._cache and path in self._waiting:
+            raise CircularReferenceError(f"Circular reference detected: '{path}' references back to '{self._path}'")
+        return self._resolver._resolve_one_item(
+            path,
+            waiting_list=set(self._waiting),
+            _depth=self._depth + 1,
+            instantiate=self._mode[0],
+            eval_expr=self._mode[1],
+        )
+
+
 class Resolver:
     """Resolve references between Items.
 
@@ -61,6 +84,7 @@ class Resolver:
         self._guard_states: dict[tuple[bool, bool], dict[str, bool]] = {}
         self._resolution_mode = (True, True)
         self._current_path = ""
+        self._active_resolutions: dict[tuple[bool, bool], set[str]] = {}
 
         if items:
             for item in items:
@@ -72,6 +96,7 @@ class Resolver:
         self._resolved = {}
         self._resolved_by_mode = {(True, True): self._resolved}
         self._guard_states = {}
+        self._active_resolutions = {}
 
     def is_resolved(self) -> bool:
         """Check if any items have been resolved."""
@@ -150,6 +175,33 @@ class Resolver:
         return self._resolve_one_item(id=id, instantiate=instantiate, eval_expr=eval_expr, default=default)
 
     def _resolve_one_item(
+        self,
+        id: str,
+        waiting_list: set[str] | None = None,
+        _depth: int = 0,
+        instantiate: bool = True,
+        eval_expr: bool = True,
+        default: Any = None,
+    ) -> Any:
+        """Track active graph construction, including escaped Python callbacks."""
+        path = self.normalize_id(id)
+        mode = (instantiate, eval_expr)
+        if path in self._resolved_by_mode.get(mode, {}):
+            return self._resolve_item(path, waiting_list, _depth, instantiate, eval_expr, default)
+        active = self._active_resolutions.setdefault(mode, set())
+        if path in active:
+            item = self._items.get(path)
+            raise CircularReferenceError(
+                f"Circular reference detected while constructing '{path}'",
+                source_location=item.source_location if item is not None else None,
+            )
+        active.add(path)
+        try:
+            return self._resolve_item(path, waiting_list, _depth, instantiate, eval_expr, default)
+        finally:
+            active.discard(path)
+
+    def _resolve_item(
         self,
         id: str,
         waiting_list: set[str] | None = None,
@@ -274,6 +326,16 @@ class Resolver:
         self._current_path = id
         self._resolve_imports(resolved, eval_expr)
 
+        if isinstance(item, Expression) and eval_expr:
+            references = scan_references(item_config)
+            prepared = copy(item)
+            prepared.update_config(replace_references(item_config, dict.fromkeys(references), self._vars))
+            values = _ExpressionReferences(self, id, waiting_list, _depth, (instantiate, eval_expr))
+            expression_result = prepared.evaluate(globals={self._vars: values})
+            self._publish_expression_references(set(references))
+            resolved[id] = expression_result
+            return expression_result
+
         # A nested component owns its argument dependencies and guard boundary.
         refs = self._dependency_refs(config=item_config, id=id)
 
@@ -332,6 +394,9 @@ class Resolver:
             resolved[id] = new_config
 
         return resolved[id]
+
+    def _publish_expression_references(self, paths: set[str]) -> None:
+        """Extension point for conservative binding ownership after publication."""
 
     def _prepare_item(self, id: str) -> None:
         """Extension point for scoped, on-demand definitions."""
