@@ -86,3 +86,32 @@ When reporting issues, please include:
 ## License
 
 By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+
+## Version preparation
+
+Version maintenance uses the pinned `bump-my-version==0.30.1` executable through
+`uvx`, independently of runtime dependency installation. The supported recipe
+parts are `major`, `minor`, `patch`, and `release`:
+
+```bash
+just bump-dry release  # Preview 0.1.0.dev0 -> 0.1.0
+just bump-dry patch    # A stable 0.1.0 previews 0.1.1
+```
+
+`release` removes an existing `.devN` suffix without advancing the numeric
+version. Numeric bumps advance that component and reset subordinate components
+to stable; `patch` from `0.1.0.dev0` therefore previews `0.1.1`, not promotion to
+`0.1.0`. Use `release` for that promotion. Unsupported parts, including the raw
+`dev` counter, fail before invoking the tool. Starting another development cycle
+requires a separately reviewed explicit version choice.
+
+Dry runs disable file writes, commits and tags. After release authorization,
+`just bump <part>` updates project metadata, the source version constant, the
+bump configuration and only Sparkwheel's editable-root version in `uv.lock`; it
+also creates the configured local commit and tag. Review the diff and run the
+ordinary package checks before any separately authorized push or publication.
+Current development snapshots have not been tagged or published by this work.
+
+The existing remote workflows treat pushed tags as stable releases and can
+publish them. Do not use development tags with that workflow; previewing or
+preparing a version locally does not authorize its remote release.

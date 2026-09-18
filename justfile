@@ -47,10 +47,12 @@ docs port="8000":
     uv run --only-group doc mkdocs serve --dev-addr=localhost:{{port}}
 
 bump part="patch":
-    uvx bump-my-version bump {{part}} --verbose
+    @case {{quote(part)}} in major|minor|patch|release) ;; *) echo "Supported version parts: major, minor, patch, release" >&2; exit 2 ;; esac
+    uvx --from bump-my-version==0.30.1 bump-my-version bump {{quote(part)}} --verbose
 
 bump-dry part="patch":
-    uvx bump-my-version bump {{part}} --dry-run --verbose --allow-dirty
+    @case {{quote(part)}} in major|minor|patch|release) ;; *) echo "Supported version parts: major, minor, patch, release" >&2; exit 2 ;; esac
+    uvx --from bump-my-version==0.30.1 bump-my-version bump {{quote(part)}} --dry-run --no-commit --no-tag --verbose --allow-dirty
 
 push:
     git push && git push --tags
