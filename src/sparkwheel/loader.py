@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from .locations import LocationRegistry
 from .path_utils import is_yaml_file
@@ -43,40 +43,29 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
             )
             self.registry.register(current_id, location)
 
-        # For non-deep construction, we construct children manually to track paths
-        if not deep:
-            mapping = {}
-            for key_node, value_node in node.value:
-                # Construct key
-                key = self.construct_object(key_node, deep=False)
-
-                # Push key onto path stack before constructing value
-                self.id_path_stack.append(str(key))
-
-                # Register source location for this specific key
-                # This allows us to track where each key was defined
-                key_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
+        # Check authored duplicates before flattening YAML merge keys. The same
+        # path-aware construction applies at every depth, including list entries.
+        self.flatten_mapping(node)
+        mapping = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=True)
+            self.id_path_stack.append(str(key))
+            try:
+                key_id = ID_SEP_KEY.join(self.id_path_stack)
                 if key_node.start_mark:
-                    key_location = Location(
-                        filepath=self.filepath,
-                        line=key_node.start_mark.line + 1,
-                        column=key_node.start_mark.column + 1,
-                        id=key_id,
+                    self.registry.register(
+                        key_id,
+                        Location(
+                            filepath=self.filepath,
+                            line=key_node.start_mark.line + 1,
+                            column=key_node.start_mark.column + 1,
+                            id=key_id,
+                        ),
                     )
-                    self.registry.register(key_id, key_location)
-
-                # Construct value with updated path
-                value = self.construct_object(value_node, deep=True)
-
-                # Pop key from path stack
+                mapping[key] = self.construct_object(value_node, deep=True)
+            finally:
                 self.id_path_stack.pop()
-
-                mapping[key] = value
-
-            return mapping
-        else:
-            # Use parent's deep construction
-            return super().construct_mapping(node, deep=True)
+        return mapping
 
     def construct_sequence(self, node, deep=False):
         """Override to track source locations for list nodes."""
@@ -92,25 +81,14 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
             )
             self.registry.register(current_id, location)
 
-        # For non-deep construction, construct children manually to track paths
-        if not deep:
-            sequence = []
-            for idx, child_node in enumerate(node.value):
-                # Push index onto path stack
-                self.id_path_stack.append(str(idx))
-
-                # Construct child with updated path
-                value = self.construct_object(child_node, deep=True)
-
-                # Pop index from path stack
+        sequence = []
+        for idx, child_node in enumerate(node.value):
+            self.id_path_stack.append(str(idx))
+            try:
+                sequence.append(self.construct_object(child_node, deep=True))
+            finally:
                 self.id_path_stack.pop()
-
-                sequence.append(value)
-
-            return sequence
-        else:
-            # Use parent's deep construction
-            return super().construct_sequence(node, deep=True)
+        return sequence
 
 
 class Loader:
@@ -179,7 +157,7 @@ class Loader:
         """Load YAML and populate metadata registry during construction.
 
         Args:
-            stream: File stream to load from
+            stream (Any): File stream to load from
             filepath: Path string for error messages
             registry: LocationRegistry to populate
 

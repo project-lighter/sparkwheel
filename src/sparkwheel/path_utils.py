@@ -5,7 +5,11 @@ references, and file paths. Handles ID splitting, relative reference resolution,
 and file path extraction from combined strings like "config.yaml::model::lr".
 """
 
+import io
+import keyword
 import re
+import token
+import tokenize
 from typing import Any
 
 from .utils.constants import ID_SEP_KEY, RAW_REF_KEY, RESOLVED_REF_KEY
@@ -21,6 +25,63 @@ __all__ = [
     "get_by_id",
     "PathPatterns",  # Export for backward compatibility
 ]
+
+
+def _expression_matches(text: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
+    """Find reference syntax outside Python strings/comments and binary @.
+
+    Tokenization is lexical only: no code is executed. Whole f-strings are kept
+    opaque on Python 3.10+; reference interpolation inside f-strings is not syntax.
+    """
+    code = text[1:]
+    offsets = [0]
+    for line in code.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+
+    def offset(position: tuple[int, int]) -> int:
+        row, column = position
+        return 1 + offsets[min(row - 1, len(offsets) - 1)] + column
+
+    protected: list[tuple[int, int]] = []
+    binary_at: set[int] = set()
+    previous: tokenize.TokenInfo | None = None
+    fstring_start: int | None = None
+    fstring_depth = 0
+    fstart, fend = getattr(token, "FSTRING_START", -1), getattr(token, "FSTRING_END", -1)
+    try:
+        for part in tokenize.generate_tokens(io.StringIO(code).readline):
+            if part.type == fstart:
+                if fstring_depth == 0:
+                    fstring_start = offset(part.start)
+                fstring_depth += 1
+            elif part.type == fend:
+                fstring_depth -= 1
+                if fstring_depth == 0 and fstring_start is not None:
+                    protected.append((fstring_start, offset(part.end)))
+            if part.type in (token.STRING, token.COMMENT):
+                protected.append((offset(part.start), offset(part.end)))
+            if part.string == "@" and previous is not None:
+                ends_value = previous.type in (token.NAME, token.NUMBER, token.STRING, fend) or previous.string in (
+                    ")",
+                    "]",
+                    "}",
+                )
+                prefix_keyword = keyword.iskeyword(previous.string) and previous.string not in {"True", "False", "None"}
+                if ends_value and not prefix_keyword:
+                    binary_at.add(offset(part.start))
+            if part.type == token.NEWLINE:
+                previous = None
+            elif part.type not in (tokenize.NL, token.INDENT, token.DEDENT, token.COMMENT, token.ENDMARKER):
+                previous = part
+    except (tokenize.TokenError, IndentationError):
+        # Evaluation supplies the actual syntax error; retain lexical protection
+        # collected before the malformed token instead of executing any parser.
+        pass
+    return [
+        match
+        for match in pattern.finditer(text)
+        if match.start() not in binary_at and not any(start <= match.start() < end for start, end in protected)
+    ]
 
 
 # ============================================================================
@@ -208,7 +269,9 @@ class PathPatterns:
         if not (is_expr or is_pure_ref):
             return []
 
-        return cls.ABSOLUTE_REFERENCE.findall(text)
+        if is_pure_ref:
+            return [text[1:]] if "@" not in text[1:] else []
+        return [match.group(1) for match in _expression_matches(text, cls.ABSOLUTE_REFERENCE)]
 
 
 # ============================================================================
@@ -390,45 +453,29 @@ def resolve_relative_ids(current_id: str, value: str) -> str:
     Raises:
         ValueError: If relative reference goes beyond root
     """
-    # Find all relative reference patterns using centralized regex
-    patterns = PathPatterns.find_relative_references(value)
-
-    # Sort by length (longest first) to avoid partial replacements
-    # e.g., replace "@::::" before "@::" so we don't double-process
-    patterns = sorted(set(patterns), key=len, reverse=True)
-
+    if not value.startswith(("$", "@", "%")):
+        return value
+    matches = (
+        _expression_matches(value, PathPatterns.RELATIVE_REFERENCE)
+        if value.startswith("$")
+        else list(PathPatterns.RELATIVE_REFERENCE.finditer(value))
+    )
     current_parts = current_id.split(ID_SEP_KEY) if current_id else []
-
-    for pattern in patterns:
-        # Determine symbol (@ for resolved reference, % for raw reference)
+    for match in reversed(matches):
+        pattern = match.group(0)
         symbol = pattern[0]
-
-        # Count :: pairs to determine how many levels to go up
-        # @:: = 1 level up, @:::: = 2 levels up
         levels_up = pattern[1:].count(ID_SEP_KEY)
-
-        # Validate we don't go too far up the tree
         if levels_up > len(current_parts):
             raise ValueError(
                 f"Relative reference '{pattern}' in '{value}' attempts to go "
                 f"{levels_up} levels up, but current path '{current_id}' only "
                 f"has {len(current_parts)} levels"
             )
-
-        # Calculate the absolute path
-        if levels_up == len(current_parts):
-            # Going to root level
-            absolute = symbol
-        else:
-            # Going to ancestor at specific level
-            ancestor_parts = current_parts[:-levels_up] if levels_up > 0 else current_parts
-            absolute = symbol + ID_SEP_KEY.join(ancestor_parts)
-            if ancestor_parts:  # Add trailing separator if not at root
-                absolute += ID_SEP_KEY
-
-        # Replace pattern in value
-        value = value.replace(pattern, absolute)
-
+        ancestor_parts = current_parts[:-levels_up]
+        absolute = symbol + ID_SEP_KEY.join(ancestor_parts)
+        if ancestor_parts:
+            absolute += ID_SEP_KEY
+        value = value[: match.start()] + absolute + value[match.end() :]
     return value
 
 
@@ -519,7 +566,10 @@ def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name:
         ref_id = match.group(1)
         if ref_id not in resolved_refs:
             raise KeyError(f"Reference '@{ref_id}' not found in resolved references")
-        return f"{local_var_name}['{ref_id}']"
+        separation = " " if match.start() > 0 and (text[match.start() - 1].isalnum() or text[match.start() - 1] == "_") else ""
+        return f"{separation}{local_var_name}['{ref_id}']"
 
-    result = PathPatterns.ABSOLUTE_REFERENCE.sub(replace_match, text)
+    result = text
+    for match in reversed(_expression_matches(text, PathPatterns.ABSOLUTE_REFERENCE)):
+        result = result[: match.start()] + replace_match(match) + result[match.end() :]
     return result

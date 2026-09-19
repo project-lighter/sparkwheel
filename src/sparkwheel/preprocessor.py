@@ -67,7 +67,7 @@ class Preprocessor:
         """Initialize preprocessor.
 
         Args:
-            loader: Loader instance for loading external raw reference files
+            loader (Loader): Loader instance for loading external raw reference files
             globals: Global context (unused here, kept for API consistency)
         """
         self.loader = loader

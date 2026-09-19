@@ -1,229 +1,156 @@
 # Instantiation
 
-Create Python objects directly from configuration using the `_target_` key.
+Keep application behavior in ordinary Python classes and functions. Sparkwheel
+calls them with configured arguments; they do not need a Sparkwheel base class,
+decorator or factory.
 
 ## Basic Instantiation
 
-```yaml
-model:
-  _target_: torch.nn.Linear
-  in_features: 784
-  out_features: 10
+The [quick start](../getting-started/quickstart.md) calls `collections.Counter`.
+This next complete example uses your own class. With the installed environment
+active, create a separate `custom-report` directory and put all three files below
+inside it.
+
+```python title="reports.py"
+from collections import Counter
+
+
+class WordReport:
+    def __init__(self, words, title="Word counts"):
+        self.words = list(words)
+        self.title = title
+
+    def render(self):
+        counts = Counter(self.words)
+        entries = ", ".join(f"{word}={count}" for word, count in sorted(counts.items()))
+        return f"{self.title}: {entries}"
 ```
 
-```python
+```yaml title="config.yaml"
+words: [red, blue, red]
+report:
+  _target_: reports.WordReport
+  words: "@words"
+  title: Example
+```
+
+```python title="run.py"
 from sparkwheel import Config
+from reports import WordReport
 
-config = Config()
-config.update("config.yaml")
-
-# Instantiate the object
-model = config.resolve("model")
-# model is now a torch.nn.Linear(784, 10) instance!
+# Ordinary Python and configured construction call the same class.
+plain = WordReport(["red", "blue", "red"], title="Example")
+config = Config().update("config.yaml")
+configured = config.resolve("report")
+assert type(configured) is WordReport
+assert configured.render() == plain.render()
+print(configured.render())
 ```
+
+Run from `custom-report`:
+
+```bash
+python run.py
+```
+
+Expected output is `Example: blue=1, red=2`. Python can import `reports` because
+`run.py` and `reports.py` are together. In a larger application, install your
+package into the same environment and use its full import path.
 
 ## The `_target_` Key
 
-`_target_` specifies the full Python path to a class or function:
+`_target_` is the full import path of a class or function. Other ordinary keys
+become keyword arguments. A function target returns the function's result.
+No automatic project discovery is performed.
 
-```yaml
-examples:
-  # Class instantiation
-  linear:
-    _target_: torch.nn.Linear
-    in_features: 100
-    out_features: 10
+In Python-authored dictionaries, `_target_` may also be the callable itself. From
+the custom example directory, this works without a string import path:
 
-  # Class with multiple parameters
-  adam:
-    _target_: torch.optim.Adam
-    params: "$@model.parameters()"
-    lr: 0.001
-    betas: [0.9, 0.999]
+```python
+from sparkwheel import Config
+from reports import WordReport
 
-  # Custom class
-  custom:
-    _target_: myproject.models.CustomModel
-    hidden_size: 256
+config = Config().update(
+    {
+        "report": {"_target_": WordReport, "words": ["blue"], "title": "Python"},
+    }
+)
+assert config.resolve("report").render() == "Python: blue=1"
 ```
+
+Use serializable import paths when the source must be exported as standalone
+YAML. Caller-owned Python objects keep normal identity and mutability; storing
+one in a config does not turn it into a portable recipe.
 
 ## Positional Arguments with `_args_`
 
-Use `_args_` to pass positional arguments to classes or functions that require them:
+`_args_` must be a list. Each entry becomes one positional argument, and ordinary
+keys supply keyword arguments. This definition calls `Counter(["red", "red"])`:
 
 ```yaml
-# Basic example with list()
-my_list:
-  _target_: builtins.list
-  _args_:
-    - [1, 2, 3, 4, 5]
-  # Equivalent to: list([1, 2, 3, 4, 5])
-
-# torch.nn.Sequential requires positional args
-model:
-  _target_: torch.nn.Sequential
-  _args_:
-    - _target_: torch.nn.Linear
-      in_features: 784
-      out_features: 128
-    - _target_: torch.nn.ReLU
-    - _target_: torch.nn.Linear
-      in_features: 128
-      out_features: 10
-  # Equivalent to: nn.Sequential(Linear(784, 128), ReLU(), Linear(128, 10))
+counts:
+  _target_: collections.Counter
+  _args_: [[red, red]]
 ```
 
-### Mixing `_args_` and Keyword Arguments
-
-You can combine positional arguments with keyword arguments:
-
-```yaml
-pipeline:
-  _target_: sklearn.pipeline.Pipeline
-  _args_:
-    - - scaler:
-          _target_: sklearn.preprocessing.StandardScaler
-      - model:
-          _target_: sklearn.linear_model.LogisticRegression
-  memory: null  # Keyword argument
-  verbose: true  # Keyword argument
-```
-
-!!! note "List Requirement"
-    `_args_` must always be a list, even if you're only passing a single positional argument. Each item in the list becomes a positional argument in order.
-
-## Nested Instantiation
-
-Instantiate objects within objects:
-
-```yaml
-# Nested components
-transform:
-  _target_: torchvision.transforms.Compose
-  transforms:
-    - _target_: torchvision.transforms.Resize
-      size: [224, 224]
-    - _target_: torchvision.transforms.ToTensor
-    - _target_: torchvision.transforms.Normalize
-      mean: [0.485, 0.456, 0.406]
-      std: [0.229, 0.224, 0.225]
-```
-
-## Complex Example
-
-```yaml
-# Complete training setup
-dataset:
-  path: "/data/cifar10"
-
-transform:
-  _target_: torchvision.transforms.Compose
-  transforms:
-    - _target_: torchvision.transforms.ToTensor
-    - _target_: torchvision.transforms.Normalize
-      mean: [0.5, 0.5, 0.5]
-      std: [0.5, 0.5, 0.5]
-
-dataloader:
-  _target_: torch.utils.data.DataLoader
-  dataset: "@dataset"
-  batch_size: 32
-  shuffle: true
-
-model:
-  _target_: torch.nn.Linear
-  in_features: 784
-  out_features: 10
-
-optimizer:
-  _target_: torch.optim.Adam
-  params: "$@model.parameters()"
-  lr: 0.001
-```
+Nested `_target_` definitions construct nested objects. Use `@path` when a
+constructor must receive an existing shared object; use `%path` for a separately
+resolved copied definition. See [references](references.md).
 
 ## Special Keys
 
 ### `_mode_` - Instantiation Modes
 
-Control how objects are instantiated with `_mode_`:
+| Mode | Result |
+|---|---|
+| `default` | Call the target with resolved arguments |
+| `callable` | Return the target, or a `functools.partial` when arguments are supplied |
+| `debug` | Call the target under `pdb` |
 
-```yaml
-# Default: instantiate normally
-model:
-  _target_: torch.nn.Linear
-  _mode_: "default"  # Optional, this is the default
-  in_features: 784
-  out_features: 10
-  # Returns: Linear(in_features=784, out_features=10)
-
-# Callable: return the class/function, not an instance
-model_factory:
-  _target_: torch.nn.Linear
-  _mode_: "callable"
-  in_features: 784
-  # Returns: functools.partial(torch.nn.Linear, in_features=784)
-
-# Debug: run in debugger
-debug_component:
-  _target_: mymodule.MyClass
-  _mode_: "debug"
-  # Runs in pdb debugger
-```
+`callable` is optional advanced control, useful when an API explicitly expects a
+callable. It is not required for ordinary authoring. Arguments still resolve
+before the callable/partial is returned.
 
 ### `_disabled_` - Skip Instantiation
 
-Skip instantiation of a component without removing it from config:
+`_disabled_: true` skips a target and its runtime argument dependencies. Inline
+disabled components are removed from resolved parent lists/dicts. Resolving the
+disabled path directly, or referring to it with `@`, returns `None`. The source
+remains available for later re-enabling.
 
-```yaml
-callbacks:
-  - _target_: pytorch_lightning.callbacks.EarlyStopping
-    monitor: val_loss
-    patience: 3
-  - _target_: pytorch_lightning.callbacks.ModelCheckpoint
-    _disabled_: true  # This callback is removed from the list
-    save_top_k: 3
-```
+The guard accepts booleans, case-insensitive `"true"`/`"false"` strings, or a
+resolved dynamic value. A dynamic guard runs its own dependencies first. A true
+guard skips nested targets, argument expressions, unused `@` dependencies and
+import statements inside its payload. Explicitly resolving a child path still
+resolves that child's definition independently of the parent guard.
 
-**Behavior:**
+With `instantiate=False`, a disabled node returns a `Component` wrapper containing
+its untouched payload. With `eval_expr=False`, an unresolved guard also returns a
+wrapper instead of guessing its truth value. These modes have separate caches.
 
-- When `_disabled_: true`, the component is skipped entirely
-- **Inline in lists/dicts**: Disabled components are **removed** from the parent structure
-- **Direct resolution**: `config.resolve("disabled_component")` returns `None`
-- **References**: `@disabled_component` resolves to `None`
-- Default is `false` (component is enabled)
-- Accepts boolean values (`true`/`false`) or strings (`"true"`/`"false"`, case-insensitive)
-- The config is preserved—you can re-enable by setting `_disabled_: false`
+This is a runtime construction boundary: root `_imports_` declarations belong to
+compilation, external `%file.yaml` includes load during `update()`, and ordinary
+`Config` still expands/checks local copy syntax during compilation. A disabled
+node does not bypass those stages. Retained scopes have stricter preflight rules,
+described in [advanced contracts](advanced.md#retained-recipes-and-construction-scopes).
 
-**Use cases:**
-
-```yaml
-# Temporarily disable a feature for debugging
-scheduler:
-  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  _disabled_: true  # Disable while debugging optimizer issues
-  optimizer: "@optimizer"
-  T_max: 100
-
-# Environment-specific components
-profiler:
-  _target_: pytorch_lightning.profilers.PyTorchProfiler
-  _disabled_: "$not os.environ.get('ENABLE_PROFILER')"  # Expression support
-
-# A/B testing configurations
-augmentation:
-  _target_: torchvision.transforms.RandomErasing
-  _disabled_: false  # Toggle between experiments
-  p: 0.5
-```
-
-!!! tip "Disabled vs Deleted"
-    Use `_disabled_` when you want to keep the config for future use. Use the delete operator (`~key: null`) when you want to permanently remove a key.
+Migration: older versions could execute payload dependencies before checking the
+guard. Put intentionally required setup outside disabled payloads.
 
 ### Other Special Keys
 
-- `_target_`: Class or function path to instantiate (required)
-- `_args_`: List of positional arguments to pass
-- `_disabled_`: Skip instantiation if `true` (removed from parent)
-- `_mode_`: Instantiation mode (`"default"`, `"callable"`, or `"debug"`)
+`_target_`, `_args_`, `_mode_` and `_disabled_` are construction metadata rather
+than constructor keyword arguments. `_imports_` is a root configuration declaration
+for expression imports; see [expressions](expressions.md#importing-modules).
 
-For complete details, see the [Advanced Features](advanced.md) and [API Reference](../reference/).
+## When a Constructor Fails
+
+Check the native constructor signature and resolved arguments. Missing targets
+raise `TargetNotFoundError`; exceptions raised while calling a target are wrapped
+in `InstantiationError`. The original exception remains in the `__cause__` chain,
+which may include another Sparkwheel wrapper. Follow the chain to the native
+error or read the complete traceback; Sparkwheel does not repair application inputs.
+
+[Validation](schema-validation.md) can check configured arguments before a target
+is called. [Troubleshooting](troubleshooting.md) explains how to inspect source
+without accidentally constructing the whole application.

@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "sparkwheel"
-version = "0.0.11"
+version = "0.1.0.dev0"
 description = "A powerful YAML-based configuration system with references, expressions, and dynamic instantiation"
 authors = [
     { name = "Project Lighter", email = "noreply@lighter.com" },
@@ -12,6 +12,7 @@ authors = [
 requires-python = ">=3.10"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = ["configuration", "yaml", "config", "deep-learning", "machine-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -59,6 +60,7 @@ maintain = ["bump-my-version==0.30.1"]
 quality = ["ruff>=0.5.0"]
 types = [
     "mypy>=1.14.1",
+    "types-PyYAML>=6.0.12",
     "typing-extensions>=4.4.0",
 ]
 test = [
@@ -131,9 +133,16 @@ select = ["B", "E", "F", "I", "W"]
 ignore = ["E203", "E501", "N813"]
 
 [tool.bumpversion]
-current_version = "0.0.11"
+current_version = "0.1.0.dev0"
 commit = true
 tag = true
+parse = '^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:\.(?P<release>dev)(?P<dev>\d+))?$'
+serialize = ["{major}.{minor}.{patch}.{release}{dev}", "{major}.{minor}.{patch}"]
+
+[tool.bumpversion.parts.release]
+values = ["dev", "final"]
+optional_value = "final"
+first_value = "final"
 
 [[tool.bumpversion.files]]
 filename = "src/sparkwheel/__init__.py"
@@ -144,3 +153,13 @@ replace = "__version__ = \"{new_version}\""
 filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
+
+# Change only this project's editable root, never a dependency version.
+[[tool.bumpversion.files]]
+filename = "uv.lock"
+search = '''name = "sparkwheel"
+version = "{current_version}"
+source = {{ editable = "." }}'''
+replace = '''name = "sparkwheel"
+version = "{new_version}"
+source = {{ editable = "." }}'''

@@ -3,7 +3,9 @@ import warnings
 from collections.abc import Iterable
 from typing import Any, TypeVar
 
-from yaml import SafeLoader  # type: ignore[import-untyped]
+from yaml import SafeLoader
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
 
 __all__ = [
     "first",
@@ -51,8 +53,8 @@ def ensure_tuple(vals: Any) -> tuple[Any, ...]:
 def check_key_duplicates(ordered_pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
     """
     Checks if there is a duplicated key in the sequence of `ordered_pairs`.
-    If there is - it will log a warning or raise ValueError
-    (if configured by environmental var `SPARKWHEEL_STRICT_KEYS==1`)
+    Duplicates raise ValueError by default. Set `SPARKWHEEL_STRICT_KEYS=0`
+    to retain warning/last-wins compatibility.
 
     Otherwise, it returns the dict made from this sequence.
 
@@ -64,7 +66,7 @@ def check_key_duplicates(ordered_pairs: list[tuple[Any, Any]]) -> dict[Any, Any]
     keys = set()
     for k, _ in ordered_pairs:
         if k in keys:
-            if os.environ.get("SPARKWHEEL_STRICT_KEYS", "0") == "1":
+            if os.environ.get("SPARKWHEEL_STRICT_KEYS", "1") != "0":
                 raise ValueError(f"Duplicate key: `{k}`")
             else:
                 warnings.warn(f"Duplicate key: `{k}`", stacklevel=2)
@@ -83,17 +85,56 @@ class CheckKeyDuplicatesYamlLoader(SafeLoader):
         super().__init__(stream)
         # Store filename if available
         self.source_file = getattr(stream, "name", None)
+        self._checked_mappings: set[Any] = set()
+
+    def flatten_mapping(self, node):
+        """Check authored keys before PyYAML expands legal merge overrides.
+
+        PyYAML recursively calls this method for merge sources. Remember checked
+        nodes because aliases can revisit a mapping after it has been flattened.
+        """
+        if node not in self._checked_mappings:
+            self._checked_mappings.add(node)
+            marks: dict[Any, Any] = {}
+            merge_key = object()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    key = merge_key
+                    label = "<<"
+                else:
+                    # PyYAML treats a bare '=' key as text during flattening.
+                    if key_node.tag == "tag:yaml.org,2002:value":
+                        key_node.tag = "tag:yaml.org,2002:str"
+                    key = self.construct_object(key_node, deep=True)
+                    label = key
+                try:
+                    duplicate = key in marks
+                except TypeError as error:
+                    raise ConstructorError(
+                        "while constructing a mapping",
+                        node.start_mark,
+                        "found unhashable key",
+                        key_node.start_mark,
+                    ) from error
+                if duplicate:
+                    first_mark = marks[key]
+                    repeated = key_node.start_mark
+                    message = (
+                        f"Duplicate key: `{label}`; first defined at {first_mark.name}, "
+                        f"line {first_mark.line + 1}, column {first_mark.column + 1}; "
+                        f"repeated at {repeated.name}, line {repeated.line + 1}, "
+                        f"column {repeated.column + 1}"
+                    )
+                    if os.environ.get("SPARKWHEEL_STRICT_KEYS", "1") != "0":
+                        raise ValueError(message)
+                    warnings.warn(message, stacklevel=2)
+                else:
+                    marks[key] = key_node.start_mark
+        return super().flatten_mapping(node)
 
     def construct_mapping(self, node, deep=False):
-        mapping = set()
-        for key_node, _ in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if key in mapping:
-                if os.environ.get("SPARKWHEEL_STRICT_KEYS", "0") == "1":
-                    raise ValueError(f"Duplicate key: `{key}`")
-                else:
-                    warnings.warn(f"Duplicate key: `{key}`", stacklevel=2)
-            mapping.add(key)
+        if not isinstance(node, MappingNode):
+            raise ConstructorError(None, None, "expected a mapping node", node.start_mark)
         return super().construct_mapping(node, deep)
 
     def construct_object(self, node, deep=False):

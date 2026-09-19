@@ -18,13 +18,15 @@ brew install just
 # Or see https://github.com/casey/just for other platforms
 ```
 
-### 2. Clone and Setup
+### 2. Set up the matching source
+
+Follow the public clone and editable commands in [installation](docs/getting-started/installation.md#development-setup). They select an immutable reviewed snapshot; use the explicitly agreed branch/revision for new work. From that clone, run:
 
 ```bash
-git clone https://github.com/project-lighter/sparkwheel.git
-cd sparkwheel
 just setup
 ```
+
+This uses or updates the clone's `.venv` and adds contributor dependencies. Activate that environment when running its tools directly.
 
 This will:
 - Install all dependencies (dev, test, doc groups)
@@ -52,6 +54,30 @@ We use:
 - **pytest** for testing
 
 Pre-commit hooks will automatically run on commit.
+
+## Keep documentation useful
+
+Use one documentation set for people and agents. Keep behavior in ordinary
+Python, teach one complete first example, and link to the canonical semantic
+explanation instead of maintaining parallel copies.
+
+- State the working directory, prerequisites, exact inputs and expected outputs
+  for a runnable example. Mark excerpts through their surrounding explanation.
+- Preserve the distinction between source inspection and execution, and between
+  a shared result and a copied definition.
+- Run changed complete examples with the documented install; record which checks
+  actually ran. Review other affected snippets against source.
+- Build the site strictly and check affected links/anchors. With documentation
+  dependencies installed and the environment active, use:
+
+```bash
+python -m mkdocs build --strict
+```
+
+Keep explanatory Markdown under `docs/`, entrypoint guidance in README, and the
+Python API reference generated from source. Prefer existing paths and descriptive
+headings. New documentation machinery needs a concrete unmet need. A passing
+build does not execute every code example.
 
 ## Pull Request Process
 
@@ -86,3 +112,36 @@ When reporting issues, please include:
 ## License
 
 By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+
+## Version preparation
+
+Version maintenance uses the pinned `bump-my-version==0.30.1` executable through
+`uvx`, independently of runtime dependency installation. The supported recipe
+parts are `major`, `minor`, `patch`, and `release`:
+
+```bash
+just bump-dry release  # Preview 0.1.0.dev0 -> 0.1.0
+just bump-dry patch    # A stable 0.1.0 previews 0.1.1
+```
+
+`release` removes an existing `.devN` suffix without advancing the numeric
+version. Numeric bumps advance that component and reset subordinate components
+to stable; `patch` from `0.1.0.dev0` therefore previews `0.1.1`, not promotion to
+`0.1.0`. Use `release` for that promotion. Unsupported parts, including the raw
+`dev` counter, fail before invoking the tool. Starting another development cycle
+requires a separately reviewed explicit version choice.
+
+Dry runs disable file writes, commits and tags. After release authorization,
+`just bump <part>` updates project metadata, the source version constant, the
+bump configuration and only Sparkwheel's editable-root version in `uv.lock`; it
+also creates the configured local commit and tag. Review the diff and run the
+ordinary package checks before any separately authorized push or publication.
+Current development snapshots have not been tagged or published by this work.
+
+Previewing or preparing a version locally does not authorize its remote release.
+
+## Stable release guard
+
+Use the existing pinned `bump-my-version` recipes to preview or promote a version. Actual bump commands can create a commit and tag; `just bump-dry release` previews without those changes. For a rehearsal, work in disposable copies and explicitly disable commits and tags.
+
+Publication accepts only a pushed `vMAJOR.MINOR.PATCH` tag matching both project metadata and the source version, at a commit on freshly fetched `main`. Development/prerelease tags and mismatches fail before publishing or creating a stable GitHub Release. Manual dispatch of Publish builds and retains workflow artifacts only. Current token authentication is unchanged. Building an artifact does not publish it or establish registry availability.

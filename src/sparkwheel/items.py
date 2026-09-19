@@ -5,9 +5,10 @@ from collections.abc import Mapping
 from pprint import pformat
 from typing import Any
 
-from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
+from .path_utils import replace_references, scan_references
+from .utils import CompInitMode, instantiate, run_debug, run_eval
 from .utils.constants import EXPR_KEY
-from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
+from .utils.exceptions import BaseError, EvaluationError, InstantiationError, Location, TargetNotFoundError
 
 __all__ = ["Item", "Expression", "Component", "Instantiable"]
 
@@ -145,7 +146,7 @@ class Component(Item, Instantiable):
         No automatic module discovery is performed.
 
         Returns:
-            str or callable: The module path or callable from _target_
+            target (Any): The module path or callable from _target_.
         """
         config = dict(self.get_config())
         target = config.get("_target_")
@@ -160,7 +161,7 @@ class Component(Item, Instantiable):
         Utility function used in `instantiate()` to resolve the arguments from current config content.
 
         Returns:
-            tuple: A tuple of (args, kwargs) where:
+            arguments (tuple[list[Any], dict[str, Any]]): A tuple of (args, kwargs) where:
                 - args is a list of positional arguments from _args_ (or empty list if not present)
                 - kwargs is a dict of keyword arguments (excluding special keys)
         """
@@ -314,25 +315,50 @@ class Expression(Item):
     ) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
         self.globals = globals if globals is not None else {}
+        self._imports_loaded = False
+        self._import_result: Any = None
+
+    @staticmethod
+    def _syntax_tree(value: str) -> ast.Module:
+        # Parse reference-bearing code without resolving or evaluating its inputs.
+        substituted = replace_references(value, dict.fromkeys(scan_references(value)))
+        return ast.parse(substituted[1:].lstrip())
 
     def _parse_import_string(self, import_string: str) -> Any | None:
-        """parse single import statement such as "from pathlib import Path" """
-        node = first(ast.iter_child_nodes(ast.parse(import_string)))
-        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        """Execute an import prefix, binding every alias with native Python rules."""
+        tree = self._syntax_tree("$" + import_string)
+        imports: list[ast.stmt] = []
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                imports.append(node)
+            else:
+                break
+        if not imports:
             return None
-        if len(node.names) < 1:
-            return None
-        if len(node.names) > 1:
-            warnings.warn(f"ignoring multiple import alias '{import_string}'.", stacklevel=2)
-        name, asname = f"{node.names[0].name}", node.names[0].asname
-        asname = name if asname is None else f"{asname}"
-        if isinstance(node, ast.ImportFrom):
-            self.globals[asname], _ = optional_import(f"{node.module}", name=f"{name}")
-            return self.globals[asname]
-        if isinstance(node, ast.Import):
-            self.globals[asname], _ = optional_import(f"{name}")
-            return self.globals[asname]
-        return None  # type: ignore[unreachable]
+        if len(tree.body) > len(imports) and (len(tree.body) != len(imports) + 1 or not isinstance(tree.body[-1], ast.Expr)):
+            raise SyntaxError("An import prefix must be followed by one final Python expression")
+        exec(compile(ast.Module(body=imports, type_ignores=[]), "<sparkwheel imports>", "exec"), self.globals)
+        first_import = imports[0]
+        assert isinstance(first_import, (ast.Import, ast.ImportFrom))
+        alias = first_import.names[0]
+        name = alias.asname or (alias.name.split(".")[0] if isinstance(first_import, ast.Import) else alias.name)
+        return self.globals.get(name)
+
+    def load_imports(self, *, force: bool = False) -> Any:
+        """Bind this expression's imports without evaluating its trailing value."""
+        if force or not self._imports_loaded:
+            try:
+                self._import_result = self._parse_import_string(self.get_config()[len(self.prefix) :])
+            except Exception as error:
+                raise EvaluationError(
+                    f"Failed to load expression imports: '{self.get_config()[len(self.prefix) :]}'",
+                    source_location=self.source_location,
+                ) from error
+            self._imports_loaded = True
+        return self._import_result
+
+    def is_import_only(self) -> bool:
+        return all(isinstance(node, (ast.Import, ast.ImportFrom)) for node in self._syntax_tree(self.get_config()).body)
 
     def evaluate(self, globals: dict[str, Any] | None = None, locals: dict[str, Any] | None = None) -> str | Any | None:
         """Evaluate the expression and return the result.
@@ -352,9 +378,23 @@ class Expression(Item):
         value = self.get_config()
         if not Expression.is_expression(value):
             return None
-        optional_module = self._parse_import_string(value[len(self.prefix) :])
-        if optional_module is not None:
-            return optional_module
+        try:
+            tree = self._syntax_tree(value)
+            if tree.body and isinstance(tree.body[0], (ast.Import, ast.ImportFrom)):
+                imported = self.load_imports(force=True)
+                if self.is_import_only():
+                    return imported
+                final = tree.body[-1]
+                assert isinstance(final, ast.Expr)
+                expression = ast.Expression(final.value)
+            else:
+                expression = ast.parse(value[len(self.prefix) :].lstrip(), mode="eval")
+        except EvaluationError:
+            raise
+        except Exception as error:
+            raise EvaluationError(
+                f"Failed to parse expression: '{value[len(self.prefix) :]}'", source_location=self.source_location
+            ) from error
         if not self.run_eval:
             return f"{value[len(self.prefix) :]}"
         globals_ = dict(self.globals)
@@ -365,7 +405,10 @@ class Expression(Item):
                 globals_[k] = v
         if not run_debug:
             try:
-                return eval(value[len(self.prefix) :], globals_, locals)
+                return eval(compile(expression, "<sparkwheel expression>", "eval"), globals_, locals)
+            except BaseError:
+                # Lazy graph lookups retain structured dependency/schema errors.
+                raise
             except Exception as e:
                 raise EvaluationError(
                     f"Failed to evaluate expression: '{value[len(self.prefix) :]}'",
@@ -399,8 +442,10 @@ class Expression(Item):
         Args:
             config: input config content to check.
         """
-        if not cls.is_expression(config):
+        if not cls.is_expression(config) or "import" not in config:
             return False
-        if "import" not in config:
+        try:
+            tree = cls._syntax_tree(str(config))
+        except (SyntaxError, ValueError):
             return False
-        return isinstance(first(ast.iter_child_nodes(ast.parse(f"{config[len(cls.prefix) :]}"))), (ast.Import, ast.ImportFrom))  # type: ignore[index]
+        return bool(tree.body) and isinstance(tree.body[0], (ast.Import, ast.ImportFrom))

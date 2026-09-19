@@ -95,12 +95,20 @@ config.update("~model::old_param")  # Delete
 See Config class docstring for full API details.
 """
 
+from copy import copy, deepcopy
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .loader import Loader
 from .locations import LocationRegistry
-from .operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
+from .operators import (
+    MergeContext,
+    _copy_containers,
+    _normalize_update_value,
+    _validate_delete_operator,
+    apply_operators,
+    validate_operators,
+)
 from .parser import Parser
 from .path_utils import get_by_id, split_id
 from .preprocessor import Preprocessor
@@ -108,6 +116,9 @@ from .resolver import Resolver
 from .utils import PathLike, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
 from .utils.exceptions import ConfigKeyError, build_missing_key_error
+
+if TYPE_CHECKING:
+    from .construction import RetainedConfig
 
 __all__ = ["Config", "parse_overrides"]
 
@@ -186,7 +197,12 @@ class Config:
         """
         self._data: dict[str, Any] = data or {}  # Start with provided data or empty
         self._locations = LocationRegistry()
-        self._resolver = Resolver()
+        if schema is None:
+            self._resolver = Resolver()
+        else:
+            from .schema_resolver import _SchemaResolver
+
+            self._resolver = _SchemaResolver(self)
         self._is_parsed = False
         self._frozen = False  # Set via freeze() method later
 
@@ -197,10 +213,11 @@ class Config:
         self._allow_missing: bool = allow_missing
 
         # Process imports (import string module paths)
-        self._imports: dict[str, Any] = {}
+        self._provided_imports: dict[str, Any] = {}
         if isinstance(imports, dict):
             for k, v in imports.items():
-                self._imports[k] = optional_import(v)[0] if isinstance(v, str) else v
+                self._provided_imports[k] = optional_import(v)[0] if isinstance(v, str) else v
+        self._imports = dict(self._provided_imports)
 
         self._loader = Loader()
         self._preprocessor = Preprocessor(self._loader, self._imports)
@@ -213,7 +230,9 @@ class Config:
 
         - Returns `@` references as strings (e.g., "@model::lr")
         - Returns `$` expressions as strings (e.g., "$@lr * 2")
-        - Returns `%` raw references already expanded (eager expansion during update())
+        - Retains local `%` definitions and `_imports_`, even after resolution
+        - External `%file.yaml` includes are snapshots expanded during update()
+        - Does not import, instantiate, or evaluate expressions
         - Fast, no resolution overhead
 
         Use this when you need to:
@@ -258,7 +277,8 @@ class Config:
             999
         """
         try:
-            return self._get_by_id(id)
+            value = self._get_by_id(id)
+            return _copy_containers(value) if self._frozen else value
         except (KeyError, IndexError, TypeError):
             return default
 
@@ -284,28 +304,66 @@ class Config:
         if self._frozen:
             raise FrozenConfigError("Cannot modify frozen config", field_path=id)
 
+        candidate = self._edit_candidate()
+        candidate._set_inplace(id, value)
+        self._publish_edit(candidate)
+
+    def _edit_candidate(self) -> "Config":
+        """Stage source/metadata without borrowing the live resolver or namespace."""
+        candidate = Config(data=_copy_containers(self._data))
+        candidate._locations = deepcopy(self._locations)
+        return candidate
+
+    def _publish_edit(self, candidate: "Config") -> None:
+        if self._schema:
+            from .schema import _coerce_field
+            from .schema import validate as validate_schema
+
+            if self._coerce:
+                candidate._data = _coerce_field(
+                    candidate._data,
+                    self._schema,
+                    metadata=candidate._locations,
+                    allow_missing=self._allow_missing,
+                    strict=self._strict,
+                )
+            validate_schema(
+                candidate._data,
+                self._schema,
+                metadata=candidate._locations,
+                allow_missing=self._allow_missing,
+                strict=self._strict,
+            )
+        self._data = candidate._data
+        self._locations = candidate._locations
+        self._invalidate_resolution()
+
+    def _set_inplace(self, id: str, value: Any) -> None:
+        """Apply one path assignment to a staged source tree."""
+        value = _copy_containers(value)
         if id == "":
             self._data = value
             self._invalidate_resolution()
             return
-
         keys = split_id(id)
-
-        # Ensure root is dict
         if not isinstance(self._data, dict):
             self._data = {}  # type: ignore[unreachable]
-
-        # Create missing intermediate paths
-        current = self._data
-        for k in keys[:-1]:
-            if k not in current:
-                current[k] = {}
-            elif not isinstance(current[k], dict):
-                current[k] = {}
-            current = current[k]
-
-        # Set final value
-        current[keys[-1]] = value
+        current: Any = self._data
+        for key in keys[:-1]:
+            if isinstance(current, dict):
+                if key not in current:
+                    current[key] = {}
+                current = current[key]
+            elif isinstance(current, list):
+                current = current[int(key)]
+            else:
+                raise TypeError(f"Cannot traverse scalar while setting '{id}'")
+        if isinstance(current, dict):
+            current[keys[-1]] = value
+        elif isinstance(current, list):
+            current[int(keys[-1])] = value
+        else:
+            raise TypeError(f"Cannot assign a child of a scalar while setting '{id}'")
         self._invalidate_resolution()
 
     def validate(self, schema: type) -> None:
@@ -340,13 +398,17 @@ class Config:
         - set() raises FrozenConfigError
         - update() raises FrozenConfigError
         - resolve() still works (read-only)
-        - get() still works (read-only)
+        - get()/subscript access return detached container snapshots
+        - previously returned source containers cannot mutate the frozen source
+        - opaque Python leaves and runtime objects remain caller-owned
 
         Example:
             >>> config = Config(schema=MySchema).update("config.yaml")
             >>> config.freeze()
             >>> config.set("model::lr", 0.001)  # Raises FrozenConfigError
         """
+        # Detach containers already handed out before freezing.
+        self._data = _copy_containers(self._data)
         self._frozen = True
 
     def unfreeze(self) -> None:
@@ -426,6 +488,13 @@ class Config:
         if self._frozen:
             raise FrozenConfigError("Cannot update frozen config")
 
+        candidate = self._edit_candidate()
+        candidate._update_inplace(source)
+        self._publish_edit(candidate)
+        return self
+
+    def _update_inplace(self, source: PathLike | dict[str, Any] | "Config" | str) -> None:
+        """Apply a complete update to a staged candidate before validation."""
         if isinstance(source, Config):
             self._update_from_config(source)
         elif isinstance(source, dict):
@@ -447,21 +516,6 @@ class Config:
             self._data, self._data, id="", locations=self._locations, external_only=True
         )
 
-        # Validate after raw ref expansion if schema exists
-        # This validates the final structure, not intermediate raw reference strings
-        if self._schema:
-            from .schema import validate as validate_schema
-
-            validate_schema(
-                self._data,
-                self._schema,
-                metadata=self._locations,
-                allow_missing=self._allow_missing,
-                strict=self._strict,
-            )
-
-        return self  # Enable chaining
-
     def _update_from_config(self, source: "Config") -> None:
         """Update from another Config instance."""
         context = MergeContext(locations=source.locations)
@@ -477,13 +531,15 @@ class Config:
         """Apply nested path updates (e.g., model::lr=value, =model=replace, ~old::param=null)."""
         for key, value in source.items():
             if not isinstance(key, str):
-                self.set(str(key), value)  # type: ignore[unreachable]
+                context = MergeContext(locations=self._locations, current_path=str(key))  # type: ignore[unreachable]
+                self._set_inplace(str(key), _normalize_update_value(value, context))
                 continue
 
             if key.startswith(REPLACE_KEY):
                 # Replace operator: =key (explicit override)
                 actual_key = key[1:]
-                self.set(actual_key, value)
+                context = MergeContext(locations=self._locations, current_path=actual_key)
+                self._set_inplace(actual_key, _normalize_update_value(value, context))
 
             elif key.startswith(REMOVE_KEY):
                 # Delete operator: ~key
@@ -516,19 +572,26 @@ class Config:
                         available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
 
                     raise build_missing_key_error(error_key, available_keys, source_location, parent_key=parent_key_name)
-                self._delete_nested_key(actual_key)
+                if isinstance(value, list):
+                    context = MergeContext(locations=self._locations, current_path=actual_key)
+                    remaining = apply_operators({"value": self._get_by_id(actual_key)}, {"~value": value}, context=context)
+                    self._set_inplace(actual_key, remaining["value"])
+                else:
+                    self._delete_nested_key(actual_key)
 
             else:
                 # Default: compose (merge dict or extend list)
                 if key in self and isinstance(self[key], dict) and isinstance(value, dict):
                     context = MergeContext(locations=self._locations, current_path=key)
                     merged = apply_operators(self[key], value, context=context)
-                    self.set(key, merged)
+                    self._set_inplace(key, merged)
                 elif key in self and isinstance(self[key], list) and isinstance(value, list):
-                    self.set(key, self[key] + value)
+                    context = MergeContext(locations=self._locations, current_path=key)
+                    self._set_inplace(key, self[key] + _normalize_update_value(value, context))
                 else:
                     # Normal set (handles nested paths with ::)
-                    self.set(key, value)
+                    context = MergeContext(locations=self._locations, current_path=key)
+                    self._set_inplace(key, _normalize_update_value(value, context))
 
     def _delete_nested_key(self, key: str) -> None:
         """Delete a key, supporting nested paths with ::."""
@@ -538,6 +601,8 @@ class Config:
             parent = self[parent_id] if parent_id else self._data
             if isinstance(parent, dict) and keys[-1] in parent:
                 del parent[keys[-1]]
+            elif isinstance(parent, list):
+                del parent[int(keys[-1])]
         else:
             # Top-level key
             if isinstance(self._data, dict) and key in self._data:
@@ -574,6 +639,16 @@ class Config:
         overrides_dict = parse_overrides([override])
         self._apply_path_updates(overrides_dict)
 
+    def retain(self) -> "RetainedConfig":
+        """Capture source and caller imports for independent construction scopes.
+
+        This does not resolve, import, or construct configured objects. Opaque
+        Python inputs retain their identity; existing runtime caches are excluded.
+        """
+        from .construction import RetainedConfig
+
+        return RetainedConfig(self)
+
     def resolve(
         self,
         id: str = "",
@@ -591,10 +666,12 @@ class Config:
         4. Caches results in a separate resolution cache (`_resolver._resolved`)
 
         Unlike get(), which always returns raw `_data`, resolve() performs full processing
-        and uses a separate cache for efficiency.
+        and uses a separate cache for each (instantiate, eval_expr) pair. Repeating
+        a mode preserves its shared objects even after resolving in another mode.
+        Editing the config or passing lazy=False invalidates all modes.
 
         Processing stages:
-        - `%` raw references: Already expanded during update() (eager)
+        - `%` raw references: External includes expanded on update; local copies compiled here
         - `@` resolved references: Resolved now (lazy, supports circular deps)
         - `$` expressions: Evaluated now (lazy)
         - `_target_` components: Instantiated now (lazy)
@@ -642,8 +719,8 @@ class Config:
             >>> type(optimizer).__name__
             'Adam'
 
-            >>> # Disable instantiation (useful for inspection)
-            >>> config.resolve("optimizer", instantiate=False)
+            >>> # Disable instantiation (returns a Component wrapper)
+            >>> config.resolve("optimizer", instantiate=False).get_config()
             {'_target_': 'torch.optim.Adam', 'lr': 0.001}
 
             >>> # With default value
@@ -681,31 +758,33 @@ class Config:
         """
         # Reset resolver if requested
         if reset:
-            self._resolver.reset()
+            self._replace_resolver()
 
-        # Process _imports_ key if present in config data
-        # This allows YAML-based imports that become available to all expressions
-        self._process_imports_key()
+        # Compile a separate tree. Source imports, local copies and relative
+        # references must remain available for export and the next generation.
+        working_data = _copy_containers(self._data)
+        self._imports = dict(self._provided_imports)
+        self._process_imports_key(working_data)
 
         # Phase 2: Expand local raw references (%key) now that all composition is complete
         # CLI overrides have been applied, so local refs will see final values
-        self._data = self._preprocessor.process_raw_refs(
-            self._data, self._data, id="", locations=self._locations, external_only=False
+        working_data = self._preprocessor.process_raw_refs(
+            working_data, working_data, id="", locations=self._locations, external_only=False
         )
 
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        self._data = self._preprocessor.process(self._data, self._data, id="")
+        working_data = self._preprocessor.process(working_data, working_data, id="")
 
         # Stage 2: Parse config tree to create Items
         parser = Parser(globals=self._imports, metadata=self._locations)
-        items = parser.parse(self._data)
+        items = parser.parse(working_data)
 
         # Stage 3: Add items to resolver
         self._resolver.add_items(items)
 
         self._is_parsed = True
 
-    def _process_imports_key(self) -> None:
+    def _process_imports_key(self, working_data: dict[str, Any]) -> None:
         """Process _imports_ key from config data.
 
         The _imports_ key allows declaring imports directly in YAML:
@@ -721,13 +800,14 @@ class Config:
         ```
 
         These imports become available to all expressions in the config.
-        The _imports_ key is removed from the data after processing.
+        The _imports_ key is removed only from the working compilation tree.
+        The authored declaration remains available through get() and export.
         """
         imports_key = "_imports_"
-        if imports_key not in self._data:
+        if imports_key not in working_data:
             return
 
-        imports_config = self._data.pop(imports_key)
+        imports_config = working_data.pop(imports_key)
         if not isinstance(imports_config, dict):
             return
 
@@ -766,10 +846,23 @@ class Config:
         """
         return get_by_id(self._data, id)
 
+    def _replace_resolver(self) -> None:
+        """Start a generation without mutating resolvers held by escaped values."""
+        if self._schema is None:
+            self._resolver = Resolver()
+        else:
+            from .schema_resolver import _SchemaResolver
+
+            # Schema policy and source locations belong to this generation too.
+            # Copy the owner record, not opaque inputs or runtime graph objects.
+            self._resolver = _SchemaResolver(copy(self))
+
     def _invalidate_resolution(self) -> None:
         """Invalidate cached resolution (called when config changes)."""
         self._is_parsed = False
-        self._resolver.reset()
+        self._replace_resolver()
+        # Replacing the namespace preserves objects held from older generations.
+        self._imports = dict(self._provided_imports)
 
     def __getitem__(self, id: str) -> Any:
         """Get config value by ID (subscript access).
@@ -785,7 +878,8 @@ class Config:
             >>> config["model::lr"]
             0.001
         """
-        return self._get_by_id(id)
+        value = self._get_by_id(id)
+        return _copy_containers(value) if self._frozen else value
 
     def __setitem__(self, id: str, value: Any) -> None:
         """Set config value by ID (subscript access).
@@ -828,7 +922,7 @@ class Config:
             filepath: Target file path
             kwargs: Additional arguments for yaml.safe_dump
         """
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         filepath_str = str(Path(filepath))
         with open(filepath_str, "w") as f:

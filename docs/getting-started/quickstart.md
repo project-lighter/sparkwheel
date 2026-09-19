@@ -1,133 +1,109 @@
 # Quick Start
 
-Get productive with Sparkwheel in 5 minutes.
-
-## Installation
-
-```bash
-pip install sparkwheel
-```
+Build a word counter from configuration, inspect its definition, then change its
+input. This complete example uses only Sparkwheel and Python's standard library.
+First complete [installation](installation.md) and keep that environment active.
 
 ## Your First Config
 
-Create a file `config.yaml`:
-
-```yaml
-# config.yaml
-dataset:
-  path: "/data/train"
-  num_classes: 10
-  batch_size: 32
-
-model:
-  _target_: torch.nn.Linear
-  in_features: 784
-  out_features: "@dataset::num_classes"  # Reference!
-
-training:
-  epochs: 10
-  learning_rate: 0.001
-  steps_per_epoch: "$10000 // @dataset::batch_size"  # Expression!
-```
-
-Load and use it in Python:
+The ordinary Python version is:
 
 ```python
+from collections import Counter
+
+counts = Counter(["red", "blue", "red"])
+print(dict(counts))  # {'red': 2, 'blue': 1}
+```
+
+To select the input through configuration, create a new example directory:
+
+```bash
+mkdir sparkwheel-demo
+cd sparkwheel-demo
+```
+
+Create these two files in that directory.
+
+```yaml title="config.yaml"
+words: [red, blue, red]
+counts:
+  _target_: collections.Counter
+  _args_: ["@words"]
+```
+
+```python title="run.py"
+import sys
 from sparkwheel import Config
 
-# Load the config
-config = Config()
-config.update("config.yaml")
+config = Config().update("config.yaml")
+for override in sys.argv[1:]:
+    config.update(override)
 
-# Access values with path notation
-batch_size = config["dataset::batch_size"]  # 32
-epochs = config["training::epochs"]  # 10
-
-# Resolve references and expressions
-steps = config.resolve("training::steps_per_epoch")  # 312 (10000 // 32)
-
-# Instantiate objects
-model = config.resolve("model")  # Actual torch.nn.Linear(784, 10) instance!
-
-print(f"Training for {epochs} epochs with batch size {batch_size}")
-print(f"Model: {model}")
+print("Definition:", config.get("counts")["_target_"])
+counts = config.resolve("counts")
+print("Counts:", dict(counts))
 ```
 
-**That's it!** You just:
+Run from `sparkwheel-demo`:
 
-- ✓ Loaded a YAML config
-- ✓ Referenced resolved values with `@` (gets instantiated/computed results)
-- ✓ Computed values with `$` (Python expressions)
-- ✓ Instantiated a Python object from config with `_target_`
-
-!!! tip "Two Types of References"
-    - `@` = **Resolved reference** - gets the final instantiated/evaluated value
-    - `%` = **Raw reference** - copies unprocessed YAML content (from same or external file)
-
-## Experiment Without Copying
-
-Create a variant without duplicating the base config (merges automatically!):
-
-```yaml
-# experiment_large.yaml
-model:  # Merges by default - no operator needed!
-  in_features: 1568  # Override just this
-  # out_features is still @dataset::num_classes
-
-training:
-  learning_rate: 0.0001  # Lower learning rate
-  # epochs and steps_per_epoch inherited from base
+```bash
+python run.py
 ```
 
-Load both configs:
+Expected output:
 
-```python
-config = (Config()
-          .update("config.yaml")
-          .update("experiment_large.yaml"))
-
-model = config.resolve("model")  # Linear(1568, 10) - merged automatically!
-lr = config["training::learning_rate"]  # 0.0001
-epochs = config["training::epochs"]  # 10 (inherited)
+```text
+Definition: collections.Counter
+Counts: {'red': 2, 'blue': 1}
 ```
 
-**Sparkwheel composes by default!** Dicts merge and lists extend - no operators needed for the common case.
+`_target_` names the Python class to call. `_args_` supplies positional arguments.
+`@words` supplies the resolved value of the `words` node. `get()` reads the
+configuration; `resolve()` constructs the counter. Nothing is written to disk by
+this program.
 
 ## CLI Overrides
 
-Override values from the command line without editing files:
-
-```python
-# train.py
-from sparkwheel import Config
-import sys
-import ast
-
-config = Config()
-config.update("config.yaml")
-
-# Parse CLI overrides (simple 3-line pattern)
-for arg in sys.argv[1:]:
-    if "=" in arg:
-        key, value = arg.split("=", 1)
-        try:
-            value = ast.literal_eval(value)  # Parse numbers, lists, etc.
-        except (ValueError, SyntaxError):
-            pass  # Keep as string
-        config.set(key, value)
-# ... use config ...
-```
-
-Run with overrides:
+From the same directory, replace the input list:
 
 ```bash
-python train.py training::learning_rate=0.01 dataset::batch_size=64
+python run.py '=words=[green, green, red]'
 ```
+
+Expected output:
+
+```text
+Definition: collections.Counter
+Counts: {'green': 2, 'red': 1}
+```
+
+The leading `=` means **replace**. Without it, list composition appends entries.
+Single quotes keep the override together as one shell argument. Values are parsed
+as YAML; see [CLI overrides](../user-guide/cli.md) for booleans, nulls and mappings.
+
+## Experiment Without Copying
+
+Create an overlay beside the other files:
+
+```yaml title="extra.yaml"
+words: [green]
+```
+
+The same program accepts a file path as well as an override:
+
+```bash
+python run.py extra.yaml
+```
+
+Expected counts are `{'red': 2, 'blue': 1, 'green': 1}`. The definition line stays
+`Definition: collections.Counter`. Dictionaries merge and lists extend by default;
+[composition](../user-guide/operators.md) explains how to replace or delete them.
 
 ## Next Steps
 
-Now that you've seen the basics:
-
-- **[Core Concepts](../user-guide/basics.md)** - Learn more about references, expressions, and instantiation
-- **[Composition & Operators](../user-guide/operators.md)** - Master config composition with `=` and `~`
-- **[Schema Validation](../user-guide/schema-validation.md)** - Validate configs with dataclasses
+- Read the [configuration model](../user-guide/basics.md) before editing objects
+  after construction.
+- Use [`@` and `%`](../user-guide/references.md) to choose shared objects versus
+  copied definitions.
+- Replace the standard-library target with [your own Python class](../user-guide/instantiation.md).
+- If a command fails, start with [troubleshooting](../user-guide/troubleshooting.md).

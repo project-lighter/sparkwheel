@@ -383,17 +383,12 @@ class TestExpression:
         assert result == json
         assert "json" in expr.globals
 
-    def test_evaluate_multiple_imports_warning(self):
-        """Test warning for multiple imports in one statement."""
-        expr = Expression(config="$from os import path, environ", id="test")
-
-        with pytest.warns(UserWarning, match="ignoring multiple import"):
-            result = expr.evaluate()
-
+    def test_evaluate_multiple_imports_loads_every_alias(self):
         import os
 
-        # Should import the first one
-        assert result == os.path
+        expr = Expression(config="$from os import path, environ", id="test")
+        assert expr.evaluate() is os.path
+        assert expr.globals["environ"] is os.environ
 
     def test_evaluate_non_expression_returns_none(self):
         """Test evaluating non-expression returns None."""
@@ -549,14 +544,8 @@ class TestItemsEdgeCases:
             component.instantiate()
 
     def test_expression_multiple_import_aliases(self):
-        """Test Expression with multiple import aliases (should warn)."""
-        import warnings
+        from collections import Counter, defaultdict
 
         expr = Expression(config="$from collections import Counter, defaultdict", id="test")
-
-        # Should warn about multiple imports
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            expr.evaluate()
-            # Check that a warning was issued
-            assert len(w) >= 1
+        assert expr.evaluate() is Counter
+        assert expr.globals["defaultdict"] is defaultdict

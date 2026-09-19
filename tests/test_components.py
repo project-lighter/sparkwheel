@@ -323,14 +323,13 @@ class TestExpression:
         result = expr._parse_import_string("1 + 1")
         assert result is None
 
-    def test_parse_import_string_multiple_imports_warning(self):
-        """Test _parse_import_string warns on multiple imports."""
+    def test_parse_import_string_loads_all_import_aliases(self):
+        from collections import Counter, defaultdict
+
         expr = Expression("$from collections import Counter, defaultdict", id="test")
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            expr._parse_import_string("from collections import Counter, defaultdict")
-            assert len(w) > 0
-            assert "multiple import" in str(w[0].message).lower()
+        assert expr._parse_import_string("from collections import Counter, defaultdict") is Counter
+        assert expr.globals["Counter"] is Counter
+        assert expr.globals["defaultdict"] is defaultdict
 
     def test_repr(self):
         """Test string representation."""
@@ -786,3 +785,25 @@ class TestResolver:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@pytest.mark.parametrize("options", [{"instantiate": False}, {"eval_expr": False}])
+def test_resolver_reset_clears_nondefault_mode(options):
+    resolver = Resolver(items=[Component({"_target_": "builtins.dict", "value": 1}, id="component")])
+    resolver.resolve("component", **options)
+    assert resolver.is_resolved()
+    resolver.reset()
+    assert not resolver.is_resolved()
+    assert resolver.get_item("component") is None
+
+
+def test_get_item_resolve_populates_requested_mode_without_rewriting_source():
+    source = {"_target_": "builtins.dict", "value": "@number"}
+    item = Component(source, id="component")
+    resolver = Resolver(items=[item, Expression("$2 * 4", id="number")])
+    assert resolver.get_item("component", resolve=True, instantiate=False, eval_expr=False) is item
+    built = resolver.resolve("component")
+    assert built == {"value": 8}
+    assert resolver.get_item("component", resolve=True) is item
+    assert resolver.resolve("component") is built
+    assert item.get_config() == source

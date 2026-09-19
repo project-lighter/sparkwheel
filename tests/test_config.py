@@ -12,13 +12,17 @@ This module contains all tests for the Config class, organized by functionality:
 - Advanced features (lazy parsing, relative IDs, etc.)
 """
 
+import subprocess
+import sys
 import tempfile
+from copy import deepcopy
+from itertools import permutations
 from pathlib import Path
 
 import pytest
 import yaml
 
-from sparkwheel import Config, apply_operators
+from sparkwheel import Component, Config, Expression, Item, apply_operators
 from sparkwheel.path_utils import resolve_relative_ids, split_file_and_id
 
 
@@ -179,16 +183,17 @@ class TestConfigImports:
         assert config.resolve("sep") == os.sep
         assert config.resolve("path_type") is Path
 
-    def test_imports_key_removed_from_data(self):
-        """Test _imports_ key is removed from config data after processing."""
+    def test_imports_key_preserved_in_source_but_not_runtime(self):
+        """Authored imports survive resolution for inspection and export."""
         config = Config().update(
             {
                 "_imports_": {"json": "json"},
                 "data": '$json.dumps({"a": 1})',
             }
         )
-        config.resolve()  # Trigger parsing
-        assert "_imports_" not in config._data
+        resolved = config.resolve()
+        assert config.get("_imports_") == {"json": "json"}
+        assert "_imports_" not in resolved
 
     def test_imports_key_combined_with_imports_parameter(self):
         """Test _imports_ key works with imports parameter."""
@@ -362,16 +367,20 @@ class TestConfigMacros:
         """Test basic macro expansion with %."""
         config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
         parser = Config().update(config)
-        parser.resolve()
-        assert parser["copy"] == {"a": 1, "b": 2}
-        assert parser["copy"] is not parser["original"]
+        resolved = parser.resolve()
+        assert parser["copy"] == "%original"
+        assert resolved["copy"] == {"a": 1, "b": 2}
+        assert resolved["copy"] is not resolved["original"]
 
     def test_do_resolve_macro_from_config(self):
         """Test preprocessing with macro referencing same config."""
         parser = Config({"template": {"a": 1, "b": 2}, "copy": "%template"})
         parser._parse()
-        assert parser["copy"] == {"a": 1, "b": 2}
-        parser["copy"]["a"] = 99
+        assert parser["copy"] == "%template"
+        resolved_copy = parser.resolve("copy")
+        assert resolved_copy == {"a": 1, "b": 2}
+        resolved_copy["a"] = 99
+        assert parser.resolve("template")["a"] == 1
         assert parser["template"]["a"] == 1
 
     def test_do_resolve_macro_load(self):
@@ -383,7 +392,8 @@ class TestConfigMacros:
         try:
             parser = Config({"local": f"%{filepath}::external"})
             parser._parse()
-            assert parser["local"] == {"value": 42}
+            assert parser["local"] == f"%{filepath}::external"
+            assert parser.resolve("local") == {"value": 42}
         finally:
             Path(filepath).unlink()
 
@@ -1018,12 +1028,8 @@ class TestConfigMerging:
         assert config["dataloaders"] == {"val": {}}
 
     def test_delete_list_items_batch_vs_individual(self):
-        """Test that batch deletion is the only way to delete list items.
-
-        Path notation like ~plugins::0 doesn't work for lists - you MUST use
-        the batch syntax ~plugins: [0, 2] to delete list items.
-        """
-        # Batch deletion - the correct way
+        """Batch and sequential deletions use indices in the current list."""
+        # Batch deletion uses the list before any of these indices are removed.
         config1 = Config().update({"plugins": ["a", "b", "c", "d", "e"]})
         config1.update({"~plugins": [0, 2]})
         assert config1["plugins"] == ["b", "d", "e"]  # Removed "a" and "c"
@@ -1578,3 +1584,182 @@ class TestConfigFreeze:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestResolutionModeIsolation:
+    """Resolving in one mode must not change another mode's representation."""
+
+    MODES = [(True, True), (True, False), (False, True), (False, False)]
+
+    @staticmethod
+    def recipe():
+        return {
+            "base": 4,
+            "number": "$@base * 2",
+            "component": {
+                "_target_": "builtins.dict",
+                "value": "@number",
+                "nested": {"_target_": "builtins.list", "_args_": [["@base"]]},
+            },
+            "alias": "@component",
+        }
+
+    @classmethod
+    def representation(cls, value):
+        if isinstance(value, Item):
+            return (type(value), cls.representation(value.get_config()))
+        if isinstance(value, dict):
+            return {key: cls.representation(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls.representation(item) for item in value]
+        return value
+
+    @pytest.mark.parametrize("first_mode,second_mode", list(permutations(MODES, 2)))
+    def test_modes_match_fresh_configs_in_both_orders(self, first_mode, second_mode):
+        source = self.recipe()
+        config = Config(data=deepcopy(source))
+        results = []
+        for instantiate, eval_expr in (first_mode, second_mode):
+            options = {"instantiate": instantiate, "eval_expr": eval_expr}
+            actual = config.resolve(**options)
+            fresh = Config(data=self.recipe()).resolve(**options)
+            assert self.representation(actual) == self.representation(fresh)
+            assert actual["alias"] is actual["component"]
+            if instantiate:
+                assert isinstance(actual["component"], dict)
+            else:
+                assert isinstance(actual["component"], Component)
+            if eval_expr:
+                assert actual["number"] == 8
+            else:
+                assert isinstance(actual["number"], Expression)
+            results.append(actual)
+
+        # Returning to a previous mode must retain its own shared objects.
+        for mode, result in zip((first_mode, second_mode), results, strict=True):
+            assert config.resolve(instantiate=mode[0], eval_expr=mode[1]) is result
+            assert config.resolve("alias", instantiate=mode[0], eval_expr=mode[1]) is result["component"]
+        assert config.get() == source
+
+    @pytest.mark.parametrize("mode", MODES)
+    @pytest.mark.parametrize("edit", ["set", "update", "lazy_false"])
+    def test_edit_invalidates_all_resolution_modes(self, mode, edit):
+        config = Config(data=self.recipe())
+        before = {options: config.resolve(instantiate=options[0], eval_expr=options[1]) for options in self.MODES}
+        if edit == "set":
+            config.set("base", 7)
+        elif edit == "update":
+            config.update({"=base": 7})
+        else:
+            config.resolve(lazy=False)
+        after = config.resolve(instantiate=mode[0], eval_expr=mode[1])
+        fresh_source = self.recipe()
+        if edit != "lazy_false":
+            fresh_source["base"] = 7
+        fresh = Config(data=fresh_source).resolve(instantiate=mode[0], eval_expr=mode[1])
+        assert after is not before[mode]
+        assert self.representation(after) == self.representation(fresh)
+
+
+class TestSourcePreservation:
+    """Compiling a runtime generation must preserve authored definitions."""
+
+    def test_source_preserves_imports_local_copies_and_relative_references(self):
+        source = {
+            "_imports_": {"m": "math"},
+            "n": 25,
+            "copied": "%n",
+            "root": "$m.sqrt(@copied)",
+            "group": {"n": 9, "copied": "%::n", "alias": "@::n"},
+        }
+        config = Config(data=deepcopy(source))
+        assert config.resolve("root") == 5
+        assert config.resolve("group") == {"n": 9, "copied": 9, "alias": 9}
+        assert config.get() == source
+        config.resolve(lazy=False)
+        assert config.get() == source
+
+    def test_export_after_resolve_replays_in_fresh_process(self, tmp_path):
+        source = {"_imports_": {"m": "math"}, "n": 25, "copied": "%n", "root": "$m.sqrt(@copied)"}
+        config = Config(data=source)
+        assert config.resolve("root") == 5
+        exported = tmp_path / "replay.yaml"
+        Config.export_config_file(config.get(), exported)
+        replay = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from sparkwheel import Config; import sys; "
+                "c = Config().update(sys.argv[1]); assert c.resolve('root') == 5; "
+                "c.set('n', 36); assert c.resolve('root') == 6",
+                str(exported),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert replay.returncode == 0, replay.stderr
+
+    @pytest.mark.parametrize("edit", ["set", "update"])
+    def test_local_raw_reference_rebuilds_after_edit_without_mutating_old_runtime(self, edit):
+        config = Config(data={"n": 2, "object": {"_target_": "builtins.dict", "value": "%n"}})
+        first = config.resolve("object")
+        if edit == "set":
+            config.set("n", 7)
+        else:
+            config.update("n=7")
+        second = config.resolve("object")
+        assert first == {"value": 2}
+        assert second == {"value": 7}
+        assert first is not second
+        assert config.get("object::value") == "%n"
+
+    @pytest.mark.parametrize("declaration", ["yaml", "expression"])
+    def test_removed_import_does_not_survive_next_generation(self, declaration):
+        from sparkwheel.utils.exceptions import EvaluationError
+
+        source = {"value": "$m.sqrt(4)"}
+        key = "_imports_" if declaration == "yaml" else "setup"
+        source[key] = {"m": "math"} if declaration == "yaml" else "$import math as m"
+        config = Config(data=source)
+        assert config.resolve("value") == 2
+        config.update({f"~{key}": None})
+        with pytest.raises(EvaluationError) as error:
+            config.resolve("value")
+        assert isinstance(error.value.__cause__, NameError)
+
+    def test_caller_imports_survive_yaml_override_removal(self):
+        import math
+
+        config = Config(data={"_imports_": {"lib": "json"}, "module": "$lib"}, imports={"lib": math})
+        assert config.resolve("module").__name__ == "json"
+        config.update({"~_imports_": None})
+        assert config.resolve("module") is math
+
+    def test_raw_inspection_never_imports_or_constructs(self, monkeypatch):
+        def forbidden(*args, **kwargs):
+            raise AssertionError("Inspection executed Python")
+
+        import sparkwheel.config as config_module
+
+        monkeypatch.setattr(config_module, "optional_import", forbidden)
+        source = {"_imports_": {"custom": "uninstalled_package"}, "component": {"_target_": forbidden}, "x": "$1/0"}
+        config = Config(data=source)
+        assert config.get() == source
+        assert config["_imports_"] == {"custom": "uninstalled_package"}
+        assert config.get("component::_target_") is forbidden
+        assert config.get("x") == "$1/0"
+
+    def test_compilation_keeps_opaque_python_inputs(self):
+        marker = object()
+        config = Config(data={"object": {"_target_": "builtins.dict", "marker": marker}})
+        assert config.resolve("object")["marker"] is marker
+        assert config.get("object::marker") is marker
+
+    def test_held_callable_keeps_its_import_generation(self):
+        config = Config(data={"_imports_": {"lib": "math"}, "function": "$lambda: lib.__name__"})
+        old_function = config.resolve("function")
+        config.update({"=_imports_": {"lib": "json"}})
+        new_function = config.resolve("function")
+        assert old_function() == "math"
+        assert new_function() == "json"

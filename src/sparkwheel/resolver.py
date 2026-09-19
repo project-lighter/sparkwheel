@@ -2,15 +2,44 @@
 
 import warnings
 from collections.abc import Iterator
+from copy import copy
 from typing import Any
 
 from .items import Component, Expression, Item
+from .operators import _copy_containers
 from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
 from .utils.constants import ID_SEP_KEY, RESOLVED_REF_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
 
 __all__ = ["Resolver"]
+
+
+class _ExpressionReferences:
+    """Resolve Python-selected references within one immutable build generation."""
+
+    def __init__(self, resolver: "Resolver", path: str, waiting: set[str], depth: int, mode: tuple[bool, bool]):
+        self._resolver = resolver
+        self._path = path
+        self._waiting = waiting | {path}
+        self._depth = depth
+        self._mode = mode
+        self._cache = resolver._resolved_by_mode[mode]
+
+    def __getitem__(self, path: str) -> Any:
+        if path not in self._cache and path in self._waiting:
+            item = self._resolver._items.get(self._path)
+            raise CircularReferenceError(
+                f"Circular reference detected: '{path}' references back to '{self._path}'",
+                source_location=item.source_location if item is not None else None,
+            )
+        return self._resolver._resolve_one_item(
+            path,
+            waiting_list=set(self._waiting),
+            _depth=self._depth + 1,
+            instantiate=self._mode[0],
+            eval_expr=self._mode[1],
+        )
 
 
 class Resolver:
@@ -53,7 +82,13 @@ class Resolver:
             items: Optional list of Items to add during initialization
         """
         self._items: dict[str, Item] = {}
+        # Keep the default cache available for existing internal integrations.
         self._resolved: dict[str, Any] = {}
+        self._resolved_by_mode: dict[tuple[bool, bool], dict[str, Any]] = {(True, True): self._resolved}
+        self._guard_states: dict[tuple[bool, bool], dict[str, bool]] = {}
+        self._resolution_mode = (True, True)
+        self._current_path = ""
+        self._active_resolutions: dict[tuple[bool, bool], set[str]] = {}
 
         if items:
             for item in items:
@@ -63,10 +98,13 @@ class Resolver:
         """Clear all items and resolved content."""
         self._items = {}
         self._resolved = {}
+        self._resolved_by_mode = {(True, True): self._resolved}
+        self._guard_states = {}
+        self._active_resolutions = {}
 
     def is_resolved(self) -> bool:
         """Check if any items have been resolved."""
-        return bool(self._resolved)
+        return any(self._resolved_by_mode.values())
 
     def add_item(self, item: Item) -> None:
         """Add a Item to resolve.
@@ -96,7 +134,7 @@ class Resolver:
             self.add_item(item)
 
     def get_item(self, id: str, resolve: bool = False, **kwargs: Any) -> Item | None:
-        """Get Item by id, optionally resolved.
+        """Get the registered Item by id, optionally populating the resolution cache.
 
         Args:
             id: ID of the config item
@@ -104,10 +142,10 @@ class Resolver:
             **kwargs: Additional arguments for resolution
 
         Returns:
-            Item if found, None otherwise (or resolved value if resolve=True)
+            The original Item if found, None otherwise. Use resolve() for its resolved value.
         """
         id = self.normalize_id(id)
-        if resolve and id not in self._resolved:
+        if resolve:
             self._resolve_one_item(id=id, **kwargs)
         return self._items.get(id)
 
@@ -121,7 +159,9 @@ class Resolver:
         """Resolve a config item and return the result.
 
         Resolves all references, instantiates components (if requested), and
-        evaluates expressions (if requested). Results are cached for efficiency.
+        evaluates expressions (if requested). Each (instantiate, eval_expr) pair
+        has a separate cache. Repeated calls in the same mode share resolved objects,
+        including after calls in a different mode.
 
         Args:
             id: ID of item to resolve (empty string for root)
@@ -139,6 +179,33 @@ class Resolver:
         return self._resolve_one_item(id=id, instantiate=instantiate, eval_expr=eval_expr, default=default)
 
     def _resolve_one_item(
+        self,
+        id: str,
+        waiting_list: set[str] | None = None,
+        _depth: int = 0,
+        instantiate: bool = True,
+        eval_expr: bool = True,
+        default: Any = None,
+    ) -> Any:
+        """Track active graph construction, including escaped Python callbacks."""
+        path = self.normalize_id(id)
+        mode = (instantiate, eval_expr)
+        if path in self._resolved_by_mode.get(mode, {}):
+            return self._resolve_item(path, waiting_list, _depth, instantiate, eval_expr, default)
+        active = self._active_resolutions.setdefault(mode, set())
+        if path in active:
+            item = self._items.get(path)
+            raise CircularReferenceError(
+                f"Circular reference detected while constructing '{path}'",
+                source_location=item.source_location if item is not None else None,
+            )
+        active.add(path)
+        try:
+            return self._resolve_item(path, waiting_list, _depth, instantiate, eval_expr, default)
+        finally:
+            active.discard(path)
+
+    def _resolve_item(
         self,
         id: str,
         waiting_list: set[str] | None = None,
@@ -174,9 +241,14 @@ class Resolver:
 
         id = self.normalize_id(id)
 
+        self._resolution_mode = (instantiate, eval_expr)
+        resolved = self._resolved_by_mode.setdefault(self._resolution_mode, {})
+
         # Return cached result if available
-        if id in self._resolved:
-            return self._resolved[id]
+        if id in resolved:
+            return resolved[id]
+
+        self._prepare_item(id)
 
         # Look up the item
         try:
@@ -221,13 +293,55 @@ class Resolver:
             waiting_list = set()
         waiting_list.add(id)
 
-        # First, resolve any import expressions (they need to run first)
-        for t, v in self._items.items():
-            if t not in self._resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
-                self._resolved[t] = v.evaluate() if eval_expr else v
+        if isinstance(item, Component):
+            disabled = self._literal_disabled(item_config)
+            guard = item_config.get("_disabled_", False)
+            if disabled is None:
+                guard_id = f"{id}::_disabled_" if id else "_disabled_"
+                self._prepare_item(guard_id)
+                guard = self._resolve_one_item(
+                    guard_id, waiting_list, _depth + 1, instantiate=instantiate, eval_expr=eval_expr
+                )
+                waiting_list.discard(guard_id)
+                if not eval_expr and isinstance(guard, Item):
+                    # The guard cannot be decided in this mode. Preserve its
+                    # wrapper without constructing or touching the payload.
+                    result = copy(item)
+                    config = _copy_containers(item_config)
+                    config["_disabled_"] = guard
+                    result.update_config(config)
+                    resolved[id] = result
+                    return result
+                disabled = Component({"_disabled_": guard}).is_disabled()
+            self._guard_states.setdefault(self._resolution_mode, {})[id] = disabled
+            if disabled:
+                if instantiate:
+                    resolved[id] = None
+                else:
+                    result = copy(item)
+                    config = _copy_containers(item_config)
+                    config["_disabled_"] = guard
+                    result.update_config(config)
+                    resolved[id] = result
+                return resolved[id]
 
-        # Find all references in this item's config
-        refs = self.find_refs_in_config(config=item_config, id=id)
+        self._prepare_enabled_item(id, waiting_list, _depth, instantiate, eval_expr)
+        # Import declarations in inactive component payloads stay inactive.
+        self._current_path = id
+        self._resolve_imports(resolved, eval_expr)
+
+        if isinstance(item, Expression) and eval_expr:
+            references = scan_references(item_config)
+            prepared = copy(item)
+            prepared.update_config(replace_references(item_config, dict.fromkeys(references), self._vars))
+            values = _ExpressionReferences(self, id, waiting_list, _depth, (instantiate, eval_expr))
+            expression_result = prepared.evaluate(globals={self._vars: values})
+            self._publish_expression_references(set(references))
+            resolved[id] = expression_result
+            return expression_result
+
+        # A nested component owns its argument dependencies and guard boundary.
+        refs = self._dependency_refs(config=item_config, id=id)
 
         # Resolve dependencies first
         for dep_id in refs.keys():
@@ -239,7 +353,8 @@ class Resolver:
                 )
 
             # Resolve dependency if not already resolved
-            if dep_id not in self._resolved:
+            if dep_id not in resolved:
+                self._prepare_item(dep_id)
                 try:
                     look_up_option(dep_id, self._items, print_all_options=False)
                 except ValueError as err:
@@ -266,18 +381,106 @@ class Resolver:
                 waiting_list.discard(dep_id)
 
         # All dependencies resolved, now resolve this item
-        new_config = self.update_config_with_refs(config=item_config, id=id, refs=self._resolved)
+        new_config = self._substitute_refs(config=item_config, id=id, refs=resolved)
+        # Replacing references is mode-specific. Keep the registered definition
+        # intact so another mode never inherits instantiated objects or wrappers.
+        # A shallow copy retains opaque Python inputs without cloning them;
+        # update_config_with_refs has already rebuilt the config containers.
+        item = copy(item)
         item.update_config(config=new_config)
 
         # Generate final resolved value based on item type
         if isinstance(item, Component):
-            self._resolved[id] = item.instantiate() if instantiate else item
+            resolved[id] = item.instantiate() if instantiate else item
         elif isinstance(item, Expression):
-            self._resolved[id] = item.evaluate(globals={f"{self._vars}": self._resolved}) if eval_expr else item
+            resolved[id] = item.evaluate(globals={f"{self._vars}": resolved}) if eval_expr else item
         else:
-            self._resolved[id] = new_config
+            resolved[id] = new_config
 
-        return self._resolved[id]
+        return resolved[id]
+
+    def _publish_expression_references(self, paths: set[str]) -> None:
+        """Extension point for conservative binding ownership after publication."""
+
+    def _prepare_item(self, id: str) -> None:
+        """Extension point for scoped, on-demand definitions."""
+
+    def _prepare_enabled_item(self, id: str, waiting_list: set[str], depth: int, instantiate: bool, eval_expr: bool) -> None:
+        """Extension point after a component's guard permits argument work."""
+
+    def _resolve_imports(self, resolved: dict[str, Any], eval_expr: bool) -> None:
+        for id, item in self._items.items():
+            if (
+                id not in resolved
+                and isinstance(item, Expression)
+                and item.is_import_statement(item.get_config())
+                and self._import_visible(id)
+            ):
+                self._resolve_import_item(item, id, resolved, eval_expr)
+
+    @staticmethod
+    def _resolve_import_item(item: Expression, id: str, resolved: dict[str, Any], eval_expr: bool) -> None:
+        if not eval_expr:
+            # Each requested wrapper still needs ordinary dependency preparation;
+            # global declaration discovery must not cache untouched definitions.
+            return
+        imported = item.load_imports()
+        if item.is_import_only():
+            resolved[id] = imported
+
+    @staticmethod
+    def _literal_disabled(config: Any) -> bool | None:
+        """Return a literal guard state without calling opaque Python objects."""
+        if not Component.is_instantiable(config):
+            return False
+        value = config.get("_disabled_", False)
+        if type(value) is str:
+            return None if value.startswith(("@", "$", "%")) else value.lower().strip() == "true"
+        if Component.is_instantiable(value):
+            return None
+        if value is None or type(value) in (bool, int, float, complex, tuple, list, dict):
+            return bool(value)
+        return None
+
+    @classmethod
+    def _dependency_refs(cls, config: Any, id: str) -> dict[str, int]:
+        """Discover immediate graph dependencies, preserving component guards."""
+        if Component.is_instantiable(config) and cls._literal_disabled(config) is True:
+            return {}
+        if isinstance(config, str):
+            return cls.match_refs_pattern(config)
+        refs: dict[str, int] = {}
+        if isinstance(config, (dict, list)):
+            for _, path, value in cls.iter_subconfigs(id, config):
+                if Component.is_instantiable(value) or Expression.is_expression(value):
+                    refs[path] = refs.get(path, 0) + 1
+                else:
+                    for dependency, count in cls._dependency_refs(value, path).items():
+                        refs[dependency] = refs.get(dependency, 0) + count
+        return refs
+
+    def _import_visible(self, path: str) -> bool:
+        """Only collect imports from enabled components or the requested subtree."""
+        parts = path.split(self.sep)
+        states = self._guard_states.get(self._resolution_mode, {})
+        for length in range(len(parts)):
+            parent = self.sep.join(parts[:length])
+            item = self._items.get(parent)
+            if not isinstance(item, Component):
+                continue
+            state = states.get(parent, self._literal_disabled(item.get_config()))
+            if state is False:
+                continue
+            # A requested descendant is independent of its disabled parent;
+            # imports must still belong to that explicitly requested subtree.
+            inside_parent = self._current_path != parent and (not parent or self._current_path.startswith(parent + self.sep))
+            inside_request = path == self._current_path or path.startswith(self._current_path + self.sep)
+            if not (inside_parent and inside_request):
+                return False
+        return True
+
+    def _substitute_refs(self, config: Any, id: str, refs: dict[str, Any]) -> Any:
+        return self.update_config_with_refs(config=config, id=id, refs=refs)
 
     @classmethod
     def normalize_id(cls, id: str | int) -> str:
