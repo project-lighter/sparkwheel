@@ -67,10 +67,12 @@ supplies it to a second scope:
 ```python
 from sparkwheel import Config
 
-config = Config().update({
-    "state": {"_target_": "builtins.dict", "value": 1},
-    "consumer": {"_target_": "builtins.dict", "state": "@state"},
-})
+config = Config().update(
+    {
+        "state": {"_target_": "builtins.dict", "value": 1},
+        "consumer": {"_target_": "builtins.dict", "state": "@state"},
+    }
+)
 recipe = config.retain()
 state_scope = recipe.scope(blocked_paths={"consumer"})
 state = state_scope.resolve("state")

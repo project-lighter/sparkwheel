@@ -11,11 +11,13 @@ This complete example evaluates arithmetic and a derived count:
 ```python
 from sparkwheel import Config
 
-config = Config().update({
-    "words": ["red", "blue", "red"],
-    "total": "$len(@words)",
-    "double": "$@total * 2",
-})
+config = Config().update(
+    {
+        "words": ["red", "blue", "red"],
+        "total": "$len(@words)",
+        "double": "$@total * 2",
+    }
+)
 assert config.resolve("total") == 3
 assert config.resolve("double") == 6
 ```
@@ -55,10 +57,12 @@ standalone example:
 ```python
 from sparkwheel import Config
 
-config = Config().update({
-    "_imports_": {"math": "math"},
-    "rounded": "$math.ceil(2.4)",
-})
+config = Config().update(
+    {
+        "_imports_": {"math": "math"},
+        "rounded": "$math.ceil(2.4)",
+    }
+)
 assert config.get("rounded") == "$math.ceil(2.4)"
 assert config.resolve("rounded") == 3
 ```

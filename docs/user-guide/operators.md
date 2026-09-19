@@ -25,10 +25,12 @@ This standalone example shows dictionary merging and list extension:
 ```python
 from sparkwheel import Config
 
-config = Config().update({
-    "report": {"title": "Words", "limit": 3},
-    "words": ["red", "blue"],
-})
+config = Config().update(
+    {
+        "report": {"title": "Words", "limit": 3},
+        "words": ["red", "blue"],
+    }
+)
 config.update({"report": {"limit": 5}, "words": ["green"]})
 assert config.get("report") == {"title": "Words", "limit": 5}
 assert config.get("words") == ["red", "blue", "green"]

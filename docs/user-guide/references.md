@@ -23,12 +23,14 @@ This standalone example distinguishes shared identity from a copied definition:
 ```python
 from sparkwheel import Config
 
-config = Config().update({
-    "words": ["red", "blue", "red"],
-    "counts": {"_target_": "collections.Counter", "_args_": ["@words"]},
-    "shared": "@counts",
-    "independent": "%counts",
-})
+config = Config().update(
+    {
+        "words": ["red", "blue", "red"],
+        "counts": {"_target_": "collections.Counter", "_args_": ["@words"]},
+        "shared": "@counts",
+        "independent": "%counts",
+    }
+)
 counts = config.resolve("counts")
 shared = config.resolve("shared")
 independent = config.resolve("independent")

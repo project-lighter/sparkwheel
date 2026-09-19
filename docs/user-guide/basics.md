@@ -95,10 +95,12 @@ complete example demonstrates the boundary:
 ```python
 from sparkwheel import Config
 
-config = Config().update({
-    "words": ["red", "red"],
-    "counts": {"_target_": "collections.Counter", "_args_": ["@words"]},
-})
+config = Config().update(
+    {
+        "words": ["red", "red"],
+        "counts": {"_target_": "collections.Counter", "_args_": ["@words"]},
+    }
+)
 old = config.resolve("counts")
 assert config.resolve("counts") is old
 config.set("words", ["blue"])

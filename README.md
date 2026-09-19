@@ -25,10 +25,12 @@ and source-checkout instructions.
 ```python
 from sparkwheel import Config
 
-config = Config().update({
-    "words": ["red", "blue", "red"],
-    "counts": {"_target_": "collections.Counter", "_args_": ["@words"]},
-})
+config = Config().update(
+    {
+        "words": ["red", "blue", "red"],
+        "counts": {"_target_": "collections.Counter", "_args_": ["@words"]},
+    }
+)
 
 print(dict(config.resolve("counts")))  # {'red': 2, 'blue': 1}
 ```

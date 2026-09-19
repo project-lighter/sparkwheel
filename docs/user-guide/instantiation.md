@@ -70,9 +70,11 @@ the custom example directory, this works without a string import path:
 from sparkwheel import Config
 from reports import WordReport
 
-config = Config().update({
-    "report": {"_target_": WordReport, "words": ["blue"], "title": "Python"},
-})
+config = Config().update(
+    {
+        "report": {"_target_": WordReport, "words": ["blue"], "title": "Python"},
+    }
+)
 assert config.resolve("report").render() == "Python: blue=1"
 ```
 

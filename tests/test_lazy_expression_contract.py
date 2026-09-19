@@ -10,12 +10,19 @@ from sparkwheel.utils.exceptions import CircularReferenceError
 
 
 @pytest.mark.parametrize(
-    "expression", ["$@safe if True else @bad", "$True or @bad", "$False and @bad", "$[@safe for _ in range(1)]"]
+    "expression, expected",
+    [
+        ("$@safe if True else @bad", 2),
+        ("$True or @bad", True),
+        ("$False and @bad", False),
+        ("$[@safe for _ in range(1)]", [2]),
+    ],
 )
-def test_native_selection(expression):
+def test_native_selection(expression, expected):
     config = Config({"safe": 2, "bad": "$1/0", "selected": expression})
     result = config.resolve("selected")
-    assert result in (2, True, False, [2])
+    assert result == expected
+    assert type(result) is type(expected)
     assert "bad" not in config._resolver._resolved
 
 
