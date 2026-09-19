@@ -1,59 +1,48 @@
 # Installation
 
-Sparkwheel requires Python 3.10 or newer. It depends on PyYAML; Torch and Lightning
-are optional application libraries, not Sparkwheel requirements.
+Sparkwheel requires Python 3.10 or newer and PyYAML. Torch and Lightning are not required. The examples below use Python 3.11 and a fresh environment.
 
-**Current source:** `0.1.0.dev0` is an unpublished development version. Install this
-checkout to follow these docs; an existing PyPI release may have different
-behavior. The instructions below use Python 3.11 and an isolated environment.
+The current source version is **0.1.0.dev0**. Its source is public; older PyPI releases may have different behavior. The command below selects the **immutable reviewed snapshot** `c2286a0626748e913296d7127c16060cb705b6d0`. It predates later review-branch changes; release handoffs name the exact revision they qualify.
 
 ## Install from Source
 
-Use the supplied Sparkwheel source checkout that accompanies this documentation.
-This unpublished snapshot is not obtained by installing a registry release or
-necessarily by cloning the public repository. If you do not have that checkout,
-obtain it from the person who supplied these development docs.
-
-From that checkout's repository root, create the environment and install the source:
+With Python 3.11 and Git installed, start in a new working directory:
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install "sparkwheel @ git+https://github.com/project-lighter/sparkwheel.git@c2286a0626748e913296d7127c16060cb705b6d0"
+python -m pip check
 ```
 
-On Windows, use `py -3.11 -m venv .venv` and activate it with
-`.venv\Scripts\Activate.ps1` in PowerShell, then run the same pip command.
+This installs a normal package from the public Git revision. It needs network access but no supplied checkout or GitHub account. On Windows, use `py -3.11 -m venv .venv` and activate `.venv\Scripts\Activate.ps1` in PowerShell, then run the same pip commands.
 
-Keep this environment active for the examples. An editable installation follows
-changes in this checkout; record its revision when you need reproducibility.
+Keep the environment active for the examples. The full commit pin does not follow branch updates, and changes in an unrelated local clone do not change the installed package.
 
 ## Verify Installation
-
-Run from the activated environment:
 
 ```bash
 python -c "import sparkwheel; print(sparkwheel.__version__); print(sparkwheel.__file__)"
 ```
 
-Expect version `0.1.0.dev0` and an import path inside your checkout's
-`src/sparkwheel` directory. If the version or path differs, check the active Python
-with `python -m pip show sparkwheel` before continuing.
+Expect `0.1.0.dev0` and a path inside this environment's `site-packages/sparkwheel`. If the version or path differs, check `python -m pip show sparkwheel` and the active environment before continuing. pip's distribution metadata also records the installed VCS commit ID.
 
 ## Install from PyPI
 
-For an application targeting a released version, install that release and use its
-matching documentation. The source-install path above is the supported route for
-the development behavior described here.
+For an application targeting a released version, install that release and use its matching documentation. The explicit source revision above provides the development behavior described here while the corresponding stable release is being prepared.
 
 ## Development Setup
 
-Contributors can use the repository's `just setup` workflow with `uv` and `just`
-installed. It installs development groups and configures hooks. See the
-[justfile](https://github.com/project-lighter/sparkwheel/blob/main/justfile) for the
-maintainer commands. These tools are not needed to use Sparkwheel.
+Only contributors need an editable clone. From a new working directory with the environment active:
+
+```bash
+git clone https://github.com/project-lighter/sparkwheel.git sparkwheel
+git -C sparkwheel checkout --detach c2286a0626748e913296d7127c16060cb705b6d0
+python -m pip install --editable ./sparkwheel
+```
+
+Edits in this clone now affect imports. Create a working branch before committing changes. For tests, docs and hooks, install `uv` and `just`, then use `just setup` from the clone. See [Contributing](https://github.com/project-lighter/sparkwheel/blob/codex/reliability-and-documentation/CONTRIBUTING.md). Contributor tools are not required for package use.
 
 ## Next Steps
 
-Continue to the [quick start](quickstart.md). It runs independently of any
-machine-learning framework.
+Continue to the [quick start](quickstart.md), which runs independently of a machine-learning framework.

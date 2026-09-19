@@ -12,6 +12,7 @@ authors = [
 requires-python = ">=3.10"
 readme = "README.md"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = ["configuration", "yaml", "config", "deep-learning", "machine-learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",

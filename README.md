@@ -11,16 +11,17 @@ package. The documentation describes this source, not necessarily the version
 available on PyPI. Python 3.10 or newer is required; the installation below uses
 Python 3.11. Torch and Lightning are not required.
 
-From the supplied source checkout matching this documentation:
+Install the immutable reviewed public snapshot in a new directory (Python 3.11 and Git required):
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install "sparkwheel @ git+https://github.com/project-lighter/sparkwheel.git@c2286a0626748e913296d7127c16060cb705b6d0"
+python -m pip check
 ```
 
 See [installation](docs/getting-started/installation.md) for Windows activation
-and source-checkout instructions.
+and editable-development instructions. This full commit pin does not follow later branch changes.
 
 ```python
 from sparkwheel import Config

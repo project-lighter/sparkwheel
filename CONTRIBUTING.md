@@ -20,17 +20,13 @@ brew install just
 
 ### 2. Set up the matching source
 
-These docs describe the supplied unpublished `0.1.0.dev0` checkout. Work from
-that checkout when reproducing its behavior; a public clone may contain a
-different version. [Source installation](docs/getting-started/installation.md)
-is enough to use the package. For contribution tools, run from its root:
+Follow the public clone and editable commands in [installation](docs/getting-started/installation.md#development-setup). They select an immutable reviewed snapshot; use the explicitly agreed branch/revision for new work. From that clone, run:
 
 ```bash
 just setup
 ```
 
-This contributor workflow uses or updates the checkout's conventional `.venv`,
-the same path as the installation guide, and adds contributor dependencies.
+This uses or updates the clone's `.venv` and adds contributor dependencies. Activate that environment when running its tools directly.
 
 This will:
 - Install all dependencies (dev, test, doc groups)
@@ -142,6 +138,10 @@ also creates the configured local commit and tag. Review the diff and run the
 ordinary package checks before any separately authorized push or publication.
 Current development snapshots have not been tagged or published by this work.
 
-The existing remote workflows treat pushed tags as stable releases and can
-publish them. Do not use development tags with that workflow; previewing or
-preparing a version locally does not authorize its remote release.
+Previewing or preparing a version locally does not authorize its remote release.
+
+## Stable release guard
+
+Use the existing pinned `bump-my-version` recipes to preview or promote a version. Actual bump commands can create a commit and tag; `just bump-dry release` previews without those changes. For a rehearsal, work in disposable copies and explicitly disable commits and tags.
+
+Publication accepts only a pushed `vMAJOR.MINOR.PATCH` tag matching both project metadata and the source version, at a commit on freshly fetched `main`. Development/prerelease tags and mismatches fail before publishing or creating a stable GitHub Release. Manual dispatch of Publish builds and retains workflow artifacts only. Current token authentication is unchanged. Building an artifact does not publish it or establish registry availability.
