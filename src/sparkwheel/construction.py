@@ -14,6 +14,18 @@ from .resolver import Resolver
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
 
 
+class BlockedPathError(ValueError):
+    """A requested path enters a registered blocked construction subtree."""
+
+    def __init__(self, requested_path: str, blocked_path: str):
+        self.requested_path = requested_path
+        self.blocked_path = blocked_path
+        super().__init__(f"Cannot resolve '{requested_path}': construction path '{blocked_path}' is blocked")
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return type(self), (self.requested_path, self.blocked_path), self.__dict__
+
+
 def _within(path: str, parent: str) -> bool:
     return path == parent or not parent or path.startswith(parent + "::")
 
@@ -122,7 +134,7 @@ class ResolutionScope:
     def _check_block(self, path: str) -> None:
         for blocked in self._blocked:
             if _within(path, blocked):
-                raise ValueError(f"Cannot resolve '{path}': construction path '{blocked}' is blocked")
+                raise BlockedPathError(path, blocked)
 
     def bind(self, path: str, value: Any) -> None:
         """Bind a valid exact source path, rejecting incompatible prior use."""

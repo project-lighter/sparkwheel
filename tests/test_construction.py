@@ -1,8 +1,11 @@
 """Behavioral contracts for retained recipes and isolated construction scopes."""
 
+import pickle
+
 import pytest
 
 from sparkwheel import CircularReferenceError, Config, ConfigKeyError
+from sparkwheel.construction import BlockedPathError
 
 
 def test_retaining_and_creating_scope_do_not_import_or_construct(monkeypatch):
@@ -354,3 +357,32 @@ def test_definition_handles_relative_copy_none_missing_and_cycles():
         recipe.definition("missing")
     with pytest.raises(CircularReferenceError):
         recipe.definition("bad")
+
+
+@pytest.mark.parametrize("requested", ["model::optimizer", "model::optimizer::lr", "alias"])
+def test_blocked_path_error_preserves_registered_root_and_requested_descendant(requested):
+    config = Config(data={"model": {"optimizer": {"lr": 0.05}}, "alias": "@model::optimizer::lr"})
+    scope = config.retain().scope(blocked_paths={"model::optimizer"})
+    with pytest.raises(BlockedPathError) as caught:
+        scope.resolve(requested)
+    error = caught.value
+    expected_path = "model::optimizer::lr" if requested == "alias" else requested
+    assert isinstance(error, ValueError)
+    assert error.requested_path == expected_path
+    assert error.blocked_path == "model::optimizer"
+    assert str(error) == f"Cannot resolve '{expected_path}': construction path 'model::optimizer' is blocked"
+    assert error.__cause__ is None
+
+
+@pytest.mark.parametrize("protocol", [pickle.DEFAULT_PROTOCOL, pickle.HIGHEST_PROTOCOL])
+def test_blocked_path_error_survives_pickle_round_trip(protocol):
+    original = BlockedPathError("model::optimizer::lr", "model::optimizer")
+    original.context = {"stage": "fit"}
+    restored = pickle.loads(pickle.dumps(original, protocol=protocol))
+    assert type(restored) is BlockedPathError
+    assert isinstance(restored, ValueError)
+    assert restored.args == original.args
+    assert str(restored) == "Cannot resolve 'model::optimizer::lr': construction path 'model::optimizer' is blocked"
+    assert restored.requested_path == "model::optimizer::lr"
+    assert restored.blocked_path == "model::optimizer"
+    assert restored.context == {"stage": "fit"}
