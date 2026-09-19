@@ -18,13 +18,19 @@ brew install just
 # Or see https://github.com/casey/just for other platforms
 ```
 
-### 2. Clone and Setup
+### 2. Set up the matching source
+
+These docs describe the supplied unpublished `0.1.0.dev0` checkout. Work from
+that checkout when reproducing its behavior; a public clone may contain a
+different version. [Source installation](docs/getting-started/installation.md)
+is enough to use the package. For contribution tools, run from its root:
 
 ```bash
-git clone https://github.com/project-lighter/sparkwheel.git
-cd sparkwheel
 just setup
 ```
+
+This contributor workflow uses or updates the checkout's conventional `.venv`,
+the same path as the installation guide, and adds contributor dependencies.
 
 This will:
 - Install all dependencies (dev, test, doc groups)
@@ -52,6 +58,30 @@ We use:
 - **pytest** for testing
 
 Pre-commit hooks will automatically run on commit.
+
+## Keep documentation useful
+
+Use one documentation set for people and agents. Keep behavior in ordinary
+Python, teach one complete first example, and link to the canonical semantic
+explanation instead of maintaining parallel copies.
+
+- State the working directory, prerequisites, exact inputs and expected outputs
+  for a runnable example. Mark excerpts through their surrounding explanation.
+- Preserve the distinction between source inspection and execution, and between
+  a shared result and a copied definition.
+- Run changed complete examples with the documented install; record which checks
+  actually ran. Review other affected snippets against source.
+- Build the site strictly and check affected links/anchors. With documentation
+  dependencies installed and the environment active, use:
+
+```bash
+python -m mkdocs build --strict
+```
+
+Keep explanatory Markdown under `docs/`, entrypoint guidance in README, and the
+Python API reference generated from source. Prefer existing paths and descriptive
+headings. New documentation machinery needs a concrete unmet need. A passing
+build does not execute every code example.
 
 ## Pull Request Process
 

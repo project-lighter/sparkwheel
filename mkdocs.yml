@@ -67,20 +67,22 @@ plugins:
 
 nav:
   - Home: index.md
-  - Getting Started:
+  - Start:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
-  - User Guide:
-      - Configuration Basics: user-guide/basics.md
+  - Guides:
+      - Configuration Model: user-guide/basics.md
+      - Sharing and Copying: user-guide/references.md
+      - Python Authoring: user-guide/instantiation.md
+      - Compose and Edit: user-guide/operators.md
+      - CLI Overrides: user-guide/cli.md
+      - Validate Values: user-guide/schema-validation.md
+      - Troubleshooting: user-guide/troubleshooting.md
+  - Reference:
       - Quick Reference: user-guide/quick-reference.md
-      - References: user-guide/references.md
       - Expressions: user-guide/expressions.md
-      - Instantiation: user-guide/instantiation.md
-      - Merging & Deleting: user-guide/operators.md
-      - Schema Validation: user-guide/schema-validation.md
-      - CLI Support: user-guide/cli.md
-      - Advanced Features: user-guide/advanced.md
-  - API: reference/
+      - Advanced Contracts: user-guide/advanced.md
+      - API: reference/
 
 markdown_extensions:
   - pymdownx.highlight:

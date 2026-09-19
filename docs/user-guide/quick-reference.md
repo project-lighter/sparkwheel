@@ -1,305 +1,105 @@
 # Quick Reference
 
-A one-page cheat sheet for Sparkwheel syntax and features.
+A lookup page for syntax and entrypoints. Start with the
+[quick start](../getting-started/quickstart.md) for a complete program.
 
 ## Core Syntax
 
-=== "References"
+| Syntax | Meaning |
+|---|---|
+| `@path` | Share the resolved value at a path within a mode/generation |
+| `%path` | Copy a local definition, then resolve the copy normally |
+| `%file.yaml::path` | Load a definition from an external file during composition |
+| `$expression` | Evaluate a Python expression |
+| `parent::child`, `items::0` | Dictionary path, list index |
+| `_target_: module.Class` | Call an importable class or function |
+| `_args_: [a, b]` | Positional arguments; ordinary keys become keyword arguments |
+| `_disabled_: true` | Skip runtime target construction; preserve its source |
+| `_mode_: callable` | Return the callable or a partial with resolved arguments |
+| `_imports_: {alias: module}` | Root expression-import declaration |
 
-    | Syntax | Type | Returns | Example |
-    |--------|------|---------|---------|
-    | `@key` | Resolved reference | Final computed value | `lr: "@defaults::learning_rate"` |
-    | `%key` | Raw reference | Unprocessed YAML | `config: "%base.yaml::model"` |
-    | `@key::nested` | Nested access | Nested value | `@dataset::train::batch_size` |
-    | `@list::0` | List indexing | List element | `@transforms::0` |
+`@` shares a result; `%` copies a recipe, which may still contain shared `@`
+dependencies. See [references](references.md) for identity examples.
 
-=== "Expressions"
+## Composition
 
-    | Expression | Description | Example |
-    |------------|-------------|---------|
-    | `$(@a + @b)` | Math operations | `$(@lr * 0.1)` |
-    | `$(@name + "_v2")` | String concatenation | `$(@model_name + "_trained")` |
-    | `$"dev" if @debug else "prod"` | Ternary conditional | `$0.5 if @is_training else 0.0` |
-    | `$(@items[0])` | Dynamic indexing | `$(@datasets[@mode])` |
-    | `$len(@items)` | Built-in functions | `$len(@layers)` |
+| Input | Behavior |
+|---|---|
+| Dictionary + dictionary | Recursive merge |
+| List + list | Append incoming entries |
+| `=key: value` | Replace the whole selected value |
+| `~key: null` | Delete a key or indexed path |
+| `~list: [0, 2]` | Delete indices from the original list for that batch |
+| `~mapping: [a, b]` | Delete keys inside a mapping |
+| `layers::0::width: 4` | Update an existing list element through a top-level path key |
 
-=== "Operators"
-
-    | Operator | Purpose | Example | Result |
-    |----------|---------|---------|--------|
-    | `=key` | Replace (don't merge) | `=optimizer: sgd` | Replaces entire dict/value |
-    | `~key` | Delete key | `~debug: null` | Removes the key |
-    | `~list: [0, 2]` | Delete list items | `~layers: [1, 3]` | Removes items at indices 1 and 3 |
-    | (none) | Default: Merge | `model: {size: 512}` | Merges with existing dict |
-
-=== "Instantiation"
-
-    | Key | Type | Purpose | Example |
-    |-----|------|---------|---------|
-    | `_target_` | str | Class/function to instantiate | `torch.optim.Adam` |
-    | `_args_` | list | Positional arguments | `[arg1, arg2]` |
-    | `_disabled_` | bool | Skip instantiation | `true` |
-    | `_mode_` | str | Instantiation mode | `"default"` / `"callable"` / `"debug"` |
-
-## Common Patterns
-
-### Single Source of Truth
-
-```yaml
-defaults:
-  learning_rate: 0.001
-
-optimizer:
-  lr: "@defaults::learning_rate"
-
-scheduler:
-  base_lr: "@defaults::learning_rate"
-```
-
-### Computed Values
-
-```yaml
-dataset:
-  samples: 10000
-  batch_size: 32
-
-training:
-  steps_per_epoch: "$@dataset::samples // @dataset::batch_size"
-```
-
-### Conditional Configuration
-
-```yaml
-environment: "production"
-
-database:
-  prod_host: "prod.db.com"
-  dev_host: "localhost"
-  host: "$@database::prod_host if @environment == 'production' else @database::dev_host"
-```
-
-### Object Instantiation
-
-```yaml
-# Basic instantiation
-model:
-  _target_: torch.nn.Linear
-  in_features: 784
-  out_features: 10
-
-# With positional arguments
-sequential:
-  _target_: torch.nn.Sequential
-  _args_:
-    - _target_: torch.nn.Linear
-      in_features: 784
-      out_features: 128
-    - _target_: torch.nn.ReLU
-
-# With optimizer
-optimizer:
-  _target_: torch.optim.Adam
-  params: "$@model.parameters()"
-  lr: 0.001
-```
-
-### Config Composition
-
-```yaml title="base.yaml"
-model:
-  hidden_size: 512
-  dropout: 0.1
-```
-
-```yaml title="override.yaml"
-# Merge by default
-model:
-  hidden_size: 1024  # Updates only this field
-
-# Or replace completely
-=model:
-  hidden_size: 1024  # Replaces entire dict
-```
-
-## Type Coercion
-
-With `Config(schema=MySchema, coerce=True)`, unambiguous compatible values can
-be normalized before validation:
-
-| Conversion | Example | Boundary |
-|------------|---------|----------|
-| str → int | `"42"` → `42` | Must be valid integer text |
-| str → float | `"3.14"` → `3.14` | Must be valid floating-point text |
-| str → bool | `"true"` → `True` | true/false, yes/no, 1/0 |
-| int → float | `42` → `42.0` | Must be exactly representable |
-| float → int | `3.0` → `3` | Fractional values such as `3.14` are rejected |
-| int/float/bool → str | `42` → `"42"` | Arbitrary objects are not stringified |
-
-Boolean values do not satisfy numeric schema fields. Ambiguous union coercions
-fail; already-valid alternatives keep their type. Defaults are checked without
-injecting them into authored constructor arguments.
+[Composition rules](operators.md) include missing paths, batch deletion and atomic
+failure behavior. Duplicate authored YAML keys are rejected by default.
 
 ## CLI Overrides
 
-=== "Direct Assignment"
+`config.update(input_string)` detects files and overrides. Values use YAML types.
+Quote the entire override for the shell, and retain inner YAML quotes when a value
+must stay text.
 
-    ```bash
-    python train.py learning_rate=0.01 batch_size=64
-    ```
+| Argument | Effect |
+|---|---|
+| `'limit=3'` | Integer assignment |
+| `'enabled=true'` | Boolean assignment |
+| `'label="true"'` | String assignment |
+| `'=words=[blue]'` | List replacement |
+| `'~words::0'` | Single-index deletion |
 
-=== "Nested Keys"
+Read the [CLI guide](cli.md) for a complete integration and type boundaries.
 
-    ```bash
-    python train.py model::hidden_size=1024 optimizer::lr=0.001
-    ```
+## Python API
 
-=== "List Values"
+These entrypoints cover normal application code:
 
-    ```bash
-    python train.py 'layers=[128,256,512]'
-    ```
+| API | Purpose |
+|---|---|
+| `Config().update(source)` | Compose a file, mapping, Config or override; return the Config |
+| `config.get(path)` / `config[path]` | Read authored source without configured execution |
+| `config.set(path, value)` | Transactionally set a value; returns `None` |
+| `config.resolve(path)` | Resolve that node and dependencies; may execute Python |
+| `config.resolve()` | Resolve the complete tree |
+| `Config(schema=Schema, ...)` | Attach dataclass validation and optional coercion policy |
+| `config.validate(Schema)` | Validate source explicitly without coercion |
+| `config.freeze()` / `unfreeze()` / `is_frozen()` | Control supported source edits |
+| `Config.export_config_file(config.get(), path)` | Write serializable source to YAML |
+| `parse_overrides(arguments)` | Parse override strings separately from application |
+| `validate(mapping, Schema)` / `validator` / `MISSING` | Standalone schema tools |
+| `config.locations.get(path)` | Inspect recorded source location when available |
 
-=== "Replace vs Merge"
-
-    ```bash
-    # Merge (default)
-    python train.py model::dropout=0.2
-
-    # Replace entire section
-    python train.py '=model={hidden_size: 1024}'
-    ```
-
-## Schema Validation
-
-```python
-from dataclasses import dataclass
-from sparkwheel import Config, validator
-
-
-@dataclass
-class AppConfigSchema:
-    name: str
-    port: int
-    debug: bool = False
-
-    @validator
-    def check_port(self):
-        if not (1024 <= self.port <= 65535):
-            raise ValueError(f"Invalid port: {self.port}")
-
-
-# Continuous validation (validates on every mutation)
-config = Config(schema=AppConfigSchema)
-
-# Or explicit validation
-config = Config()
-config.update("config.yaml")
-config.validate(AppConfigSchema)
-```
+For integrations, `config.retain()` produces a retained definition with
+`definition()` and `scope()`; see [advanced contracts](advanced.md).
+The [generated API reference](../reference/index.md) also exposes low-level
+wrappers, resolver machinery and private helpers. Their visibility is useful for
+reading the implementation; they are not required authoring interfaces or a
+blanket promise of stable extension contracts. Prefer the entrypoints above.
 
 ## Resolution Order
 
-References resolve on access and share their per-mode cache. Python expressions
-only access the branches Python selects:
-
-```yaml
-a: 10
-b: "@a"              # Resolves a when b is requested
-c: "$@a + @b"        # Uses a and b from the same cache
-d: "$@c * 2"         # Resolves c when d is requested
-```
-
-!!! danger "Avoid Circular References"
-    ```yaml
-    # ❌ This will fail!
-    a: "@b"
-    b: "@a"
-    ```
-
-## Best Practices
-
-!!! success "Do This"
-    - ✅ Use `@` references for DRY config
-    - ✅ Enable schema validation for argument checks
-    - ✅ Use composition by default
-    - ✅ Use expressions for computed values
-    - ✅ Keep configs simple and readable
-
-!!! warning "Avoid This"
-    - ❌ Don't create circular references
-    - ❌ Don't overuse expressions (hurts readability)
-    - ❌ Don't use operators when default composition works
-    - ❌ Don't put complex logic in configs
-
-## Common Gotchas
-
-| Issue | Problem | Solution |
-|-------|---------|----------|
-| **Reference not found** | `@key` doesn't exist | Check spelling and nesting |
-| **Circular reference** | `a: "@b"`, `b: "@a"` | Restructure to break cycle |
-| **Type mismatch** | Schema expects `int`, got `str` | Enable coercion or fix type |
-| **Expression error** | Invalid Python in `$()` | Check syntax and references |
-| **Unexpected merge** | Dict merged when you wanted replace | Use `=key` to replace |
-| **List not extending** | `=key` explicitly replaces a list | Use plain `key` to append entries |
-| **Duplicate YAML key** | The same key appears twice in one mapping | Keep one definition or compose separate files |
-
-## File Organization
-
-### Small Projects
-
-```
-project/
-├── config.yaml          # Single config file
-└── train.py
-```
-
-### Medium Projects
-
-```
-project/
-├── configs/
-│   ├── defaults.yaml    # Shared defaults
-│   ├── dev.yaml         # Development
-│   └── prod.yaml        # Production
-└── train.py
-```
-
-### Large Projects
-
-```
-project/
-├── configs/
-│   ├── base/
-│   │   ├── model.yaml
-│   │   ├── dataset.yaml
-│   │   └── training.yaml
-│   ├── experiments/
-│   │   ├── baseline.yaml
-│   │   └── improved.yaml
-│   └── env/
-│       ├── dev.yaml
-│       ├── staging.yaml
-│       └── prod.yaml
-└── train.py
-```
+References resolve on access. Python expressions access the branches Python
+selects in ordinary `Config` resolution. Retained scopes additionally preflight
+explicit graph references. Circular dependencies raise errors; see
+[expressions](expressions.md) for lazy-branch and import details.
 
 ## Performance Tips
 
-!!! info "Cached Resolution"
-    Repeated `config.resolve("computed_value")` calls in the same mode return the
-    cached result. Successful source edits or `resolve(lazy=False)` start a fresh
-    generation. Old returned callbacks and generators retain their build
-    generation; they do not silently switch to edited definitions.
+Repeated resolution in one `(instantiate, eval_expr)` mode reuses cached values.
+Successful supported source edits or `resolve(lazy=False)` reset all modes.
+Already-returned objects, lambdas and generators retain their original generation.
+Use `get()` for source inspection; disabled processing modes are not a static or
+security boundary.
 
-    ```python
-    first = config.resolve("computed_value")
-    assert config.resolve("computed_value") is first
-    ```
+## Common Gotchas
 
-## Next Steps
+- Use `set()`/`update()` for edits; raw nested writes bypass cache invalidation.
+- Use `=` when replacing a list or whole component recipe.
+- A copied `_target_` definition still instantiates when resolved.
+- Schema checks do not prove application behavior; partial resolution is partial validation.
+- Caller-owned Python objects are not deeply frozen or made serializable.
 
-- **[Configuration Basics](basics.md)** - Learn config fundamentals
-- **[References](references.md)** - Deep dive into `@` and `%`
-- **[Expressions](expressions.md)** - Master `$()` expressions
-- **[Operators](operators.md)** - Composition with `=` and `~`
-- **[Schema Validation](schema-validation.md)** - Type-safe configs
+The [troubleshooting guide](troubleshooting.md) maps symptoms to the next useful
+check. [Advanced contracts](advanced.md) retain the precise integration boundaries.

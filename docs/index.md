@@ -1,283 +1,54 @@
----
-title: Sparkwheel
----
-<!-- BEGIN: DO NOT REMOVE THIS SECTION -->
-
-#
-
-<style>
-    /* Remove content from the left bar (otherwise there's "Home" just sitting there) */
-    .md-nav--primary {
-    display: none;
-    }
-</style>
-
-<!-- END: DO NOT REMOVE THIS SECTION -->
-
-<div style="display: flex; justify-content: center;"><img src="assets/images/sparkwheel_banner.png" style="width:65%;"/></div>
-
-<!-- pip install -->
-<div style="width:65%; margin:auto; text-align:center">
-</br>
-
-```bash
-pip install sparkwheel
-```
-</div>
-</br>
-
-
-<div class="grid cards" markdown>
-
--   :material-cog-outline:{ .lg .middle } __Declarative Configuration__
-
-    ---
-
-    Define complex Python objects in clean YAML files. Replace boilerplate instantiation code with simple `_target_` declarations.
-
--   :material-link-variant:{ .lg .middle } __Smart References__
-
-    ---
-
-    Use `@` for **resolved references** (instantiated objects, computed values) or `%` for **raw references** (unprocessed YAML). Keep configurations DRY and maintainable.
-
--   :material-puzzle-outline:{ .lg .middle } __Flexible Composition__
-
-    ---
-
-    Configs compose naturally by default (merge dicts, extend lists). Use `=` to replace or `~` to delete. Build modular configs for experiments and environments.
-
--   :material-function-variant:{ .lg .middle } __Python Expressions__
-
-    ---
-
-    Execute code with `$` prefix. Compute values, call functions, and create dynamic configurations on the fly.
-
--   :material-shield-check-outline:{ .lg .middle } __Schema Validation__
-
-    ---
-
-    Validate configs with Python dataclasses. Continuous validation catches errors immediately at mutation time with type checking, coercion, and required field validation.
-
--   :material-console:{ .lg .middle } __CLI Overrides__
-
-    ---
-
-    Override any config value from command line. Perfect for hyperparameter sweeps and quick experiments.
-
-</div>
-
-## Python Objects from YAML
-
-If you're tired of **hardcoding parameters** and want **configuration-driven workflows**, Sparkwheel makes it effortless. Define components in YAML, reference and compose them freely, then instantiate in Python.
-
-=== "Config"
-
-    ```yaml title="config.yaml"
-    dataset:
-      path: "/data/train"
-      num_classes: 10
-      batch_size: 32
-
-    model:
-      _target_: torch.nn.Sequential
-      _args_:
-        - _target_: torch.nn.Linear
-          in_features: 784
-          out_features: "@dataset::num_classes"  # Reference!
-        - _target_: torch.nn.ReLU
-
-    training:
-      epochs: 10
-      learning_rate: 0.001
-      steps_per_epoch: "$10000 // @dataset::batch_size"  # Expression!
-    ```
-
-=== "Python"
-
-    ```python title="train.py"
-    from sparkwheel import Config
-
-    # Load config (or multiple configs!)
-    config = Config()
-    config.update("config.yaml")
-
-    # Access raw values
-    batch_size = config["dataset::batch_size"]  # 32
-
-    # Resolve references and expressions
-    steps = config.resolve("training::steps_per_epoch")  # 312
-
-    # Instantiate Python objects automatically
-    model = config.resolve("model")  # Actual torch.nn.Sequential!
-    ```
-
-=== "Experiment Override"
-
-    ```yaml title="experiment_large.yaml"
-    # Override specific values, keep the rest (merges by default!)
-    model:
-      _args_:
-        - 0:  # Override first layer
-            out_features: 20  # More classes
-
-    training:
-      learning_rate: 0.0001  # Lower LR
-      # epochs inherited from base!
-    ```
-
-    ```python
-    from sparkwheel import Config
-    import sys
-
-    # Load base + experiment (composes automatically!)
-    config = Config().update("config.yaml").update("experiment_large.yaml")
-
-    # Or override from CLI (parse args yourself)
-    config = Config()
-    config.update("config.yaml")
-    for arg in sys.argv[1:]:
-        if "=" in arg:
-            key, value = arg.split("=", 1)
-            # Simple parsing - use ast.literal_eval for type conversion
-            try:
-                import ast
-
-                value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                pass  # Keep as string
-            config.set(key, value)
-    ```
-
-## Understanding References
-
-Sparkwheel has two types of references with distinct purposes:
-
-!!! abstract "@ - Resolved References"
-
-    **Get the final, computed value** after instantiation and evaluation.
-
-    ```yaml
-    model:
-      _target_: torch.nn.Linear
-      in_features: 784
-      out_features: 10
-
-    # @ follows the reference and gets the instantiated object
-    trained_model: "@model"  # Gets the actual torch.nn.Linear instance
-    ```
-
-    Use `@` when you want the **result** of computation.
-
-!!! abstract "% - Raw References"
-
-    **Get the unprocessed YAML content** before any resolution.
-
-    ```yaml
-    # base.yaml
-    defaults:
-      learning_rate: 0.001
-
-    # config.yaml
-    # % copies the raw YAML definition (can be from external files or same file)
-    optimizer:
-      lr: "%base.yaml::defaults::learning_rate"  # Gets raw value: 0.001
-
-    # Or reference within same file
-    backup_defaults: "%defaults"  # Gets the entire defaults dict as-is
-    ```
-
-    Use `%` when you want to **copy/import raw YAML** (like copy-paste).
-
-## Why Sparkwheel?
-
-!!! tip "Familiar, But More Powerful"
-
-    If you've used **Hydra** or **OmegaConf**, you'll feel right at home. Sparkwheel adds:
-
-    - **Composition-by-default** - Configs merge/extend naturally, no operators needed for common case
-    - **List extension** - Lists extend by default (unique vs Hydra!)
-    - **`=` replace operator** - Explicit control when you need replacement
-    - **`~` delete operator** - Remove inherited keys explicitly
-    - **Python expressions with `$`** - Compute values dynamically
-    - **Dataclass validation** - Type-safe configs without boilerplate
-    - **Dual reference system** - `@` for resolved values, `%` for raw YAML
-    - **Simpler API** - Less magic, clearer behavior
-
-    ```yaml
-    # Merges by default - no operator needed!
-    model:
-      hidden_size: 1024  # Override just this
-      ~dropout: null     # Remove dropout
-      # Other fields preserved automatically!
-    ```
-
-## Start Learning
-
-<div class="grid cards" markdown>
-
--   :material-rocket-launch-outline:{ .lg .middle } __Quick Start__
-
-    ---
-
-    Get productive in 5 minutes with a hands-on tutorial
-
-    [:octicons-arrow-right-24: Quick Start](getting-started/quickstart.md)
-
--   :material-book-open-page-variant:{ .lg .middle } __User Guide__
-
-    ---
-
-    Deep dive into references, expressions, and composition
-
-    [:octicons-arrow-right-24: Core Concepts](user-guide/basics.md)
-
--   :material-code-tags:{ .lg .middle } __API Reference__
-
-    ---
-
-    Complete API documentation and reference
-
-    [:octicons-arrow-right-24: Browse API](reference/index.md)
-
-</div>
-
-## Feature Deep Dives
-
-<div class="grid cards" markdown>
-
--   :material-link:{ .lg .middle } [**References**](user-guide/references.md)
-
-    Link config values with `@` to eliminate duplication
-
--   :material-code-braces:{ .lg .middle } [**Expressions**](user-guide/expressions.md)
-
-    Execute Python code in configs with `$`
-
--   :material-merge:{ .lg .middle } [**Composition & Operators**](user-guide/operators.md)
-
-    Composition-by-default with `=` (replace) and `~` (delete) operators
-
--   :material-check-circle-outline:{ .lg .middle } [**Schema Validation**](user-guide/schema-validation.md)
-
-    Validate with Python dataclasses
-
--   :material-console-line:{ .lg .middle } [**CLI Support**](user-guide/cli.md)
-
-    Override configs from command line
-
--   :material-cog-transfer:{ .lg .middle } [**Instantiation**](user-guide/instantiation.md)
-
-    Create Python objects with `_target_`
-
-</div>
+# Sparkwheel
+
+Compose configuration, then build ordinary Python objects.
+
+Keep behavior in Python. Use YAML or dictionaries to choose objects, supply their
+arguments and share dependencies. Sparkwheel handles composition and construction;
+it does not run your application or replace its libraries.
+
+**This documentation describes the unpublished `0.1.0.dev0` source checkout.**
+Follow [source installation](getting-started/installation.md) before the examples.
+Sparkwheel requires Python 3.10+ and PyYAML; the first example needs no Torch,
+Lightning, data download or service.
+
+## Start here
+
+The [quick start](getting-started/quickstart.md) builds a word counter, inspects
+its definition and changes its input from the command line. Then read the
+[configuration model](user-guide/basics.md) to understand what is stored and when
+Python code runs.
+
+| Task | Guide |
+|---|---|
+| Install the current source | [Installation](getting-started/installation.md) |
+| Run the first example | [Quick start](getting-started/quickstart.md) |
+| Read and edit configuration | [Configuration model](user-guide/basics.md) |
+| Share an object or create another instance | [References: `@` and `%`](user-guide/references.md) |
+| Call my classes and functions | [Python authoring](user-guide/instantiation.md) |
+| Merge, replace or delete settings | [Composition](user-guide/operators.md) |
+| Accept command-line overrides | [CLI](user-guide/cli.md) |
+| Check values against a schema | [Validation](user-guide/schema-validation.md) |
+| Diagnose an error or unexpected result | [Troubleshooting](user-guide/troubleshooting.md) |
+| Find syntax and public entrypoints | [Quick reference](user-guide/quick-reference.md) |
+| Integrate construction into a framework | [Advanced contracts](user-guide/advanced.md) |
+
+## The essential distinction
+
+A configuration is a **definition**. Resolving it may create **live Python objects**.
+`@counts` shares the resolved value of `counts` within the current resolution
+mode and generation. `%counts` copies its definition; a copied `_target_` can
+construct another object. Copies can themselves contain `@` references to shared
+dependencies.
+
+`get()` reads source without configured execution. `resolve()` can execute Python.
+Successful `set()` or `update()` calls start a new resolution generation; they do
+not rewrite objects already returned to your application.
 
 ## About
 
-Sparkwheel is a hard fork of [MONAI Bundle](https://github.com/Project-MONAI/MONAI/tree/dev/monai/bundle)'s configuration system, refined and expanded for general-purpose use. We're deeply grateful to the MONAI team for their excellent foundation.
+Sparkwheel originated from MONAI Bundle's configuration system. It supports
+standalone Python applications and powers configuration in
+[Lighter](https://project-lighter.github.io/lighter/).
 
-Sparkwheel powers [Lighter](https://project-lighter.github.io/lighter/), a configuration-driven deep learning framework built on PyTorch Lightning.
-
-**Ready to contribute?** [:octicons-mark-github-16: View on GitHub](https://github.com/project-lighter/sparkwheel)
-
-<br/>
+[Source and issues](https://github.com/project-lighter/sparkwheel) ·
+[API reference](reference/index.md)
