@@ -41,7 +41,7 @@ git -C sparkwheel checkout --detach c2286a0626748e913296d7127c16060cb705b6d0
 python -m pip install --editable ./sparkwheel
 ```
 
-Edits in this clone now affect imports. Create a working branch before committing changes. For tests, docs and hooks, install `uv` and `just`, then use `just setup` from the clone. See [Contributing](https://github.com/project-lighter/sparkwheel/blob/codex/reliability-and-documentation/CONTRIBUTING.md). Contributor tools are not required for package use.
+Edits in this clone now affect imports. Create a working branch before committing changes. For tests, docs and hooks, install `uv` and `just`, then use `just setup` from the clone. See [Contributing](https://github.com/project-lighter/sparkwheel/blob/b5138c192092989910c6e62c59245865928fc51f/CONTRIBUTING.md). Contributor tools are not required for package use.
 
 ## Next Steps
 

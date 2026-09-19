@@ -147,8 +147,9 @@ for expression imports; see [expressions](expressions.md#importing-modules).
 
 Check the native constructor signature and resolved arguments. Missing targets
 raise `TargetNotFoundError`; exceptions raised while calling a target are wrapped
-in `InstantiationError` with the original exception as their cause. Follow that
-cause when debugging; Sparkwheel does not repair application inputs.
+in `InstantiationError`. The original exception remains in the `__cause__` chain,
+which may include another Sparkwheel wrapper. Follow the chain to the native
+error or read the complete traceback; Sparkwheel does not repair application inputs.
 
 [Validation](schema-validation.md) can check configured arguments before a target
 is called. [Troubleshooting](troubleshooting.md) explains how to inspect source

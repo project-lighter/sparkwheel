@@ -54,9 +54,11 @@ Expected output is `Word counts: blue=1`. If this fails, fix the Python import o
 class first. Sparkwheel does not search arbitrary project directories for targets.
 
 A target lookup failure raises `TargetNotFoundError`. A failure while calling it
-raises `InstantiationError` with the native exception attached as its cause.
-Expression failures similarly retain their cause through `EvaluationError`.
-Use that information rather than assuming every exception is a config-parser bug.
+raises `InstantiationError`; the native error remains in its `__cause__` chain.
+There may be another Sparkwheel wrapper before the native error, so follow the
+whole chain or read the complete traceback. Expression failures similarly retain
+their cause through `EvaluationError`. Use the native error to distinguish a
+configuration mistake from a failure in application code.
 
 ## Unexpected Debugger or Missing Expression Result
 

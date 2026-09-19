@@ -9,7 +9,8 @@ a resolved object; `%` copies a definition for separate construction.
 **Development version:** this checkout is `0.1.0.dev0`, an unpublished development
 package. The documentation describes this source, not necessarily the version
 available on PyPI. Python 3.10 or newer is required; the installation below uses
-Python 3.11. Torch and Lightning are not required.
+Python 3.11. Torch and Lightning are not required. Use the source documentation
+linked below for this pair; the hosted site may describe an earlier release.
 
 Install the immutable reviewed public snapshot in a new directory (Python 3.11 and Git required):
 
