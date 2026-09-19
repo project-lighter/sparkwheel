@@ -17,7 +17,7 @@ Install the immutable reviewed public snapshot in a new directory (Python 3.11 a
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install "sparkwheel @ git+https://github.com/project-lighter/sparkwheel.git@c2286a0626748e913296d7127c16060cb705b6d0"
+python -m pip install "sparkwheel @ git+https://github.com/project-lighter/sparkwheel.git@b73e786e8716d11a77206fb3482d21a621a4ba81"
 python -m pip check
 ```
 

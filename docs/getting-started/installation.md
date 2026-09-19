@@ -2,7 +2,7 @@
 
 Sparkwheel requires Python 3.10 or newer and PyYAML. Torch and Lightning are not required. The examples below use Python 3.11 and a fresh environment.
 
-The current source version is **0.1.0.dev0**. Its source is public; older PyPI releases may have different behavior. The command below selects the **immutable reviewed snapshot** `c2286a0626748e913296d7127c16060cb705b6d0`. It predates later review-branch changes; release handoffs name the exact revision they qualify.
+The current source version is **0.1.0.dev0**. Its source is public; older PyPI releases may have different behavior. The command below selects the **immutable reviewed snapshot** `b73e786e8716d11a77206fb3482d21a621a4ba81`. It includes the current runtime and diagnostic corrections; it does not follow subsequent branch changes. Release handoffs name the exact revision they qualify.
 
 ## Install from Source
 
@@ -11,7 +11,7 @@ With Python 3.11 and Git installed, start in a new working directory:
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install "sparkwheel @ git+https://github.com/project-lighter/sparkwheel.git@c2286a0626748e913296d7127c16060cb705b6d0"
+python -m pip install "sparkwheel @ git+https://github.com/project-lighter/sparkwheel.git@b73e786e8716d11a77206fb3482d21a621a4ba81"
 python -m pip check
 ```
 
@@ -37,7 +37,7 @@ Only contributors need an editable clone. From a new working directory with the 
 
 ```bash
 git clone https://github.com/project-lighter/sparkwheel.git sparkwheel
-git -C sparkwheel checkout --detach c2286a0626748e913296d7127c16060cb705b6d0
+git -C sparkwheel checkout --detach b73e786e8716d11a77206fb3482d21a621a4ba81
 python -m pip install --editable ./sparkwheel
 ```
 
