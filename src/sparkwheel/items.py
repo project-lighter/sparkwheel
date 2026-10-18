@@ -8,7 +8,7 @@ from typing import Any
 
 from .locations import LocationRegistry
 from .path_utils import replace_references
-from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
+from .utils import CompInitMode, instantiate, optional_import, run_debug, run_eval
 from .utils.constants import EXPR_KEY, ID_SEP_KEY
 from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
 from .utils.module import describe_argument_error
@@ -361,8 +361,8 @@ class Expression(Item):
 
     def _parse_import_string(self, import_string: str) -> Any | None:
         """parse single import statement such as "from pathlib import Path" """
-        node = first(ast.iter_child_nodes(ast.parse(import_string)))
-        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        node = _single_import(import_string)
+        if node is None:
             return None
         if len(node.names) < 1:
             return None
@@ -404,8 +404,9 @@ class Expression(Item):
                 if k in globals_:
                     warnings.warn(f"the new global variable `{k}` conflicts with `self.globals`, override it.", stacklevel=2)
                 globals_[k] = v
+        code = None
         try:
-            code = replace_references(value, globals_.get(self.refs_var, {}), self.refs_var)[len(self.prefix) :]
+            code = replace_references(value, globals_.get(self.refs_var, {}), self.refs_var)[len(self.prefix) :].strip()
             optional_module = self._parse_import_string(code)
             if optional_module is not None:
                 return optional_module
@@ -414,7 +415,7 @@ class Expression(Item):
             if not run_debug:
                 return eval(code, globals_, locals)
         except Exception as e:
-            raise self._evaluation_error(e) from e
+            raise self._evaluation_error(e, code) from e
         warnings.warn(
             f"\n\npdb: value={value}\nSee also Debugger commands documentation: https://docs.python.org/3/library/pdb.html\n",
             stacklevel=2,
@@ -424,8 +425,11 @@ class Expression(Item):
         pdb.run(code, globals_, locals)
         return None
 
-    def _evaluation_error(self, error: Exception) -> EvaluationError:
-        """Describe a failed expression with the Python error and the expression as written."""
+    def _evaluation_error(self, error: Exception, code: str | None = None) -> EvaluationError:
+        """Describe a failed expression with the Python error and the expression as written.
+
+        `code` is the expression's Python code, with its references replaced, when known.
+        """
         detail = error.msg if isinstance(error, SyntaxError) else str(error)
         suggestion = None
         name = getattr(error, "name", None)
@@ -433,6 +437,11 @@ class Expression(Item):
             suggestion = (
                 f"To use the module `{name}`, import it in the config (`_imports_: {{{name}: {name}}}`); "
                 f"for the config value `{name}`, write `@{name}`."
+            )
+        elif isinstance(error, SyntaxError) and code is not None and _is_statements(code):
+            suggestion = (
+                "A `$` value is one Python expression, not statements. "
+                "Import modules with `_imports_` (`_imports_: {os: os}`) and use them in the expression."
             )
         return EvaluationError(
             f"Failed to evaluate expression '{self.get_config()}': {type(error).__name__}: {detail}",
@@ -459,12 +468,24 @@ class Expression(Item):
         Args:
             config: input config content to check.
         """
-        if not cls.is_expression(config):
+        if not isinstance(config, str) or not cls.is_expression(config) or "import" not in config:
             return False
-        if "import" not in config:
-            return False
-        try:
-            tree = ast.parse(f"{config[len(cls.prefix) :]}")  # type: ignore[index]
-        except SyntaxError:
-            return False  # e.g. `$@a['import']`; evaluating it reports any real syntax error
-        return isinstance(first(ast.iter_child_nodes(tree)), (ast.Import, ast.ImportFrom))
+        return _single_import(config[len(cls.prefix) :]) is not None
+
+
+def _single_import(code: str) -> ast.Import | ast.ImportFrom | None:
+    """The import statement that `code` consists of, or None if it is anything else (`import os; os.sep` too)."""
+    try:
+        body = ast.parse(code.strip()).body
+    except SyntaxError:
+        return None  # e.g. `$@a['import']`; evaluating it reports any real syntax error
+    return body[0] if len(body) == 1 and isinstance(body[0], (ast.Import, ast.ImportFrom)) else None
+
+
+def _is_statements(code: str) -> bool:
+    """Whether `code` is Python statements (`x = 1`, `import os; os.sep`) rather than one expression."""
+    try:
+        body = ast.parse(code.strip()).body
+    except SyntaxError:
+        return False
+    return not (len(body) == 1 and isinstance(body[0], ast.Expr))

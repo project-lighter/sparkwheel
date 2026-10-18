@@ -26,6 +26,8 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
   Migration: fix the validator or `__post_init__` that now reports an error.
 - `Resolver.get_item(id, resolve=True)` returns the item as written, since resolving no longer rewrites it.
   Migration: use `config.resolve(id)` for the resolved value.
+- A `$` value that starts with an import and goes on (`"$import os; os.getcwd()"`) raises a `SyntaxError` that suggests `_imports_`, instead of silently returning the module. A value that is only an import (`"$import numpy as np"`) works as before.
+  Migration: name the module under `_imports_` (`_imports_: {os: os}`) and write the expression alone (`"$os.getcwd()"`).
 - Removed `sparkwheel.coercion` (it was never called). `Config(coerce=...)` still works but warns with a `DeprecationWarning`: values were never converted, and still are not.
   Migration: remove the `coerce=` argument.
 
@@ -45,6 +47,7 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - `~key::N` (override string, dict update or YAML file) removes item `N` of a list instead of silently doing nothing.
 - `resolve(id, instantiate=False)` of a disabled component returns `None` without needing its references to exist.
 - Error messages stand alone: a failed `$` expression shows the expression as written plus the Python error (`AttributeError: ...`), syntax errors in `$` expressions carry the file and line, a `NameError` suggests `_imports_`, an unknown `_target_` module names the part that cannot be imported, a missing `@` reference points at the key that holds it, and a missing id points at its nearest existing parent instead of the first key in the file. The doubled "💡 💡" is gone.
+- Whitespace after the `$` (`"$ @lr * 2"`, or a double-quoted YAML value that starts on the next line) no longer raises `IndentationError`.
 - An expression containing the word `import` (e.g. `$@a['import']`) is no longer mistaken for an import statement.
 - `@` references work anywhere in a `$` expression (`$not@a`, `$1 in@a`); an `@` inside a string literal or comment, or used as the matrix-multiplication operator (`a @ b`), is no longer treated as a reference. References inside f-string replacement fields (`$f"lr={@lr:.2e}"`, `$f'{@lr}'`) work on every Python version.
 - A whole-value reference that is not a valid id (`@model.lr`) raises a `ConfigKeyError` with a did-you-mean instead of a bare `KeyError`.
@@ -56,5 +59,6 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 ### Documentation
 
 - New [Troubleshooting](docs/user-guide/troubleshooting.md) page with the real messages of the most common errors (checked by the test suite).
+- The expressions page's examples are fixed (multi-statement imports, a `try` block, multi-line values) and checked by the test suite.
 - The quick reference's examples are fixed (a `?:` ternary, `~key: true`, dotted overrides, coercion) and run by the test suite; the docs no longer teach parsing overrides by hand or claim that `set()` validates.
 - Docs are published from release tags only, so the site matches the released version.

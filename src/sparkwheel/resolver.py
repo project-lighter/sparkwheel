@@ -352,10 +352,11 @@ class Resolver:
                         )
             if isinstance(item, Expression) and not item.is_import_statement(config):
                 code = replace_references(config, dict.fromkeys(self.match_refs_pattern(config)), self._vars)
+                code = code[len(EXPR_KEY) :].strip()
                 try:
-                    compile(code[len(EXPR_KEY) :], "<expression>", "eval")
+                    compile(code, "<expression>", "eval")
                 except SyntaxError as e:
-                    problems.append(item._evaluation_error(e))
+                    problems.append(item._evaluation_error(e, code))
         return problems
 
     def _checked_disabled_flag(self, config: dict[str, Any]) -> bool | None:

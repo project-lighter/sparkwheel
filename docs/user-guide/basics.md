@@ -436,10 +436,13 @@ api:
 ### Environment Variables
 
 ```yaml
+_imports_:
+  os: os
+
 database:
   # Use environment variable with fallback
-  host: "$import os; os.getenv('DB_HOST', 'localhost')"
-  port: "$import os; int(os.getenv('DB_PORT', '5432'))"
+  host: "$os.getenv('DB_HOST', 'localhost')"
+  port: "$int(os.getenv('DB_PORT', '5432'))"
 ```
 
 ## Next Steps

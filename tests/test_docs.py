@@ -114,3 +114,14 @@ def test_troubleshooting_messages_are_real(model, blocks, workdir):
             config.update(item)
         config.check() if blocks["text"].startswith("Config check found") else config.resolve()
     assert str(excinfo.value).replace(f"{workdir.resolve()}/", "").strip() == blocks["text"].strip()
+
+
+def test_expression_examples_pass_check(workdir, monkeypatch):
+    """Every example on the expressions page passes `check()`, except the mistakes it shows."""
+    from sparkwheel.resolver import Resolver
+
+    monkeypatch.setattr(Resolver, "allow_missing_reference", True)  # the examples are excerpts
+    for language, _, code in _fences((GUIDE / "expressions.md").read_text()):
+        if language == "yaml" and "# Bad" not in code and "Error" not in code:
+            (workdir / "snippet.yaml").write_text(code)
+            Config().update("snippet.yaml").check()

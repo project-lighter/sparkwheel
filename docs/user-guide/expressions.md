@@ -32,19 +32,25 @@ A reference can appear anywhere a Python value can (`$not@debug`, `$(@a)`). An `
 
 ## Importing Modules
 
-Import Python libraries in expressions:
+Name the modules your expressions use under `_imports_`:
 
 ```yaml
-# Math operations
-pi: "$import math; math.pi"
-sqrt_2: "$import math; math.sqrt(2)"
+_imports_:
+  math: math
+  os: os
+  torch: torch
+
+pi: "$math.pi"
+sqrt_2: "$math.sqrt(2)"
 
 # Check for GPU
-device: "$import torch; 'cuda' if torch.cuda.is_available() else 'cpu'"
+device: "$'cuda' if torch.cuda.is_available() else 'cpu'"
 
 # Get environment variable
-db_host: "$import os; os.getenv('DB_HOST', 'localhost')"
+db_host: "$os.getenv('DB_HOST', 'localhost')"
 ```
+
+A `$` value is one Python expression, so `"$import math; math.pi"` is an error. A value that is only an import statement (`"$import numpy as np"`) also works: see [Global Scope](#global-scope).
 
 ## Complex Expressions
 
@@ -109,7 +115,7 @@ data:
   array: "$np.array([1, 2, 3])"  # Can use np here
 ```
 
-### Local Variables
+### Config Values
 
 Access config values as variables:
 
@@ -126,8 +132,11 @@ Use references (`@`) to access config values.
 ### Environment Detection
 
 ```yaml
+_imports_:
+  os: os
+
 config:
-  is_production: "$import os; os.getenv('ENV') == 'production'"
+  is_production: "$os.getenv('ENV') == 'production'"
   debug: "$not @config::is_production"
 ```
 
@@ -178,21 +187,16 @@ value: 10
 result: "$@value * 2"
 ```
 
-### Safe Evaluation
+### Optional Dependencies
 
-Check before using:
+Check whether a module is installed before using it:
 
 ```yaml
-# Check if module exists
-has_torch: "$
-  try:
-      import torch
-      True
-  except ImportError:
-      False
-"
+_imports_:
+  util: importlib.util
 
-device: "$'cuda' if @has_torch and torch.cuda.is_available() else 'cpu'"
+has_torch: "$util.find_spec('torch') is not None"
+device: "$'cuda' if @has_torch and __import__('torch').cuda.is_available() else 'cpu'"
 ```
 
 ## Best Practices
@@ -202,7 +206,9 @@ device: "$'cuda' if @has_torch and torch.cuda.is_available() else 'cpu'"
 ```yaml
 # Good
 steps: "$@samples // @batch_size"
+```
 
+```yaml
 # Avoid
 steps: "$
   sum([1 for _ in range(@samples)]) //
@@ -220,18 +226,13 @@ learning_rate: "$0.001 * (@training::batch_size ** 0.5)"
 
 ### 3. Validate Expressions
 
+`config.check()` compiles every expression without running it, and raises one error that lists each problem with its file and line:
+
 ```python
-# In your Python code
 from sparkwheel import Config
 
-try:
-    config = Config()
-    config.update("config.yaml")
-    resolved = config.resolve()
-except SyntaxError as e:
-    print(f"Expression syntax error: {e}")
-except Exception as e:
-    print(f"Expression evaluation error: {e}")
+config = Config().update("config.yaml")
+config.check()
 ```
 
 ## Security Considerations

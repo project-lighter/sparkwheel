@@ -548,8 +548,8 @@ database:
   host: db.example.com
   port: 5432
   database: myapp
-  username: "$import os; os.getenv('DB_USER')"
-  password: "$import os; os.getenv('DB_PASSWORD')"
+  username: "$__import__('os').getenv('DB_USER')"
+  password: "$__import__('os').getenv('DB_PASSWORD')"
   pool_size: 20
 ```
 
