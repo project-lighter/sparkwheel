@@ -139,6 +139,17 @@ def _build_nested(field_type: Any, value: Any) -> Any:
     return value
 
 
+def _has_unresolved(value: Any) -> bool:
+    """Whether `value` holds a reference, expression or macro string, also inside dicts and lists."""
+    if isinstance(value, str):
+        return value.startswith(("@", "$", "%"))
+    if isinstance(value, dict):
+        return any(_has_unresolved(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_unresolved(v) for v in value)
+    return False
+
+
 def _get_validators(schema_type: type) -> list[Any]:
     """Get all validator methods from a dataclass."""
     validators = []
@@ -175,12 +186,10 @@ def _run_validators(
     if not validators:
         return
 
-    # Skip validation for configs with references/expressions/macros
+    # Skip validation for configs with references/expressions/macros anywhere below, even in nested dataclasses
     # They'll be validated after resolution
-    for value in config.values():
-        if isinstance(value, str) and value.startswith(("@", "$", "%")):
-            # Has unresolved references - skip custom validation
-            return
+    if _has_unresolved(config):
+        return
 
     # Create the instance from the schema's own fields (not component keys like `_target_` or lenient extras)
     source_loc = _get_source_location(metadata, field_path) if metadata else None

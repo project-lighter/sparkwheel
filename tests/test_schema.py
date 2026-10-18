@@ -1398,3 +1398,28 @@ class TestNestedDataclassesInValidators:
         Config(schema=Parent).update(data)
         with pytest.raises(ValidationError, match="total must be >= 0, got -5"):
             Config(schema=Parent).update({**data, "child": {"n": -8}})
+
+    def test_nested_references_skip_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Child:
+            n: int
+
+            def __post_init__(self):
+                if self.n < 0:
+                    raise ValueError("n must be >= 0")
+
+        @dataclass
+        class Parent:
+            child: Child
+            children: list[Child] = field(default_factory=list)
+
+            @validator
+            def check(self):
+                pass
+
+        Config(schema=Parent).update({"child": {"n": "$1 + 1"}})
+        Config(schema=Parent).update({"child": {"n": 1}, "children": [{"n": "@child::n"}]})
+        with pytest.raises(ValidationError, match="n must be >= 0"):
+            Config(schema=Parent).update({"child": {"n": -1}})
