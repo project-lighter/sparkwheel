@@ -7,7 +7,6 @@ This module contains tests for utility functions across different modules:
 - Enums (CompInitMode, StrEnum)
 """
 
-import os
 import warnings
 from collections import Counter
 from enum import Enum
@@ -16,8 +15,6 @@ from functools import partial
 import pytest
 
 from sparkwheel.utils import (
-    CheckKeyDuplicatesYamlLoader,
-    check_key_duplicates,
     damerau_levenshtein_distance,
     ensure_tuple,
     first,
@@ -112,70 +109,6 @@ class TestMiscUtils:
         result = ensure_tuple({1, 2, 3})
         assert isinstance(result, tuple)
         assert len(result) == 3
-
-    def test_check_key_duplicates_no_duplicates(self):
-        """Test check_key_duplicates with unique keys."""
-        pairs = [("a", 1), ("b", 2), ("c", 3)]
-        result = check_key_duplicates(pairs)
-        assert result == {"a": 1, "b": 2, "c": 3}
-
-    def test_check_key_duplicates_with_duplicates_warning(self):
-        """Test check_key_duplicates warns on duplicates."""
-        pairs = [("a", 1), ("b", 2), ("a", 3)]
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = check_key_duplicates(pairs)
-            assert len(w) > 0
-            assert "Duplicate key" in str(w[0].message)
-            assert result == {"a": 3, "b": 2}
-
-    def test_check_key_duplicates_strict_mode(self):
-        """Test check_key_duplicates raises error in strict mode."""
-        original = os.environ.get("SPARKWHEEL_STRICT_KEYS")
-        try:
-            os.environ["SPARKWHEEL_STRICT_KEYS"] = "1"
-            pairs = [("a", 1), ("b", 2), ("a", 3)]
-            with pytest.raises(ValueError, match="Duplicate key"):
-                check_key_duplicates(pairs)
-        finally:
-            if original is None:
-                os.environ.pop("SPARKWHEEL_STRICT_KEYS", None)
-            else:
-                os.environ["SPARKWHEEL_STRICT_KEYS"] = original
-
-    def test_yaml_loader_duplicate_warning(self):
-        """Test CheckKeyDuplicatesYamlLoader warns on duplicates."""
-        import yaml
-
-        yaml_str = """
-a: 1
-b: 2
-a: 3
-"""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = yaml.load(yaml_str, CheckKeyDuplicatesYamlLoader)
-            assert len(w) > 0
-            assert result["a"] == 3
-
-    def test_yaml_loader_duplicate_strict(self):
-        """Test CheckKeyDuplicatesYamlLoader raises error in strict mode."""
-        import yaml
-
-        original = os.environ.get("SPARKWHEEL_STRICT_KEYS")
-        try:
-            os.environ["SPARKWHEEL_STRICT_KEYS"] = "1"
-            yaml_str = """
-a: 1
-a: 2
-"""
-            with pytest.raises(ValueError, match="Duplicate key"):
-                yaml.load(yaml_str, CheckKeyDuplicatesYamlLoader)
-        finally:
-            if original is None:
-                os.environ.pop("SPARKWHEEL_STRICT_KEYS", None)
-            else:
-                os.environ["SPARKWHEEL_STRICT_KEYS"] = original
 
 
 class TestModuleUtils:

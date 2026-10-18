@@ -1,6 +1,6 @@
 from .constants import EXPR_KEY, ID_SEP_KEY, RAW_REF_KEY, REMOVE_KEY, REPLACE_KEY, RESOLVED_REF_KEY
 from .enums import CompInitMode
-from .misc import CheckKeyDuplicatesYamlLoader, check_key_duplicates, ensure_tuple, first, issequenceiterable
+from .misc import ensure_tuple, first, issequenceiterable
 from .module import (
     allow_missing_reference,
     damerau_levenshtein_distance,
@@ -18,8 +18,6 @@ __all__ = [
     "first",
     "issequenceiterable",
     "ensure_tuple",
-    "check_key_duplicates",
-    "CheckKeyDuplicatesYamlLoader",
     "run_eval",
     "run_debug",
     "allow_missing_reference",

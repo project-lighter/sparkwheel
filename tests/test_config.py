@@ -1473,6 +1473,12 @@ class TestConfigUpdateAutoDetection:
 class TestParseOverrides:
     """Test parse_overrides helper function."""
 
+    def test_parse_exponent_floats_like_yaml_files(self):
+        from sparkwheel import parse_overrides
+
+        result = parse_overrides(["a=1e-3", "b=1E5", "c=-2.5e-4", "d=+1e3", "e=[1e-3]", "f='1e-3'"])
+        assert result == {"a": 1e-3, "b": 1e5, "c": -2.5e-4, "d": 1e3, "e": [1e-3], "f": "1e-3"}
+
     def test_parse_keyvalue_style(self):
         """Test parsing key=value style."""
         from sparkwheel import parse_overrides

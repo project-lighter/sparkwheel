@@ -98,7 +98,7 @@ See Config class docstring for full API details.
 from pathlib import Path
 from typing import Any
 
-from .loader import Loader
+from .loader import Loader, YamlLoader
 from .locations import LocationRegistry
 from .operators import (
     MergeContext,
@@ -855,7 +855,7 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
     """Parse CLI argument overrides with automatic type inference.
 
     Supports only key=value syntax with operator prefixes.
-    Values are parsed using YAML syntax (via ``yaml.safe_load``), ensuring
+    Values are parsed with the same YAML rules as config files (safe loading, plus floats like ``1e-3``), ensuring
     CLI overrides behave identically to values in YAML config files.
 
     Args:
@@ -909,7 +909,7 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
             key, value = rest.split("=", 1)
             key = "=" + key  # Add back the = prefix to the key
             try:
-                value = yaml.safe_load(value)
+                value = yaml.load(value, Loader=YamlLoader)
             except yaml.YAMLError:
                 pass  # Keep as string
             overrides[key] = value
@@ -919,7 +919,7 @@ def parse_overrides(args: list[str]) -> dict[str, Any]:
         if "=" in arg:
             key, value = arg.split("=", 1)
             try:
-                value = yaml.safe_load(value)
+                value = yaml.load(value, Loader=YamlLoader)
             except yaml.YAMLError:
                 pass  # Keep as string
             overrides[key] = value
