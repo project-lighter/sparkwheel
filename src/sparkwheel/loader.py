@@ -159,7 +159,13 @@ class Loader:
         resolved_path = Path(filepath_str).resolve()
         registry = LocationRegistry()
         with open(resolved_path) as f:
-            config = self._load_yaml_with_metadata(f, str(resolved_path), registry)
+            try:
+                config = self._load_yaml_with_metadata(f, str(resolved_path), registry)
+            except yaml.scanner.ScannerError as e:  # `lr: @base`: YAML cannot start a plain value with @ or %
+                char = next((c for c in "@%" if e.problem == f"found character '{c}' that cannot start any token"), None)
+                if char:
+                    e.problem += f'. Quote a value that starts with {char}: "{char}key"'
+                raise
 
         return config, registry
 

@@ -50,6 +50,7 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - A component with a literal `_disabled_: true` no longer builds its arguments, whether it is resolved directly or as part of its parent (e.g. a disabled callback inside `trainer`): its nested components are not built, its expressions are not evaluated and its references need not exist.
 - YAML merge keys (`<<: *base`) work in config files.
 - `update()` loads a string that names an existing file as a file, even when its path contains `=` (`runs/lr=0.1/config.yaml`), and expands a leading `~` in a file path.
+- A YAML value that starts with an unquoted `@` or `%` (`lr: @base`) gets a hint to quote it.
 - `~key::N` (override string, dict update or YAML file) removes item `N` of a list instead of silently doing nothing.
 - `resolve(id, instantiate=False)` of a disabled component returns `None` without needing its references to exist.
 - Error messages stand alone: a failed `$` expression shows the expression as written plus the Python error (`AttributeError: ...`), syntax errors in `$` expressions carry the file and line, a `NameError` suggests `_imports_`, an unknown `_target_` module names the part that cannot be imported, a missing `@` reference points at the key that holds it, and a missing id points at its nearest existing parent instead of the first key in the file. The doubled "💡 💡" is gone.

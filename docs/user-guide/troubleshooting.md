@@ -176,6 +176,21 @@ found duplicate key 'learning_rate' (first defined on line 1)
 
 Keep one of the two. To change a value for one run, use a command-line override or a second YAML file.
 
+## A reference is not quoted
+
+```yaml title="config.yaml"
+num_classes: 10
+classes: @num_classes
+```
+
+```text
+while scanning for the next token
+found character '@' that cannot start any token. Quote a value that starts with @: "@key"
+  in "config.yaml", line 2, column 10
+```
+
+In YAML, `@` and `%` cannot start a plain value. Write `classes: "@num_classes"`.
+
 ## See every problem at once
 
 `config.check()` validates the whole config without building anything and lists every problem it finds. Call it after the last `update()`:
