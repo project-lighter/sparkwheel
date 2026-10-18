@@ -1423,3 +1423,30 @@ class TestNestedDataclassesInValidators:
         Config(schema=Parent).update({"child": {"n": 1}, "children": [{"n": "@child::n"}]})
         with pytest.raises(ValidationError, match="n must be >= 0"):
             Config(schema=Parent).update({"child": {"n": -1}})
+
+    def test_a_nested_reference_does_not_switch_off_the_root_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Opt:
+            lr: float
+
+        @dataclass
+        class Root:
+            epochs: int
+            base_lr: float
+            optimizer: Opt
+
+            @validator
+            def check_epochs(self):
+                if self.epochs <= 0:
+                    raise ValueError("epochs must be positive")
+
+            @validator
+            def check_lr(self):
+                if self.optimizer.lr > 1:  # a TypeError while `lr` is still "@base_lr"
+                    raise ValueError("lr must be at most 1")
+
+        with pytest.raises(ValidationError, match="epochs must be positive"):
+            Config(schema=Root).update({"epochs": -1, "base_lr": 0.1, "optimizer": {"lr": "@base_lr"}})
+        Config(schema=Root).update({"epochs": 1, "base_lr": 0.1, "optimizer": {"lr": "@base_lr"}})

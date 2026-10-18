@@ -186,9 +186,9 @@ def _run_validators(
     if not validators:
         return
 
-    # Skip validation for configs with references/expressions/macros anywhere below, even in nested dataclasses
-    # They'll be validated after resolution
-    if _has_unresolved(config):
+    # Skip validation when one of this dataclass's own values is a reference, expression or macro:
+    # validators cannot judge a value that is not known yet
+    if any(isinstance(value, str) and value.startswith(("@", "$", "%")) for value in config.values()):
         return
 
     # Create the instance from the schema's own fields (not component keys like `_target_` or lenient extras)
@@ -196,6 +196,8 @@ def _run_validators(
     try:
         instance = schema(**_init_values(schema, config))
     except Exception as e:
+        if _has_unresolved(config):
+            return  # a nested dataclass's __post_init__ saw a reference instead of its value
         raise ValidationError(
             f"Cannot create {schema.__name__} to run its validators: {type(e).__name__}: {e}",
             field_path=field_path,
@@ -212,6 +214,8 @@ def _run_validators(
                 source_location=source_loc,
             ) from e
         except Exception as e:
+            if _has_unresolved(config):
+                continue  # e.g. a TypeError from comparing a nested reference string with a number
             raise ValidationError(
                 f"Validator '{validator_method.__name__}' raised {type(e).__name__}: {e}",
                 field_path=field_path,
