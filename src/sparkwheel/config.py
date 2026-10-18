@@ -98,6 +98,8 @@ See Config class docstring for full API details.
 from pathlib import Path
 from typing import Any
 
+from .errors import get_suggestions
+from .items import Component
 from .loader import Loader, YamlLoader
 from .locations import LocationRegistry
 from .operators import (
@@ -278,6 +280,7 @@ class Config:
 
         Raises:
             FrozenConfigError: If config is frozen
+            ConfigKeyError: If the path goes through a value that is not a mapping or list
 
         Example:
             >>> config = Config()
@@ -302,17 +305,21 @@ class Config:
         if not isinstance(self._data, dict):
             self._data = {}  # type: ignore[unreachable]
 
-        # Create missing intermediate paths
-        current = self._data
-        for k in keys[:-1]:
-            if k not in current:
+        # Walk dicts and lists, creating missing (or null) mappings on the way
+        current: Any = self._data
+        for depth, k in enumerate(keys[:-1]):
+            if isinstance(current, list):
+                current = current[int(k)]
+                continue
+            if current.get(k) is None:
                 current[k] = {}
-            elif not isinstance(current[k], dict):
-                current[k] = {}
+            elif not isinstance(current[k], (dict, list)):
+                prefix = ID_SEP_KEY.join(keys[: depth + 1])
+                raise ConfigKeyError(f"Cannot set '{id}': '{prefix}' is {current[k]!r}, not a mapping")
             current = current[k]
 
         # Set final value
-        current[keys[-1]] = value
+        current[int(keys[-1]) if isinstance(current, list) else keys[-1]] = value
         self._invalidate_resolution()
 
     def validate(self, schema: type) -> None:
@@ -579,10 +586,51 @@ class Config:
         """Parse and apply a single override string (e.g., 'key=value', '=key=value', '~key')."""
         for key, value in parse_overrides([override]).items():
             path = key.removeprefix(REPLACE_KEY)
+            if not key.startswith(REMOVE_KEY):
+                self._check_override_path(path, value, override, merge=key == path)
             before = self.get(path) if key == path else None  # what a compose override merges into
             self._apply_path_updates({key: value})
             if not key.startswith(REMOVE_KEY):
                 self._register_override(path, value, before, override)
+
+    def _check_override_path(self, path: str, value: Any, override: str, merge: bool) -> None:
+        """Overrides set keys that exist; the only new keys allowed are a component's arguments and special keys.
+
+        A typo would otherwise silently add a key that nothing reads.
+        """
+        keys = split_id(path)
+        node: Any = self._data
+        for depth, key in enumerate(keys):
+            try:
+                node = node[int(key)] if isinstance(node, list) else node[key]
+                continue
+            except (KeyError, IndexError, ValueError, TypeError):
+                pass
+            location = Location(filepath="", line=0, id=path, override=override)
+            if not isinstance(node, (dict, list)):
+                parent = ID_SEP_KEY.join(keys[:depth])
+                raise ConfigKeyError(
+                    f"Cannot override '{path}': '{parent}' is {node!r}, not a mapping",
+                    source_location=location,
+                    suggestion=f"To replace the value, override '{parent}' itself.",
+                )
+            if depth == len(keys) - 1 and depth > 0 and isinstance(node, dict):
+                if Component.is_instantiable(node) or key in Component.non_arg_keys:
+                    return  # a new argument (checked against the target's signature when built) or special key
+            missing = ID_SEP_KEY.join(keys[: depth + 1])
+            close = get_suggestions(key, [str(k) for k in node], max_suggestions=1) if isinstance(node, dict) else []
+            hint = f"Did you mean '{close[0][0]}'? " if close else ""
+            raise ConfigKeyError(
+                f"Cannot override '{path}': '{missing}' does not exist" if missing != path else f"'{path}' does not exist",
+                source_location=location,
+                suggestion=f"{hint}To add a new key, put it in your YAML file or in an extra YAML file listed on the command line.",
+            )
+        if merge and isinstance(node, dict) and isinstance(value, dict):
+            for key, child in value.items():
+                key = str(key)
+                if not key.startswith(REMOVE_KEY):
+                    child_path = f"{path}{ID_SEP_KEY}{key.removeprefix(REPLACE_KEY)}"
+                    self._check_override_path(child_path, child, override, merge=not key.startswith(REPLACE_KEY))
 
     def _register_override(self, path: str, value: Any, before: Any, override: str) -> None:
         """Make errors about `path` and the values under it point at the override that set them."""
@@ -694,6 +742,37 @@ class Config:
                     return default.get_config()
                 return default
             raise
+
+    def check(self) -> None:
+        """Find mistakes in the config without building anything.
+
+        Checks that `@` references exist, `_target_`s can be imported, components' arguments match their
+        target's signature (missing arguments are allowed) and `$` expressions compile. Components with a
+        `_disabled_` that is not literally false are skipped. Nothing is instantiated or evaluated, so
+        `check()` is cheap to call before a run.
+
+        Raises:
+            ValidationError: Listing every problem found, each with its file:line or CLI override.
+
+        Example:
+            >>> config = Config().update("config.yaml").update("model::lr=0.1")
+            >>> config.check()  # raises if anything is wrong, before any object is built
+        """
+        from .schema import ValidationError
+
+        if not self._is_parsed:
+            self._parse()
+        problems = self._resolver.find_problems()
+        if not problems:
+            return
+        lines = [f"Config check found {len(problems)} problem{'s' if len(problems) > 1 else ''}:"]
+        for problem in problems:
+            where = problem.source_location
+            prefix = f"{where} → {where.id}: " if where and where.id else f"{where}: " if where else ""
+            lines.append(f"- {prefix}{problem._original_message}")
+            if problem.suggestion:
+                lines.append("  " + problem.suggestion.replace("\n", "\n  "))
+        raise ValidationError("\n".join(lines))
 
     def _parse(self, reset: bool = True) -> None:
         """Parse config tree and prepare for resolution.

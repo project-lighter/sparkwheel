@@ -113,6 +113,18 @@ Three operators for fine-grained control:
 | **Replace** | `=key=value` | Completely replaces value | `=model={'_target_': 'ResNet'}` |
 | **Delete** | `~key` | Removes key (errors if missing) | `~debug` |
 
+!!! warning "Overrides change keys that exist"
+    An override may set any key that already exists, or add one argument (or a special key such as `_disabled_`) directly under a `_target_` component. Anything else is most likely a typo, so it raises an error instead of adding a key that nothing reads:
+
+    ```
+    'trainer::max_epoch' does not exist
+
+    [override → trainer::max_epoch]:
+      → trainer::max_epoch=5
+
+      💡 Did you mean 'max_epochs'? To add a new key, put it in your YAML file or in an extra YAML file listed on the command line.
+    ```
+
 !!! info "Type Inference"
     Values are automatically typed using `ast.literal_eval()`:
 
@@ -129,6 +141,17 @@ Three operators for fine-grained control:
 
 !!! tip "Adding Your Own Flags"
     The examples above show minimal integration. You can add your own flags (e.g., `--verbose`, `--device`) alongside the config inputs - Sparkwheel only cares about the arguments you pass to `config.update()`!
+
+## Check Before Running
+
+`config.check()` finds mistakes without building anything: `@` references that don't exist, `_target_`s that can't be imported, arguments the target doesn't accept, and `$` expressions that don't compile. It raises one `ValidationError` that lists every problem with its file:line or override, so call it right after applying the command line:
+
+```python
+config = Config()
+for item in args.inputs:
+    config.update(item)
+config.check()
+```
 
 ## Advanced: Manual Override Parsing
 

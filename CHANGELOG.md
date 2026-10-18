@@ -16,9 +16,15 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
   Migration: quote the value (`"1e-3"`) if you need the string.
 - Removed `sparkwheel.utils.check_key_duplicates` and `sparkwheel.utils.CheckKeyDuplicatesYamlLoader` (unused).
   Migration: use `sparkwheel.loader.YamlLoader` to read YAML the way Sparkwheel does.
+- Override strings (`key=value` passed to `update()`) can no longer add keys, so a typo no longer silently adds a key that nothing reads. They may set any existing key, or add one argument or special key (`_disabled_`, `_mode_`, ...) directly under a `_target_` component. Anything else raises `ConfigKeyError` with a did-you-mean. Dict updates and YAML files add keys as before.
+  Migration: put new keys in your YAML file, or in an extra YAML file listed on the command line.
+- Setting a path through a value that is not a mapping (`model::dim::x=1` or `config.set("model::dim::x", 1)` when `dim` is `4`) raises `ConfigKeyError` instead of silently replacing the value with a dict.
+  Migration: set the parent key itself (`=model::dim={x: 1}`).
 
 ### Added
 
+- `Config.check()` finds mistakes without building anything: missing references, `_target_`s that cannot be imported, arguments the target does not accept and `$` expressions that do not compile. It raises one `ValidationError` listing every problem with its file:line or override. Disabled components are skipped.
+- A wrong argument name raises `'pkg.Model' got an unexpected argument 'learnin_rate'` with a did-you-mean, the accepted arguments, and the line (or override) of that argument; a missing argument is reported the same way. A `TypeError` raised inside the target itself is passed through unchanged. With `_mode_: callable`, argument names are checked when the partial is created instead of when it is called.
 - `Location.override`: the CLI override text (`model::lr=0.1`) that set a value. Errors about a value set by an override show ``[override → model::lr]`` and the override itself instead of a YAML line that is no longer in effect.
 
 ### Fixed
@@ -32,3 +38,4 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - A whole-value reference that is not a valid id (`@model.lr`) raises a `ConfigKeyError` with a did-you-mean instead of a bare `KeyError`.
 - A `_target_` that cannot be found points at the `_target_` line (or override), not at the component.
 - Loading a config path that contains `..` no longer warns about "path traversal attacks".
+- `set()` and overrides can go through list items (`model::layers::1::dim=8`).

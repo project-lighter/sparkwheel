@@ -660,7 +660,7 @@ class TestOperatorsInNewSubtrees:
         assert "=n" not in str(config.get())
 
     def test_override_string(self):
-        config = Config().update({"a": 1}).update("b={=y: 2, z: {=w: 3}}")
+        config = Config().update({"a": 1, "b": None}).update("b={=y: 2, z: {=w: 3}}")
         assert config.get("b") == {"y": 2, "z": {"w": 3}}
 
     def test_yaml_file(self, tmp_path):
@@ -1470,7 +1470,7 @@ class TestConfigUpdateAutoDetection:
     def test_update_mixed_files_and_overrides(self, tmp_path):
         """Test chaining files and overrides using auto-detection."""
         base_file = tmp_path / "base.yaml"
-        base_file.write_text("model:\n  lr: 0.01\n  hidden_size: 256")
+        base_file.write_text("model:\n  lr: 0.01\n  hidden_size: 256\n  dropout: 0.0")
 
         override_file = tmp_path / "override.yaml"
         override_file.write_text("trainer:\n  epochs: 100")
@@ -1497,7 +1497,7 @@ class TestConfigUpdateAutoDetection:
             "~debug",
         ]
 
-        config = Config().update({"debug": True, "model": {"lr": 0.01}})
+        config = Config().update({"debug": True, "model": {"lr": 0.01}, "optimizer": {"type": "sgd"}, "scheduler": None})
 
         for arg in cli_args:
             config.update(arg)
@@ -1506,6 +1506,99 @@ class TestConfigUpdateAutoDetection:
         assert config["optimizer"]["type"] == "adam"
         assert config["scheduler"] == {"_target_": "CosineScheduler"}
         assert "debug" not in config
+
+
+class TestOverrideKeys:
+    """Override strings can set existing keys and add arguments to components, nothing else."""
+
+    @staticmethod
+    def _config():
+        return Config().update(
+            {
+                "lr": 0.1,
+                "model": {"_target_": "builtins.dict", "dim": 4, "layers": [1, 2], "opts": {"a": 1}},
+                "trainer": {"max_epochs": 1},
+            }
+        )
+
+    @pytest.mark.parametrize(
+        "override,path,value",
+        [
+            ("lr=0.2", "lr", 0.2),
+            ("model::dim=8", "model::dim", 8),
+            ("=model::opts={b: 2}", "model::opts", {"b": 2}),
+            ("model::layers::1=5", "model::layers::1", 5),
+            ("model::new_arg=1", "model::new_arg", 1),
+            ("model::_disabled_=true", "model::_disabled_", True),
+            ("trainer::_target_=builtins.dict", "trainer::_target_", "builtins.dict"),
+        ],
+    )
+    def test_allowed(self, override, path, value):
+        assert self._config().update(override).get(path) == value
+
+    @pytest.mark.parametrize(
+        "override,missing,did_you_mean",
+        [
+            ("lrr=0.2", "lrr", "lr"),
+            ("modle::dim=8", "modle", "model"),
+            ("trainer::max_epoch=5", "trainer::max_epoch", "max_epochs"),
+            ("model::opts::b=2", "model::opts::b", None),
+            ("=trainer::max_epoch=5", "trainer::max_epoch", "max_epochs"),
+            ("model::layers::5=1", "model::layers::5", None),
+        ],
+    )
+    def test_new_keys_are_rejected(self, override, missing, did_you_mean):
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        config = self._config()
+        before = config.get()
+        with pytest.raises(ConfigKeyError) as excinfo:
+            config.update(override)
+        msg = str(excinfo.value)
+        assert f"'{missing}' does not exist" in msg
+        assert f"→ {override}" in msg
+        assert "put it in your YAML file or in an extra YAML file" in msg
+        if did_you_mean:
+            assert f"Did you mean '{did_you_mean}'?" in msg
+        assert config.get() == before
+
+    def test_override_through_a_scalar_is_rejected(self):
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        config = self._config()
+        with pytest.raises(ConfigKeyError, match="'model::dim' is 4, not a mapping"):
+            config.update("model::dim::x=1")
+        assert config.get("model::dim") == 4
+
+    def test_dicts_and_files_still_add_keys(self, tmp_path):
+        (tmp_path / "extra.yaml").write_text("extra:\n  x: 1\n")
+        config = self._config().update({"new": 1, "model::opts::b": 2}).update(str(tmp_path / "extra.yaml"))
+        assert config.get("new") == 1 and config.get("model::opts::b") == 2 and config.get("extra::x") == 1
+
+
+class TestSetPaths:
+    """set() walks lists and refuses to silently replace a value with a mapping."""
+
+    def test_set_through_list(self):
+        config = Config().update({"items": [{"a": 1}, {"a": 2}]})
+        config.set("items::1::a", 5)
+        assert config.get("items") == [{"a": 1}, {"a": 5}]
+
+    def test_override_through_list(self):
+        config = Config().update({"items": [{"a": 1}, {"a": 2}]}).update("items::1::a=5")
+        assert config.get("items") == [{"a": 1}, {"a": 5}]
+
+    def test_set_through_scalar_raises(self):
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        config = Config().update({"dim": 4})
+        with pytest.raises(ConfigKeyError, match="'dim' is 4, not a mapping"):
+            config.set("dim::x", 1)
+
+    def test_set_through_null_creates_mapping(self):
+        config = Config().update({"logger": None})
+        config.set("logger::name", "csv")
+        assert config.get("logger") == {"name": "csv"}
 
 
 class TestParseOverrides:

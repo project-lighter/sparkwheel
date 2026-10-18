@@ -3,6 +3,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pprint import pformat
+from pydoc import locate
 from typing import Any
 
 from .locations import LocationRegistry
@@ -10,6 +11,7 @@ from .path_utils import replace_references
 from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
 from .utils.constants import EXPR_KEY, ID_SEP_KEY
 from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
+from .utils.module import describe_argument_error
 
 __all__ = ["Item", "Expression", "Component", "Instantiable"]
 
@@ -235,11 +237,17 @@ class Component(Item, Instantiable):
                 suggestion=suggestion,
             ) from e
         except InstantiationError as e:
+            if isinstance(e.__cause__, TypeError):
+                # Wrong argument names point at the argument; a TypeError raised inside the target is kept as is
+                target = locate(modname) if isinstance(modname, str) else modname
+                error = self.argument_error(target, args, config_kwargs, allow_missing=mode == "callable")
+                if error is not None:
+                    raise error from e.__cause__
             # Add source location if not already present, preserving original message and suggestion
             if e.source_location is None:
                 raise InstantiationError(
                     e._original_message, source_location=self.source_location, suggestion=e.suggestion
-                ) from e
+                ) from (e.__cause__ or e)
             raise  # Already has location, re-raise as-is
         except Exception as e:
             # Wrap unexpected errors with component context and location
@@ -247,6 +255,20 @@ class Component(Item, Instantiable):
                 f"Failed to instantiate '{modname}': {type(e).__name__}: {e}",
                 source_location=self.source_location,
             ) from e
+
+    def argument_error(
+        self, target: Any, args: list[Any], kwargs: dict[str, Any], allow_missing: bool = False
+    ) -> InstantiationError | None:
+        """The error for arguments that do not fit `target`'s signature, pointing at the offending argument."""
+        problem = describe_argument_error(target, args, kwargs, allow_missing=allow_missing)
+        if problem is None:
+            return None
+        message, suggestion, key = problem
+        return InstantiationError(
+            f"'{self.resolve_module_name()}' {message}",
+            source_location=self.location_of(key) if key else self.source_location,
+            suggestion=suggestion,
+        )
 
     def _suggest_similar_modules(self, target: str) -> str | None:
         """Suggest similar valid module names using fuzzy matching.
@@ -261,8 +283,6 @@ class Component(Item, Instantiable):
             return None
 
         try:
-            from pydoc import locate
-
             from .utils import damerau_levenshtein_distance
 
             # Split into module path and attribute name

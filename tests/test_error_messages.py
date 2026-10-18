@@ -637,3 +637,63 @@ class TestOverrideProvenance:
         assert str(Location("", 0, id="a", override="a=1")) == "override `a=1`"
         with pytest.raises(ValueError):
             Location("f.yaml", 0)
+
+
+class TestArgumentErrors:
+    """A wrong argument name is reported with did-you-mean and the line (or override) that set it."""
+
+    @pytest.fixture(autouse=True)
+    def _module(self, tmp_path, monkeypatch):
+        (tmp_path / "argmod.py").write_text(
+            "class Model:\n"
+            "    def __init__(self, learning_rate, dim=2):\n"
+            "        self.lr, self.dim = learning_rate, dim\n"
+            "\n"
+            "class Broken:\n"
+            "    def __init__(self, n=1):\n"
+            "        len(n)\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        self.path = tmp_path / "config.yaml"
+
+    def _error(self, text, *overrides):
+        from sparkwheel import InstantiationError
+
+        self.path.write_text(text)
+        config = Config().update(str(self.path))
+        for override in overrides:
+            config.update(override)
+        with pytest.raises(InstantiationError) as excinfo:
+            config.resolve("model")
+        return excinfo.value
+
+    def test_typo_in_yaml(self):
+        error = self._error("model:\n  _target_: argmod.Model\n  learnin_rate: 0.1\n")
+        msg = str(error)
+        assert msg.startswith("'argmod.Model' got an unexpected argument 'learnin_rate'")
+        assert f"[{self.path}:3 → model::learnin_rate]" in msg
+        assert "Did you mean 'learning_rate'?" in msg and "Accepted arguments: learning_rate, dim" in msg
+
+    def test_typo_in_override(self):
+        msg = str(self._error("model:\n  _target_: argmod.Model\n  learning_rate: 0.1\n", "model::dimm=3"))
+        assert "unexpected argument 'dimm'" in msg and "→ model::dimm=3" in msg and "Did you mean 'dim'?" in msg
+
+    def test_missing_argument(self):
+        msg = str(self._error("model:\n  _target_: argmod.Model\n  dim: 3\n"))
+        assert "missing a required argument: 'learning_rate'" in msg and f"{self.path}:1 → model" in msg
+
+    def test_type_error_inside_user_code_is_not_reinterpreted(self):
+        error = self._error("model:\n  _target_: argmod.Broken\n")
+        assert "object of type 'int' has no len()" in str(error)
+        assert isinstance(error.__cause__, TypeError)
+
+    def test_callable_mode_checks_arguments_when_the_partial_is_made(self):
+        msg = str(self._error("model:\n  _target_: argmod.Model\n  _mode_: callable\n  lerning_rate: 0.1\n"))
+        assert "unexpected argument 'lerning_rate'" in msg and f"{self.path}:4" in msg
+
+    def test_callable_mode_allows_missing_arguments(self):
+        self.path.write_text("model:\n  _target_: argmod.Model\n  _mode_: callable\n  dim: 3\n")
+        assert Config().update(str(self.path)).resolve("model")(learning_rate=1).dim == 3
+
+    def test_targets_without_signature_are_called_as_before(self):
+        assert Config().update({"x": {"_target_": "builtins.dict", "a": 1}}).resolve("x") == {"a": 1}

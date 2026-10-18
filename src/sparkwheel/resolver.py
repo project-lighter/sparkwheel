@@ -3,13 +3,14 @@
 import warnings
 from collections.abc import Iterator
 from copy import copy
+from pydoc import locate
 from typing import Any
 
 from .items import Component, Expression, Item
 from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
 from .utils.constants import EXPR_KEY, ID_SEP_KEY, RESOLVED_REF_KEY
-from .utils.exceptions import CircularReferenceError, ConfigKeyError, Location
+from .utils.exceptions import BaseError, CircularReferenceError, ConfigKeyError, Location, TargetNotFoundError
 
 __all__ = ["Resolver"]
 
@@ -228,7 +229,7 @@ class Resolver:
         waiting_list.add(id)
 
         # A literally disabled component is skipped before its arguments are built
-        if isinstance(item, Component) and instantiate and self._is_literally_disabled(item):
+        if isinstance(item, Component) and instantiate and self._disabled_flag(item):
             resolved[id] = None
             return None
 
@@ -303,12 +304,69 @@ class Resolver:
         return None
 
     @staticmethod
-    def _is_literally_disabled(item: Component) -> bool:
-        """Whether `_disabled_` is a literal true value (not a reference or expression still to resolve)."""
+    def _disabled_flag(item: Component) -> bool | None:
+        """A literal `_disabled_` value, or None when a reference or expression decides it at resolve time."""
         flag = item.get_config().get("_disabled_", False)
         if isinstance(flag, (dict, list)) or (isinstance(flag, str) and flag.startswith((EXPR_KEY, RESOLVED_REF_KEY))):
-            return False
+            return None
         return item.is_disabled()
+
+    def find_problems(self) -> list[BaseError]:
+        """Find the mistakes resolving would raise, without building components or evaluating expressions.
+
+        Checks that references exist, `_target_`s can be imported, components' arguments fit their target's
+        signature and expressions compile. Components that are (or may be) disabled are skipped.
+        """
+        problems: list[BaseError] = []
+        skipped = [
+            id for id, item in self._items.items() if isinstance(item, Component) and self._disabled_flag(item) is not False
+        ]
+        for id, item in self._items.items():
+            if any(id == s or id.startswith(f"{s}{self.sep}") for s in skipped):
+                continue
+            config = item.get_config()
+            if isinstance(item, Component):
+                problem = self._component_problem(item)
+                if problem is not None:
+                    problems.append(problem)
+            if not isinstance(config, str):
+                continue
+            if not self.allow_missing_reference:
+                for ref_id in self.match_refs_pattern(config):
+                    if ref_id not in self._items:
+                        problems.append(
+                            ConfigKeyError(
+                                f"Reference '@{ref_id}' not found in configuration",
+                                source_location=item.source_location,
+                                missing_key=ref_id,
+                                available_keys=list(self._items),
+                            )
+                        )
+            if isinstance(item, Expression) and not item.is_import_statement(config):
+                code = replace_references(config, dict.fromkeys(self.match_refs_pattern(config)), self._vars)
+                try:
+                    compile(code[len(EXPR_KEY) :], "<expression>", "eval")
+                except SyntaxError as e:
+                    problems.append(item._evaluation_error(e))
+        return problems
+
+    @staticmethod
+    def _component_problem(item: Component) -> BaseError | None:
+        """A `_target_` that cannot be imported, or arguments that do not fit its signature."""
+        config = item.get_config()
+        target = config["_target_"]
+        if not isinstance(target, str) or target.startswith((EXPR_KEY, RESOLVED_REF_KEY)):
+            return None  # decided at resolve time
+        located = locate(target)
+        if located is None:
+            return TargetNotFoundError(
+                f"Cannot locate class or function: '{target}'",
+                source_location=item.location_of("_target_"),
+                suggestion=item._suggest_similar_modules(target),
+            )
+        args = config.get("_args_", [])
+        kwargs = {k: v for k, v in config.items() if k not in item.non_arg_keys}
+        return item.argument_error(located, args if isinstance(args, list) else [], kwargs, allow_missing=True)
 
     @classmethod
     def normalize_id(cls, id: str | int) -> str:
