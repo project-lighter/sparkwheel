@@ -57,6 +57,7 @@ class TestExpressionReferences:
             ("$f'me@a {{@b}} {x}'", []),
             ("$f'{x}' @ @b", ["b"]),
             ("$'a\f' + @b", ["b"]),
+            ('$"""a\f\n""" @x', []),
             ("$'\x1c' if @a else\n@b", ["a", "b"]),
             ("$True@a", []),
         ],
