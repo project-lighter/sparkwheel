@@ -517,9 +517,9 @@ class APIConfigSchema:
 class AppConfigSchema:
     app_name: str
     environment: str
-    debug: bool = False
     api: APIConfigSchema
     database: DatabaseConfigSchema
+    debug: bool = False
 
 
 # Load and validate continuously

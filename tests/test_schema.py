@@ -1364,3 +1364,37 @@ class TestSchemaCleanup:
     def test_coerce_argument_is_deprecated(self):
         with pytest.warns(DeprecationWarning, match="coerce"):
             Config(coerce=False)
+
+
+class TestNestedDataclassesInValidators:
+    """`__post_init__` and validators see nested dataclass fields as instances, not dicts."""
+
+    def test_post_init_reads_nested_fields(self):
+        from typing import Optional
+
+        from sparkwheel import validator
+
+        @dataclass
+        class Child:
+            n: int
+
+        @dataclass
+        class Parent:
+            child: Child
+            maybe: Optional[Child] = None
+            many: list[Child] = field(default_factory=list)
+            named: dict[str, Child] = field(default_factory=dict)
+
+            def __post_init__(self):
+                self.total = self.child.n + sum(c.n for c in self.many) + sum(c.n for c in self.named.values())
+                self.total += self.maybe.n if self.maybe else 0
+
+            @validator
+            def check_total(self):
+                if self.total < 0:
+                    raise ValueError(f"total must be >= 0, got {self.total}")
+
+        data = {"child": {"n": 1}, "maybe": {"n": 1}, "many": [{"n": 1}], "named": {"a": {"n": 1}}}
+        Config(schema=Parent).update(data)
+        with pytest.raises(ValidationError, match="total must be >= 0, got -5"):
+            Config(schema=Parent).update({**data, "child": {"n": -8}})

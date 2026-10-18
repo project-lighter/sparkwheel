@@ -1641,6 +1641,25 @@ class TestSetPaths:
         with pytest.raises(ConfigKeyError, match="'dim' is 4, not a mapping"):
             config.set("dim::x", 1)
 
+    @pytest.mark.parametrize(
+        "id, match",
+        [
+            ("items::0::a", "'items::0' is 1, not a mapping"),
+            ("items::x::a", "'items::x' is not an index of a list of 2"),
+            ("items::5::a", "'items::5' is not an index of a list of 2"),
+            ("items::x", "'items::x' is not an index of a list of 2"),
+            ("items::2", "'items::2' is not an index of a list of 2"),
+        ],
+    )
+    def test_set_through_list_with_bad_path_raises(self, id, match):
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        config = Config().update({"items": [1, 2]})
+        with pytest.raises(ConfigKeyError, match=match):
+            config.set(id, 3)
+        config.set("items::-1", 3)
+        assert config.get("items") == [1, 3]
+
     def test_set_through_null_creates_mapping(self):
         config = Config().update({"logger": None})
         config.set("logger::name", "csv")

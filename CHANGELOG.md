@@ -22,7 +22,7 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
   Migration: set the parent key itself (`=model::dim={x: 1}`).
 - A schema field typed `int` or `float` rejects `True`/`False`.
   Migration: write a number (`1`), or type the field `bool`.
-- `@validator` methods run even when the config has component keys (`_target_`) or, with `strict=False`, extra fields; an error raised while creating the dataclass for them (e.g. in `__post_init__`) is reported as a `ValidationError` instead of skipping the validators.
+- `@validator` methods run even when the config has component keys (`_target_`) or, with `strict=False`, extra fields; an error raised while creating the dataclass for them (e.g. in `__post_init__`) is reported as a `ValidationError` instead of skipping the validators. Nested dataclass fields are passed to `__post_init__` and validators as instances, not dicts.
   Migration: fix the validator or `__post_init__` that now reports an error.
 - `Resolver.get_item(id, resolve=True)` returns the item as written, since resolving no longer rewrites it.
   Migration: use `config.resolve(id)` for the resolved value.
@@ -47,7 +47,7 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - A whole-value reference that is not a valid id (`@model.lr`) raises a `ConfigKeyError` with a did-you-mean instead of a bare `KeyError`.
 - A `_target_` that cannot be found points at the `_target_` line (or override), not at the component.
 - Loading a config path that contains `..` no longer warns about "path traversal attacks".
-- `set()` and overrides can go through list items (`model::layers::1::dim=8`).
+- `set()` and overrides can go through list items (`model::layers::1::dim=8`); an index that is not in the list raises `ConfigKeyError`.
 - Schemas from modules that use `from __future__ import annotations` validate instead of crashing with `TypeError: isinstance() arg 2 must be a type`.
 
 ### Documentation

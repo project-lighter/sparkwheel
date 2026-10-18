@@ -114,6 +114,31 @@ def _field_types(schema: Any) -> dict[str, Any]:
         raise TypeError(f"Cannot evaluate the type annotations of schema {schema.__name__}: {e}") from e
 
 
+def _init_values(schema: Any, config: dict[str, Any]) -> dict[str, Any]:
+    """The schema's own fields from `config`, with nested dataclasses built, as `__post_init__` and validators expect."""
+    hints = _field_types(schema)
+    return {
+        f.name: _build_nested(hints.get(f.name), config[f.name])
+        for f in dataclasses.fields(schema)
+        if f.init and f.name in config
+    }
+
+
+def _build_nested(field_type: Any, value: Any) -> Any:
+    """Turn the dicts of a dataclass-typed value (also inside Optional, list or dict) into instances."""
+    if isinstance(value, dict) and dataclasses.is_dataclass(field_type) and isinstance(field_type, type):
+        return field_type(**_init_values(field_type, value))
+    origin, args = get_origin(field_type), get_args(field_type)
+    if _is_union_type(origin):
+        dataclass_args = [a for a in args if dataclasses.is_dataclass(a)]
+        return _build_nested(dataclass_args[0], value) if len(dataclass_args) == 1 else value
+    if origin is list and args and isinstance(value, list):
+        return [_build_nested(args[0], v) for v in value]
+    if origin is dict and len(args) == 2 and isinstance(value, dict):
+        return {k: _build_nested(args[1], v) for k, v in value.items()}
+    return value
+
+
 def _get_validators(schema_type: type) -> list[Any]:
     """Get all validator methods from a dataclass."""
     validators = []
@@ -159,9 +184,8 @@ def _run_validators(
 
     # Create the instance from the schema's own fields (not component keys like `_target_` or lenient extras)
     source_loc = _get_source_location(metadata, field_path) if metadata else None
-    values = {f.name: config[f.name] for f in dataclasses.fields(schema) if f.init and f.name in config}
     try:
-        instance = schema(**values)
+        instance = schema(**_init_values(schema, config))
     except Exception as e:
         raise ValidationError(
             f"Cannot create {schema.__name__} to run its validators: {type(e).__name__}: {e}",
@@ -363,8 +387,9 @@ def _find_discriminator(union_types: tuple[Any, ...]) -> tuple[bool, str | None]
     # Find fields that exist in all types with Literal annotation
     all_fields: dict[str, list[Any]] = {}
     for dc_type in dataclass_types:
+        hints = _field_types(dc_type)
         for f in dataclasses.fields(dc_type):
-            field_type = _field_types(dc_type)[f.name]
+            field_type = hints[f.name]
             if get_origin(field_type) is Literal:
                 if f.name not in all_fields:
                     all_fields[f.name] = []

@@ -314,19 +314,20 @@ class Config:
 
         # Walk dicts and lists, creating missing (or null) mappings on the way
         current: Any = self._data
-        for depth, k in enumerate(keys[:-1]):
+        for depth, k in enumerate(keys):
+            prefix = ID_SEP_KEY.join(keys[: depth + 1])
             if isinstance(current, list):
-                current = current[int(k)]
-                continue
-            if current.get(k) is None:
+                if not (k.lstrip("-").isdigit() and -len(current) <= int(k) < len(current)):
+                    raise ConfigKeyError(f"Cannot set '{id}': '{prefix}' is not an index of a list of {len(current)}")
+                k = int(k)  # type: ignore[assignment]
+            elif depth < len(keys) - 1 and current.get(k) is None:
                 current[k] = {}
+            if depth == len(keys) - 1:
+                current[k] = value
             elif not isinstance(current[k], (dict, list)):
-                prefix = ID_SEP_KEY.join(keys[: depth + 1])
                 raise ConfigKeyError(f"Cannot set '{id}': '{prefix}' is {current[k]!r}, not a mapping")
-            current = current[k]
-
-        # Set final value
-        current[int(keys[-1]) if isinstance(current, list) else keys[-1]] = value
+            else:
+                current = current[k]
         self._invalidate_resolution()
 
     def validate(self, schema: type) -> None:

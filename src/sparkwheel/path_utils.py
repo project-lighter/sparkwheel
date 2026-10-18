@@ -246,7 +246,7 @@ def _expression_reference_matches(text: str) -> list[re.Match[str]]:
 def _reference_quotes(code: str, base: int, quote: str) -> dict[int, str]:
     """Map the position (plus `base`) of each `@` in `code` that starts a reference to the quote its lookup can use."""
     line_offsets = [base]
-    for line in code.splitlines(keepends=True):
+    for line in io.StringIO(code):  # split lines as the tokenizer does (str.splitlines also splits at form feeds)
         line_offsets.append(line_offsets[-1] + len(line))
 
     def offset(position: tuple[int, int]) -> int:
