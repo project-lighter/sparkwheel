@@ -99,7 +99,7 @@ class TestFormatSuggestions:
         assert "parameters" in formatted
         assert "✓" in formatted
         assert "90% match" in formatted
-        assert "💡 Did you mean" in formatted
+        assert formatted.startswith("Did you mean")  # BaseError adds the 💡 marker
 
     def test_format_with_low_similarity(self):
         """Test formatting suggestions with lower similarity (no checkmark)."""
@@ -496,3 +496,75 @@ class TestExceptionEdgeCases:
         assert "Key not found" in msg
         # Should have suggestion for "vlue" -> "value"
         assert "💡" in msg
+
+
+class TestSelfContainedErrors:
+    """Each error message alone tells the user what failed, where, and what to do."""
+
+    @staticmethod
+    def _error(tmp_path, text, id, error=Exception):
+        path = tmp_path / "config.yaml"
+        path.write_text(text)
+        with pytest.raises(error) as excinfo:
+            Config().update(str(path)).resolve(id)
+        return str(excinfo.value), str(path)
+
+    def test_expression_error_shows_python_error_and_written_expression(self, tmp_path):
+        from sparkwheel import EvaluationError
+
+        msg, path = self._error(tmp_path, 'a: 3\nmodel:\n  size: "$@a.bit_lenght()"\n', "model::size", EvaluationError)
+        assert msg.splitlines()[0] == (
+            "Failed to evaluate expression '$@a.bit_lenght()': AttributeError: 'int' object has no attribute 'bit_lenght'"
+        )
+        assert f"{path}:3" in msg
+        assert "__local_refs" not in msg
+
+    @pytest.mark.parametrize("expression", ["$1 +", "$@a +", "$(@a"])
+    def test_syntax_error_has_location(self, tmp_path, expression):
+        from sparkwheel import EvaluationError
+
+        msg, path = self._error(tmp_path, f'a: 3\nx: "{expression}"\n', "x", EvaluationError)
+        assert f"'{expression}': SyntaxError" in msg
+        assert f"{path}:2" in msg
+
+    def test_name_error_suggests_imports(self, tmp_path):
+        msg, _ = self._error(tmp_path, 'x: "$torch.zeros(3)"\n', "x")
+        assert "NameError: name 'torch' is not defined" in msg
+        assert "_imports_:\n" in msg and "torch: torch" in msg
+
+    def test_word_import_inside_expression_is_not_an_import_statement(self):
+        config = Config().update({"a": {"import": 1}, "b": "$@a['import']"})
+        assert config.resolve("b") == 1
+
+    def test_unevaluated_expression_keeps_written_text(self):
+        config = Config().update({"a": 1, "x": "$@a + 1"})
+        assert config.resolve("x", eval_expr=False).get_config() == "$@a + 1"
+
+    def test_missing_top_level_id_has_no_unrelated_location(self, tmp_path):
+        msg, path = self._error(tmp_path, "a: 3\nmodel:\n  size: 1\n", "modle", ConfigKeyError)
+        assert path not in msg
+        assert "model" in msg
+
+    def test_missing_nested_id_points_at_nearest_existing_parent(self, tmp_path):
+        msg, path = self._error(tmp_path, "a: 3\nmodel:\n  size: 1\n", "model::sise", ConfigKeyError)
+        assert f"{path}:2" in msg
+        assert "size" in msg
+
+    def test_missing_reference_points_at_the_key_that_holds_it(self, tmp_path):
+        text = (
+            "num_classes: 3\nmodel:\n  _target_: builtins.dict\n  head:\n    _target_: builtins.dict\n    n: '@num_clases'\n"
+        )
+        msg, path = self._error(tmp_path, text, "model", ConfigKeyError)
+        assert f"{path}:6 → model::head::n" in msg
+        assert "num_classes" in msg
+
+    def test_single_suggestion_marker(self, tmp_path):
+        msg, _ = self._error(tmp_path, "value: 1\nref: '@valeu'\n", "ref", ConfigKeyError)
+        assert "💡 💡" not in msg
+        assert msg.count("💡") == 1
+
+    def test_unknown_target_module_names_the_part_that_cannot_be_imported(self):
+        from sparkwheel import TargetNotFoundError
+
+        with pytest.raises(TargetNotFoundError, match="'collectionz' cannot be imported"):
+            Config().update({"x": {"_target_": "collectionz.abc.Counter"}}).resolve("x")

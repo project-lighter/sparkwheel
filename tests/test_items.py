@@ -174,11 +174,11 @@ class TestComponent:
         assert suggestion is None
 
     def test_suggest_similar_modules_nonexistent_base(self):
-        """Test no suggestions when base module doesn't exist."""
+        """Test the suggestion names the first part that cannot be imported."""
         component = Component(config={"_target_": "fake.module.Class"})
         suggestion = component._suggest_similar_modules("fake.module.Class")
 
-        assert suggestion is None
+        assert suggestion is not None and suggestion.startswith("'fake' cannot be imported")
 
     def test_suggest_similar_modules_non_string(self):
         """Test no suggestions for non-string target."""

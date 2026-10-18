@@ -22,4 +22,6 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - `resolve(..., instantiate=False)` no longer makes a later `resolve()` return `Component` wrappers (and vice versa): each mode has its own cache.
 - A component with a literal `_disabled_: true` no longer builds its arguments (no side effects from a disabled component's nested components or expressions).
 - YAML merge keys (`<<: *base`) work in config files.
+- Error messages stand alone: a failed `$` expression shows the expression as written plus the Python error (`AttributeError: ...`), syntax errors in `$` expressions carry the file and line, a `NameError` suggests `_imports_`, an unknown `_target_` module names the part that cannot be imported, a missing `@` reference points at the key that holds it, and a missing id points at its nearest existing parent instead of the first key in the file. The doubled "💡 💡" is gone.
+- An expression containing the word `import` (e.g. `$@a['import']`) is no longer mistaken for an import statement.
 - Loading a config path that contains `..` no longer warns about "path traversal attacks".

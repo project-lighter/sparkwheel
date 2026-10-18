@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from pprint import pformat
 from typing import Any
 
+from .path_utils import replace_references
 from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
 from .utils.constants import EXPR_KEY
 from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
@@ -255,7 +256,9 @@ class Component(Item, Instantiable):
             # Try to import the base module
             base = locate(base_module)
             if base is None:
-                return None
+                parts = target.split(".")
+                missing = next(".".join(parts[:i]) for i in range(1, len(parts)) if locate(".".join(parts[:i])) is None)
+                return f"'{missing}' cannot be imported: check its spelling and that it is installed or on sys.path."
 
             # Find similar attribute names in the module
             similar = []
@@ -304,6 +307,7 @@ class Expression(Item):
 
     prefix = EXPR_KEY
     run_eval = run_eval
+    refs_var = "__local_refs"  # global holding resolved `@` references during evaluation
 
     def __init__(
         self,
@@ -337,7 +341,8 @@ class Expression(Item):
     def evaluate(self, globals: dict[str, Any] | None = None, locals: dict[str, Any] | None = None) -> str | Any | None:
         """Evaluate the expression and return the result.
 
-        Uses Python's `eval()` to execute the expression string.
+        Uses Python's `eval()` to execute the expression string. `@id` references are looked up
+        in the resolved references passed as the `__local_refs` global.
 
         Args:
             globals: Additional global symbols for evaluation
@@ -347,38 +352,54 @@ class Expression(Item):
             Evaluation result, or None if not an expression
 
         Raises:
-            RuntimeError: If evaluation fails
+            EvaluationError: If parsing or evaluation fails. The message names the Python error
+                and shows the expression as written.
         """
         value = self.get_config()
         if not Expression.is_expression(value):
             return None
-        optional_module = self._parse_import_string(value[len(self.prefix) :])
-        if optional_module is not None:
-            return optional_module
-        if not self.run_eval:
-            return f"{value[len(self.prefix) :]}"
         globals_ = dict(self.globals)
         if globals is not None:
             for k, v in globals.items():
                 if k in globals_:
                     warnings.warn(f"the new global variable `{k}` conflicts with `self.globals`, override it.", stacklevel=2)
                 globals_[k] = v
-        if not run_debug:
-            try:
-                return eval(value[len(self.prefix) :], globals_, locals)
-            except Exception as e:
-                raise EvaluationError(
-                    f"Failed to evaluate expression: '{value[len(self.prefix) :]}'",
-                    source_location=self.source_location,
-                ) from e
+        try:
+            code = replace_references(value, globals_.get(self.refs_var, {}), self.refs_var)[len(self.prefix) :]
+            optional_module = self._parse_import_string(code)
+            if optional_module is not None:
+                return optional_module
+            if not self.run_eval:
+                return f"{value[len(self.prefix) :]}"
+            if not run_debug:
+                return eval(code, globals_, locals)
+        except Exception as e:
+            raise self._evaluation_error(e) from e
         warnings.warn(
             f"\n\npdb: value={value}\nSee also Debugger commands documentation: https://docs.python.org/3/library/pdb.html\n",
             stacklevel=2,
         )
         import pdb  # noqa: T100
 
-        pdb.run(value[len(self.prefix) :], globals_, locals)
+        pdb.run(code, globals_, locals)
         return None
+
+    def _evaluation_error(self, error: Exception) -> EvaluationError:
+        """Describe a failed expression with the Python error and the expression as written."""
+        detail = error.msg if isinstance(error, SyntaxError) else str(error)
+        suggestion = None
+        name = getattr(error, "name", None)
+        if isinstance(error, NameError) and name:
+            suggestion = (
+                f"To use the module `{name}` in expressions, import it in the config:\n"
+                f"  _imports_:\n    {name}: {name}\n"
+                f"To use the config value `{name}`, write `@{name}`."
+            )
+        return EvaluationError(
+            f"Failed to evaluate expression '{self.get_config()}': {type(error).__name__}: {detail}",
+            source_location=self.source_location,
+            suggestion=suggestion,
+        )
 
     @classmethod
     def is_expression(cls, config: dict[str, Any] | list[Any] | str) -> bool:
@@ -403,4 +424,8 @@ class Expression(Item):
             return False
         if "import" not in config:
             return False
-        return isinstance(first(ast.iter_child_nodes(ast.parse(f"{config[len(cls.prefix) :]}"))), (ast.Import, ast.ImportFrom))  # type: ignore[index]
+        try:
+            tree = ast.parse(f"{config[len(cls.prefix) :]}")  # type: ignore[index]
+        except SyntaxError:
+            return False  # e.g. `$@a['import']`; evaluating it reports any real syntax error
+        return isinstance(first(ast.iter_child_nodes(tree)), (ast.Import, ast.ImportFrom))

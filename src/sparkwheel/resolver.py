@@ -9,7 +9,7 @@ from .items import Component, Expression, Item
 from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
 from .utils.constants import EXPR_KEY, ID_SEP_KEY, RESOLVED_REF_KEY
-from .utils.exceptions import CircularReferenceError, ConfigKeyError
+from .utils.exceptions import CircularReferenceError, ConfigKeyError, Location
 
 __all__ = ["Resolver"]
 
@@ -41,7 +41,7 @@ class Resolver:
     - List indices: @list::0::subitem
     """
 
-    _vars = "__local_refs"  # Variable name for resolved refs in expression evaluation
+    _vars = Expression.refs_var  # Variable name for resolved refs in expression evaluation
     sep = ID_SEP_KEY  # Separator for nested key access
     ref = RESOLVED_REF_KEY  # Resolved reference prefix (@)
     allow_missing_reference = allow_missing_reference
@@ -187,12 +187,13 @@ class Resolver:
         try:
             item = look_up_option(id, self._items, print_all_options=False, default=default or "no_default")
         except ValueError as err:
-            # Provide helpful error with suggestions
+            # Point at the nearest existing parent (the id itself is not in any file)
             source_location = None
-            for config_item in self._items.values():
-                if hasattr(config_item, "source_location") and config_item.source_location:
-                    source_location = config_item.source_location
-                    break
+            parent_id = id
+            while ID_SEP_KEY in parent_id and source_location is None:
+                parent_id = parent_id.rsplit(ID_SEP_KEY, 1)[0]
+                parent = self._items.get(parent_id)
+                source_location = parent.source_location if isinstance(parent, Item) else None
 
             available_keys = list(self._items.keys())
             config_context = None
@@ -258,7 +259,7 @@ class Resolver:
                         available_keys = list(self._items.keys())
                         raise ConfigKeyError(
                             f"Reference '@{dep_id}' not found in configuration",
-                            source_location=item.source_location if hasattr(item, "source_location") else None,
+                            source_location=self._location_of_ref(id, dep_id) or item.source_location,
                             missing_key=dep_id,
                             available_keys=available_keys,
                         ) from err
@@ -275,20 +276,31 @@ class Resolver:
                 )
                 waiting_list.discard(dep_id)
 
-        # All dependencies resolved, now resolve a copy of this item (the parsed item stays as authored)
+        # All dependencies resolved, now resolve this item
+        if isinstance(item, Expression):
+            # The expression looks up its `@` references itself, so errors show it as written
+            resolved[id] = item.evaluate(globals={f"{self._vars}": resolved}) if eval_expr else item
+            return resolved[id]
+
+        # Resolve a copy of this item (the parsed item stays as authored)
         new_config = self.update_config_with_refs(config=item_config, id=id, refs=resolved)
         item = copy(item)
         item.update_config(config=new_config)
-
-        # Generate final resolved value based on item type
         if isinstance(item, Component):
             resolved[id] = item.instantiate() if instantiate else item
-        elif isinstance(item, Expression):
-            resolved[id] = item.evaluate(globals={f"{self._vars}": resolved}) if eval_expr else item
         else:
             resolved[id] = new_config
 
         return resolved[id]
+
+    def _location_of_ref(self, id: str, ref_id: str) -> Location | None:
+        """Location of the value under `id` that holds the reference `@ref_id`."""
+        for sub_id, sub_item in self._items.items():
+            in_subtree = sub_id == id or not id or sub_id.startswith(f"{id}{self.sep}")
+            config = sub_item.get_config() if isinstance(sub_item, Item) else None
+            if in_subtree and isinstance(config, str) and ref_id in self.match_refs_pattern(config):
+                return sub_item.source_location
+        return None
 
     @staticmethod
     def _is_literally_disabled(item: Component) -> bool:

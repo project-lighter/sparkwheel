@@ -45,7 +45,7 @@ class MetadataTrackingYamlLoader(YamlLoader):
         # Register source location for this dict node
         current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
 
-        if node.start_mark:
+        if node.start_mark and current_id not in self.registry:  # a nested node keeps its key's line
             location = Location(
                 filepath=self.filepath,
                 line=node.start_mark.line + 1,
@@ -95,7 +95,7 @@ class MetadataTrackingYamlLoader(YamlLoader):
         # Register source location for this list node
         current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
 
-        if node.start_mark:
+        if node.start_mark and current_id not in self.registry:  # a nested node keeps its key's line
             location = Location(
                 filepath=self.filepath,
                 line=node.start_mark.line + 1,
