@@ -11,6 +11,9 @@ Override configuration values from the command line with automatic file and over
     - Strings **without** `=` → Loaded as file paths
     - No manual separation needed!
 
+!!! warning "Overriding a list appends to it"
+    Like YAML files, overrides compose: `model::channels=[64,128]` **appends** to the list from your YAML file. To replace the list, use `=model::channels=[64,128]`.
+
 ## Quick Start
 
 === "argparse"
@@ -40,6 +43,7 @@ Override configuration values from the command line with automatic file and over
     import click
     from sparkwheel import Config
 
+
     @click.command()
     @click.argument("inputs", nargs=-1, required=True)
     def train(inputs):
@@ -48,6 +52,7 @@ Override configuration values from the command line with automatic file and over
             config.update(item)
 
         model = config.resolve("model")
+
 
     if __name__ == "__main__":
         train()
@@ -65,6 +70,7 @@ Override configuration values from the command line with automatic file and over
 
     app = typer.Typer()
 
+
     @app.command()
     def train(inputs: list[str] = typer.Argument(None)):
         config = Config()
@@ -72,6 +78,7 @@ Override configuration values from the command line with automatic file and over
             config.update(item)
 
         model = config.resolve("model")
+
 
     if __name__ == "__main__":
         app()
@@ -87,6 +94,7 @@ Override configuration values from the command line with automatic file and over
     import fire
     from sparkwheel import Config
 
+
     class TrainCLI:
         def train(self, *inputs):
             config = Config()
@@ -94,6 +102,7 @@ Override configuration values from the command line with automatic file and over
                 config.update(item)
 
             model = config.resolve("model")
+
 
     if __name__ == "__main__":
         fire.Fire(TrainCLI)
@@ -105,7 +114,7 @@ Override configuration values from the command line with automatic file and over
 
 ## Override Syntax
 
-Three operators for fine-grained control:
+Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`). Three operators for fine-grained control:
 
 | Operator | Syntax | Behavior | Example |
 |----------|--------|----------|---------|
@@ -125,15 +134,15 @@ Three operators for fine-grained control:
       💡 Did you mean 'max_epochs'? To add a new key, put it in your YAML file or in an extra YAML file listed on the command line.
     ```
 
-!!! info "Type Inference"
-    Values are automatically typed using `ast.literal_eval()`:
+!!! info "Values are YAML"
+    Override values are parsed with the same rules as your YAML files:
 
-    - `lr=0.001` → `float`
+    - `lr=0.001` → `float` (`lr=1e-3` too)
     - `epochs=100` → `int`
-    - `debug=True` → `bool`
+    - `debug=true` → `bool`
     - `devices=[0,1,2]` → `list`
-    - `config={'lr':0.001}` → `dict`
-    - `name=resnet50` → `str` (fallback)
+    - `'optimizer={lr: 0.001}'` → `dict` (YAML needs the space after `:`; quote it for your shell)
+    - `name=resnet50` → `str`
 
 !!! note "The `=` Dual Purpose"
     - In `key=value` → Assignment operator (CLI syntax)
@@ -181,11 +190,13 @@ import argparse
 from dataclasses import dataclass
 from sparkwheel import Config
 
+
 @dataclass
 class TrainingConfig:
     model: dict
     optimizer: dict
     trainer: dict
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("inputs", nargs="+")

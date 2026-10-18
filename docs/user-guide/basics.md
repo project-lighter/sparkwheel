@@ -32,10 +32,7 @@ config.update("config.yaml")
 ### Loading from Dictionary
 
 ```python
-config_dict = {
-    "name": "Test",
-    "value": 42
-}
+config_dict = {"name": "Test", "value": 42}
 
 # Load from dict
 config = Config()
@@ -46,9 +43,7 @@ config.update(config_dict)
 
 ```python
 # Load and merge multiple config files (method chaining!)
-config = (Config()
-          .update("base.yaml")
-          .update("override.yaml"))
+config = Config().update("base.yaml").update("override.yaml")
 ```
 
 ## Accessing Configuration Values
@@ -115,6 +110,7 @@ Both syntaxes have their place:
 # 1. Passing paths as function arguments
 def get_param(config, path: str):
     return config.get(path)
+
 
 lr = get_param(config, "model::optimizer::lr")
 
@@ -250,6 +246,7 @@ Sparkwheel supports automatic validation using Python dataclasses with **continu
 from dataclasses import dataclass
 from sparkwheel import Config
 
+
 @dataclass
 class AppConfigSchema:
     name: str
@@ -257,12 +254,13 @@ class AppConfigSchema:
     port: int
     debug: bool = False
 
-# Continuous validation - validates on every update/set!
+
+# Continuous validation - validates on every update()
 config = Config(schema=AppConfigSchema)
 config.update("config.yaml")
 
 # This will raise ValidationError immediately
-config.set("port", "not a number")  # ✗ Error caught at mutation time!
+config.update("port=not_a_number")  # ✗ Error caught at update time!
 
 # Or validate explicitly after mutations
 config = Config()
@@ -371,30 +369,20 @@ Load and merge multiple config files:
 
 ```python
 from sparkwheel import Config
-import ast
 
 # Method 1: Chain updates (recommended!)
-config = (Config()
-          .update("base_config.yaml")
-          .update("prod_config.yaml"))
+config = Config().update("base_config.yaml").update("prod_config.yaml")
 
 # Method 2: Sequential updates
 config = Config()
 config.update("base_config.yaml")
 config.update("prod_config.yaml")
 
-# Method 3: With CLI overrides (manual parsing)
+# Method 3: With CLI overrides
 config = Config()
 config.update("override.yaml")
-# Parse CLI args yourself - simple!
-for arg in ["model::lr=0.001"]:
-    if "=" in arg:
-        key, value = arg.split("=", 1)
-        try:
-            value = ast.literal_eval(value)
-        except (ValueError, SyntaxError):
-            pass
-        config.set(key, value)
+for arg in ["model::lr=0.001"]:  # e.g. sys.argv[1:]
+    config.update(arg)
 
 # Later configs override earlier ones
 resolved = config.resolve()

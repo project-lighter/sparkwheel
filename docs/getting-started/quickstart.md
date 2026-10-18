@@ -82,9 +82,7 @@ training:
 Load both configs:
 
 ```python
-config = (Config()
-          .update("config.yaml")
-          .update("experiment_large.yaml"))
+config = Config().update("config.yaml").update("experiment_large.yaml")
 
 model = config.resolve("model")  # Linear(1568, 10) - merged automatically!
 lr = config["training::learning_rate"]  # 0.0001
@@ -101,20 +99,13 @@ Override values from the command line without editing files:
 # train.py
 from sparkwheel import Config
 import sys
-import ast
 
 config = Config()
 config.update("config.yaml")
 
-# Parse CLI overrides (simple 3-line pattern)
+# Each argument is a `key=value` override (or another YAML file)
 for arg in sys.argv[1:]:
-    if "=" in arg:
-        key, value = arg.split("=", 1)
-        try:
-            value = ast.literal_eval(value)  # Parse numbers, lists, etc.
-        except (ValueError, SyntaxError):
-            pass  # Keep as string
-        config.set(key, value)
+    config.update(arg)
 # ... use config ...
 ```
 
@@ -123,6 +114,8 @@ Run with overrides:
 ```bash
 python train.py training::learning_rate=0.01 dataset::batch_size=64
 ```
+
+Nested keys are separated by `::`, and values follow YAML rules. Overriding a list appends to it; `=key=[...]` replaces it. See [CLI Overrides](../user-guide/cli.md).
 
 ## Next Steps
 

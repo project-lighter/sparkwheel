@@ -80,6 +80,7 @@ nav:
       - Schema Validation: user-guide/schema-validation.md
       - CLI Support: user-guide/cli.md
       - Advanced Features: user-guide/advanced.md
+      - Troubleshooting: user-guide/troubleshooting.md
   - API: reference/
 
 markdown_extensions:

@@ -21,7 +21,6 @@ __all__ = [
     "look_up_option",
     "optional_import",
     "instantiate",
-    "describe_argument_error",
 ]
 
 # Configuration system flags (environment variables)

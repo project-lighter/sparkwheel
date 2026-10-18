@@ -131,23 +131,13 @@ If you're tired of **hardcoding parameters** and want **configuration-driven wor
     import sys
 
     # Load base + experiment (composes automatically!)
-    config = (Config()
-              .update("config.yaml")
-              .update("experiment_large.yaml"))
+    config = Config().update("config.yaml").update("experiment_large.yaml")
 
-    # Or override from CLI (parse args yourself)
+    # Or override from the CLI: `python train.py model::lr=0.01`
     config = Config()
     config.update("config.yaml")
     for arg in sys.argv[1:]:
-        if "=" in arg:
-            key, value = arg.split("=", 1)
-            # Simple parsing - use ast.literal_eval for type conversion
-            try:
-                import ast
-                value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                pass  # Keep as string
-            config.set(key, value)
+        config.update(arg)
     ```
 
 ## Understanding References

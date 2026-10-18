@@ -15,22 +15,37 @@ A one-page cheat sheet for Sparkwheel syntax and features.
 
 === "Expressions"
 
-    | Expression | Description | Example |
-    |------------|-------------|---------|
-    | `$(@a + @b)` | Math operations | `$(@lr * 0.1)` |
-    | `$(@name + "_v2")` | String concatenation | `$(@model_name + "_trained")` |
-    | `$(@debug ? "dev" : "prod")` | Ternary conditional | `$(@is_training ? 0.5 : 0.0)` |
-    | `$(@items[0])` | Dynamic indexing | `$(@datasets[@mode])` |
-    | `$len(@items)` | Built-in functions | `$len(@layers)` |
+    An expression is a `$` followed by Python; `@key` inside it is the value of `key`.
+
+    ```yaml
+    lr: 0.01
+    name: resnet
+    debug: false
+    items: [1, 2, 3]
+    scaled: "$@lr * 0.1"                    # math → 0.001
+    run_name: "$@name + '_v2'"              # strings → resnet_v2
+    mode: "$'dev' if @debug else 'prod'"    # Python's conditional → prod
+    first: "$@items[0]"                     # indexing → 1
+    count: "$len(@items)"                   # built-in functions → 3
+    ```
 
 === "Operators"
 
-    | Operator | Purpose | Example | Result |
-    |----------|---------|---------|--------|
-    | `=key` | Replace (don't merge) | `=optimizer: sgd` | Replaces entire dict/value |
-    | `~key` | Delete key | `~debug: true` | Removes the key |
-    | `~list: [0, 2]` | Delete list items | `~layers: [1, 3]` | Removes items at indices 1 and 3 |
-    | (none) | Default: Merge | `model: {size: 512}` | Merges with existing dict |
+    Files and dicts merge by default; `=` replaces and `~` deletes.
+
+    ```yaml title="base.yaml"
+    debug: true
+    layers: [64, 128, 256, 512]
+    model: {size: 256, dropout: 0.1}
+    scheduler: {name: cosine, warmup: 5}
+    ```
+
+    ```yaml title="experiment.yaml"
+    model: {size: 512}          # merge (default) → {size: 512, dropout: 0.1}
+    =scheduler: {name: step}    # replace → {name: step}
+    ~debug: null                # delete the key
+    ~layers: [1, 3]             # delete list items 1 and 3 → [64, 256]
+    ```
 
 === "Instantiation"
 
@@ -63,7 +78,7 @@ dataset:
   samples: 10000
   batch_size: 32
 
-training:
+training:  # → {steps_per_epoch: 312}
   steps_per_epoch: "$@dataset::samples // @dataset::batch_size"
 ```
 
@@ -105,6 +120,8 @@ optimizer:
 
 ### Config Composition
 
+Later files merge into earlier ones (`python train.py base.yaml override.yaml replace.yaml`):
+
 ```yaml title="base.yaml"
 model:
   hidden_size: 512
@@ -112,61 +129,67 @@ model:
 ```
 
 ```yaml title="override.yaml"
-# Merge by default
-model:
-  hidden_size: 1024  # Updates only this field
-
-# Or replace completely
-=model:
-  hidden_size: 1024  # Replaces entire dict
+model:  # merged → {hidden_size: 1024, dropout: 0.1}
+  hidden_size: 1024
 ```
 
-## Type Coercion
-
-| From | To | Supported | Notes |
-|------|----|-----------| ------|
-| str → int | ✅ | `"42"` → `42` |
-| str → float | ✅ | `"3.14"` → `3.14` |
-| str → bool | ✅ | `"true"` → `True` | Accepts: true/false, yes/no, 1/0 |
-| int → float | ✅ | `42` → `42.0` |
-| float → int | ✅ | `3.14` → `3` | Truncates decimal |
-| Any → str | ✅ | Universal |
+```yaml title="replace.yaml"
+=model:  # replaced → {hidden_size: 256}
+  hidden_size: 256
+```
 
 ## CLI Overrides
 
-=== "Direct Assignment"
+Each command-line argument is a YAML file or a `key=value` override. The examples use this file:
+
+```yaml title="config.yaml"
+learning_rate: 0.001
+batch_size: 32
+model:
+  hidden_size: 512
+  dropout: 0.1
+  channels: [16, 32]
+```
+
+!!! warning "Overriding a list appends to it"
+    `model::channels=[64,128]` **appends** to the list from the YAML file. To replace the list, use `=model::channels=[64,128]`.
+
+=== "Set values"
 
     ```bash
-    python train.py learning_rate=0.01 batch_size=64
+    python train.py config.yaml learning_rate=0.01 batch_size=64
     ```
 
-=== "Nested Keys"
+=== "Nested keys"
 
     ```bash
-    python train.py model.hidden_size=1024 optimizer.lr=0.001
+    python train.py config.yaml model::hidden_size=1024 model::dropout=0.2
     ```
 
-=== "List Values"
+    Nested keys are separated by `::`. A dot (`model.hidden_size=1024`) is an error that suggests the `::` path.
+
+=== "Lists"
 
     ```bash
-    python train.py layers=[128,256,512]
+    python train.py config.yaml model::channels=[64,128]   # → [16, 32, 64, 128]
+    python train.py config.yaml =model::channels=[64,128]  # → [64, 128]
     ```
 
-=== "Replace vs Merge"
+=== "Replace and delete"
 
     ```bash
-    # Merge (default)
-    python train.py model.dropout=0.2
-
-    # Replace entire section
-    python train.py =model={hidden_size:1024}
+    python train.py config.yaml '=model={hidden_size: 1024}'  # → {hidden_size: 1024}
+    python train.py config.yaml '~model::dropout'
     ```
+
+Overrides change keys that exist, or add an argument to a `_target_` component. Anything else is most likely a typo and raises an error with a did-you-mean; put new keys in a YAML file. Values follow YAML rules (`8` is an int, `[1,2]` a list, `{a: 1}` a dict — note the space after `:`); quote overrides that contain spaces or `$`, `@`, `~` for your shell.
 
 ## Schema Validation
 
 ```python
 from dataclasses import dataclass
 from sparkwheel import Config, validator
+
 
 @dataclass
 class AppConfigSchema:
@@ -179,12 +202,13 @@ class AppConfigSchema:
         if not (1024 <= self.port <= 65535):
             raise ValueError(f"Invalid port: {self.port}")
 
-# Continuous validation (validates on every mutation)
-config = Config(schema=AppConfigSchema)
 
-# Or explicit validation
-config = Config()
-config.update("config.yaml")
+# Continuous validation: checked on every update()
+config = Config(schema=AppConfigSchema)
+config.update({"name": "app", "port": 8080})
+
+# Or validate explicitly
+config = Config().update({"name": "app", "port": 8080})
 config.validate(AppConfigSchema)
 ```
 
@@ -194,17 +218,13 @@ References are resolved in dependency order:
 
 ```yaml
 a: 10
-b: "@a"              # Resolved first (depends on a)
-c: "$@a + @b"        # Resolved after a and b
-d: "$@c * 2"         # Resolved last (depends on c)
+b: "@a"              # resolved after a → 10
+c: "$@a + @b"        # resolved after a and b → 20
+d: "$@c * 2"         # resolved last → 40
 ```
 
 !!! danger "Avoid Circular References"
-    ```yaml
-    # ❌ This will fail!
-    a: "@b"
-    b: "@a"
-    ```
+    `a: "@b"` with `b: "@a"` can never be resolved: Sparkwheel raises `CircularReferenceError`.
 
 ## Best Practices
 
@@ -228,9 +248,10 @@ d: "$@c * 2"         # Resolved last (depends on c)
 | **Reference not found** | `@key` doesn't exist | Check spelling and nesting |
 | **Circular reference** | `a: "@b"`, `b: "@a"` | Restructure to break cycle |
 | **Type mismatch** | Schema expects `int`, got `str` | Fix the value's type (quote it for `str`, leave quotes off for numbers) |
-| **Expression error** | Invalid Python in `$()` | Check syntax and references |
+| **Expression error** | Invalid Python after `$` | Check syntax and references |
 | **Unexpected merge** | Dict merged when you wanted replace | Use `=key` to replace |
-| **List not extending** | List replaced instead of extended | This is default for scalars, expected |
+| **List grew** | `layers=[1,2]` appended to the list | Use `=layers=[1,2]` to replace |
+| **Key does not exist** | An override names a missing key | Fix the typo (or use `::`, not `.`); put new keys in a YAML file |
 
 ## File Organization
 
@@ -272,26 +293,11 @@ project/
 └── train.py
 ```
 
-## Performance Tips
-
-!!! info "Expression Evaluation"
-    Expressions are evaluated at **access time**. For frequently accessed values:
-
-    ```python
-    # Slow: Re-evaluates expression each time
-    for i in range(1000):
-        x = config.resolve("computed_value")
-
-    # Fast: Evaluate once
-    computed = config.resolve("computed_value")
-    for i in range(1000):
-        x = computed
-    ```
-
 ## Next Steps
 
 - **[Configuration Basics](basics.md)** - Learn config fundamentals
 - **[References](references.md)** - Deep dive into `@` and `%`
-- **[Expressions](expressions.md)** - Master `$()` expressions
+- **[Expressions](expressions.md)** - Master `$` expressions
 - **[Operators](operators.md)** - Composition with `=` and `~`
 - **[Schema Validation](schema-validation.md)** - Type-safe configs
+- **[Troubleshooting](troubleshooting.md)** - Common errors and their fixes

@@ -627,10 +627,15 @@ class Config:
             missing = ID_SEP_KEY.join(keys[: depth + 1])
             close = get_suggestions(key, [str(k) for k in node], max_suggestions=1) if isinstance(node, dict) else []
             hint = f"Did you mean '{close[0][0]}'? " if close else ""
+            suggestion = (
+                f"{hint}To add a new key, put it in your YAML file or in an extra YAML file listed on the command line."
+            )
+            if "." in path and path.replace(".", ID_SEP_KEY) in self:
+                suggestion = f"Nested keys are separated by '::'. Did you mean '{path.replace('.', ID_SEP_KEY)}'?"
             raise ConfigKeyError(
                 f"Cannot override '{path}': '{missing}' does not exist" if missing != path else f"'{path}' does not exist",
                 source_location=location,
-                suggestion=f"{hint}To add a new key, put it in your YAML file or in an extra YAML file listed on the command line.",
+                suggestion=suggestion,
             )
         if merge and isinstance(node, dict) and isinstance(value, dict):
             for key, child in value.items():

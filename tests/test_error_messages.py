@@ -530,7 +530,7 @@ class TestSelfContainedErrors:
     def test_name_error_suggests_imports(self, tmp_path):
         msg, _ = self._error(tmp_path, 'x: "$torch.zeros(3)"\n', "x")
         assert "NameError: name 'torch' is not defined" in msg
-        assert "_imports_:\n" in msg and "torch: torch" in msg
+        assert "`_imports_: {torch: torch}`" in msg
 
     def test_word_import_inside_expression_is_not_an_import_statement(self):
         config = Config().update({"a": {"import": 1}, "b": "$@a['import']"})

@@ -20,7 +20,6 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
   Migration: put new keys in your YAML file, or in an extra YAML file listed on the command line.
 - Setting a path through a value that is not a mapping (`model::dim::x=1` or `config.set("model::dim::x", 1)` when `dim` is `4`) raises `ConfigKeyError` instead of silently replacing the value with a dict.
   Migration: set the parent key itself (`=model::dim={x: 1}`).
-
 - A schema field typed `int` or `float` rejects `True`/`False`.
   Migration: write a number (`1`), or type the field `bool`.
 - `@validator` methods run even when the config has component keys (`_target_`) or, with `strict=False`, extra fields; an error raised while creating the dataclass for them (e.g. in `__post_init__`) is reported as a `ValidationError` instead of skipping the validators.
@@ -32,6 +31,7 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 
 - `Config.check()` finds mistakes without building anything: missing references, `_target_`s that cannot be imported, arguments the target does not accept and `$` expressions that do not compile. It raises one `ValidationError` listing every problem with its file:line or override. Disabled components are skipped.
 - A wrong argument name raises `'pkg.Model' got an unexpected argument 'learnin_rate'` with a did-you-mean, the accepted arguments, and the line (or override) of that argument; a missing argument is reported the same way. A `TypeError` raised inside the target itself is passed through unchanged. With `_mode_: callable`, argument names are checked when the partial is created instead of when it is called.
+- An override with a dotted key (`model.lr=0.1`) suggests the `::` path (`model::lr`).
 - `Location.override`: the CLI override text (`model::lr=0.1`) that set a value. Errors about a value set by an override show ``[override → model::lr]`` and the override itself instead of a YAML line that is no longer in effect.
 
 ### Fixed
@@ -47,3 +47,9 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - Loading a config path that contains `..` no longer warns about "path traversal attacks".
 - `set()` and overrides can go through list items (`model::layers::1::dim=8`).
 - Schemas from modules that use `from __future__ import annotations` validate instead of crashing with `TypeError: isinstance() arg 2 must be a type`.
+
+### Documentation
+
+- New [Troubleshooting](docs/user-guide/troubleshooting.md) page with the real messages of the most common errors (checked by the test suite).
+- The quick reference's examples are fixed (a `?:` ternary, `~key: true`, dotted overrides, coercion) and run by the test suite; the docs no longer teach parsing overrides by hand or claim that `set()` validates.
+- Docs are published from release tags only, so the site matches the released version.

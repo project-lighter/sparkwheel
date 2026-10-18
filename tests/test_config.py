@@ -1562,6 +1562,12 @@ class TestOverrideKeys:
             assert f"Did you mean '{did_you_mean}'?" in msg
         assert config.get() == before
 
+    def test_dotted_key_suggests_double_colon(self):
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        with pytest.raises(ConfigKeyError, match="Did you mean 'model::dim'"):
+            self._config().update("model.dim=8")
+
     def test_override_through_a_scalar_is_rejected(self):
         from sparkwheel.utils.exceptions import ConfigKeyError
 

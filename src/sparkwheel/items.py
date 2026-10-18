@@ -431,9 +431,8 @@ class Expression(Item):
             )
         elif isinstance(error, NameError) and name:
             suggestion = (
-                f"To use the module `{name}` in expressions, import it in the config:\n"
-                f"  _imports_:\n    {name}: {name}\n"
-                f"To use the config value `{name}`, write `@{name}`."
+                f"To use the module `{name}`, import it in the config (`_imports_: {{{name}: {name}}}`); "
+                f"for the config value `{name}`, write `@{name}`."
             )
         return EvaluationError(
             f"Failed to evaluate expression '{self.get_config()}': {type(error).__name__}: {detail}",
