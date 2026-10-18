@@ -17,6 +17,10 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - Removed `sparkwheel.utils.check_key_duplicates` and `sparkwheel.utils.CheckKeyDuplicatesYamlLoader` (unused).
   Migration: use `sparkwheel.loader.YamlLoader` to read YAML the way Sparkwheel does.
 
+### Added
+
+- `Location.override`: the CLI override text (`model::lr=0.1`) that set a value. Errors about a value set by an override show ``[override → model::lr]`` and the override itself instead of a YAML line that is no longer in effect.
+
 ### Fixed
 
 - `resolve(..., instantiate=False)` no longer makes a later `resolve()` return `Component` wrappers (and vice versa): each mode has its own cache.
@@ -26,4 +30,5 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - An expression containing the word `import` (e.g. `$@a['import']`) is no longer mistaken for an import statement.
 - `@` references work anywhere in a `$` expression (`$not@a`, `$1 in@a`); an `@` inside a string literal or comment, or used as the matrix-multiplication operator (`a @ b`), is no longer treated as a reference. A reference inside an f-string gives an error that says so.
 - A whole-value reference that is not a valid id (`@model.lr`) raises a `ConfigKeyError` with a did-you-mean instead of a bare `KeyError`.
+- A `_target_` that cannot be found points at the `_target_` line (or override), not at the component.
 - Loading a config path that contains `..` no longer warns about "path traversal attacks".

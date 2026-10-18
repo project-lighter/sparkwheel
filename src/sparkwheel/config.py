@@ -113,7 +113,7 @@ from .preprocessor import Preprocessor
 from .resolver import Resolver
 from .utils import PathLike, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
-from .utils.exceptions import ConfigKeyError, build_missing_key_error
+from .utils.exceptions import ConfigKeyError, Location, build_missing_key_error
 
 __all__ = ["Config", "parse_overrides"]
 
@@ -577,8 +577,30 @@ class Config:
 
     def _update_from_override_string(self, override: str) -> None:
         """Parse and apply a single override string (e.g., 'key=value', '=key=value', '~key')."""
-        overrides_dict = parse_overrides([override])
-        self._apply_path_updates(overrides_dict)
+        for key, value in parse_overrides([override]).items():
+            path = key.removeprefix(REPLACE_KEY)
+            before = self.get(path) if key == path else None  # what a compose override merges into
+            self._apply_path_updates({key: value})
+            if not key.startswith(REMOVE_KEY):
+                self._register_override(path, value, before, override)
+
+    def _register_override(self, path: str, value: Any, before: Any, override: str) -> None:
+        """Make errors about `path` and the values under it point at the override that set them."""
+        merges = isinstance(before, dict) and isinstance(value, dict)
+        extends = isinstance(before, list) and isinstance(value, list)
+        if not (merges or extends):
+            self._locations.register(path, Location(filepath="", line=0, id=path, override=override))
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key = str(key)
+                if not key.startswith(REMOVE_KEY):
+                    child_path = f"{path}{ID_SEP_KEY}{key.removeprefix(REPLACE_KEY)}"
+                    child_before = before.get(key) if merges and not key.startswith(REPLACE_KEY) else None
+                    self._register_override(child_path, child, child_before, override)
+        elif isinstance(value, list):
+            start = len(before) if extends else 0
+            for index, child in enumerate(value, start):
+                self._register_override(f"{path}{ID_SEP_KEY}{index}", child, None, override)
 
     def resolve(
         self,

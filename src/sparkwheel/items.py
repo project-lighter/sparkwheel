@@ -5,9 +5,10 @@ from collections.abc import Mapping
 from pprint import pformat
 from typing import Any
 
+from .locations import LocationRegistry
 from .path_utils import replace_references
 from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
-from .utils.constants import EXPR_KEY
+from .utils.constants import EXPR_KEY, ID_SEP_KEY
 from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
 
 __all__ = ["Item", "Expression", "Component", "Instantiable"]
@@ -111,6 +112,9 @@ class Component(Item, Instantiable):
     Args:
         config: Configuration content
         id: Identifier for this config item, defaults to ""
+        source_location: Location where this component was defined
+        locations: Registry with the locations of the component's keys, so errors can
+            point at the `_target_` or argument that caused them
 
     Note:
         Special configuration keys:
@@ -126,8 +130,20 @@ class Component(Item, Instantiable):
 
     non_arg_keys = {"_target_", "_disabled_", "_mode_", "_args_"}
 
-    def __init__(self, config: Any, id: str = "", source_location: Location | None = None) -> None:
+    def __init__(
+        self,
+        config: Any,
+        id: str = "",
+        source_location: Location | None = None,
+        locations: LocationRegistry | None = None,
+    ) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
+        self.locations = locations
+
+    def location_of(self, key: str) -> Location | None:
+        """Location of one of this component's keys, or of the component itself if unknown."""
+        location = self.locations.get(f"{self.id}{ID_SEP_KEY}{key}" if self.id else key) if self.locations else None
+        return location or self.source_location
 
     @staticmethod
     def is_instantiable(config: Any) -> bool:
@@ -215,7 +231,7 @@ class Component(Item, Instantiable):
             suggestion = self._suggest_similar_modules(modname) if isinstance(modname, str) else None
             raise TargetNotFoundError(
                 f"Cannot locate class or function: '{modname}'",
-                source_location=self.source_location,
+                source_location=self.location_of("_target_"),
                 suggestion=suggestion,
             ) from e
         except InstantiationError as e:

@@ -568,3 +568,72 @@ class TestSelfContainedErrors:
 
         with pytest.raises(TargetNotFoundError, match="'collectionz' cannot be imported"):
             Config().update({"x": {"_target_": "collectionz.abc.Counter"}}).resolve("x")
+
+
+class TestOverrideProvenance:
+    """Errors caused by a CLI override point at the override, not at the YAML line it replaced."""
+
+    @staticmethod
+    def _config(tmp_path):
+        (tmp_path / "overridemod.py").write_text(
+            "class Model:\n    def __init__(self, learning_rate, dim=2):\n        self.lr, self.dim = learning_rate, dim\n"
+        )
+        path = tmp_path / "config.yaml"
+        path.write_text("model:\n  _target_: overridemod.Model\n  learning_rate: 0.1\n  dim: 4\n")
+        return Config().update(str(path))
+
+    @pytest.fixture(autouse=True)
+    def _importable(self, tmp_path, monkeypatch):
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+    def test_bad_reference_in_override(self, tmp_path):
+        config = self._config(tmp_path).update("model::dim=$@missing + 1")
+        with pytest.raises(ConfigKeyError) as excinfo:
+            config.resolve("model")
+        msg = str(excinfo.value)
+        assert "[override → model::dim]:\n  → model::dim=$@missing + 1" in msg
+        assert "config.yaml" not in msg
+
+    def test_bad_target_in_override(self, tmp_path):
+        from sparkwheel import TargetNotFoundError
+
+        config = self._config(tmp_path).update("model::_target_=overridemod.Modl")
+        with pytest.raises(TargetNotFoundError) as excinfo:
+            config.resolve("model")
+        msg = str(excinfo.value)
+        assert "→ model::_target_=overridemod.Modl" in msg
+        assert "overridemod.Model" in msg  # did-you-mean
+
+    def test_bad_target_in_file_points_at_target_line(self, tmp_path):
+        from sparkwheel import TargetNotFoundError
+
+        path = tmp_path / "config.yaml"
+        path.write_text("model:\n  learning_rate: 0.1\n  _target_: overridemod.Modl\n")
+        with pytest.raises(TargetNotFoundError) as excinfo:
+            Config().update(str(path)).resolve("model")
+        assert f"[{path}:3 → model::_target_]" in str(excinfo.value)
+
+    def test_new_subtree_from_override(self, tmp_path):
+        config = self._config(tmp_path).update("=model={_target_: overridemod.Model, learning_rate: '@nope'}")
+        with pytest.raises(ConfigKeyError) as excinfo:
+            config.resolve("model")
+        assert "→ =model={_target_: overridemod.Model, learning_rate: '@nope'}" in str(excinfo.value)
+        assert config.locations.get("model::learning_rate").override.startswith("=model=")
+
+    def test_merging_override_keeps_file_locations_of_untouched_keys(self, tmp_path):
+        config = self._config(tmp_path).update("model={dim: 8}")
+        assert config.locations.get("model").override == ""
+        assert config.locations.get("model::learning_rate").line == 3
+        assert config.locations.get("model::dim").override == "model={dim: 8}"
+
+    def test_list_extension_registers_only_new_items(self):
+        config = Config().update({"xs": [1, 2]}).update("xs=[3]")
+        assert config.locations.get("xs::2").override == "xs=[3]"
+        assert config.locations.get("xs::0") is None
+
+    def test_location_str(self):
+        from sparkwheel import Location
+
+        assert str(Location("", 0, id="a", override="a=1")) == "override `a=1`"
+        with pytest.raises(ValueError):
+            Location("f.yaml", 0)

@@ -24,23 +24,25 @@ class Location:
 
     Attributes:
         filepath: Path to the source file
-        line: Line number in the file (must be >= 1)
+        line: Line number in the file (must be >= 1 unless `override` is set)
         column: Column number (0 if not available)
         id: Config path ID (e.g., "model::lr")
+        override: The CLI override (e.g., "model::lr=0.1") that set this value instead of a file
     """
 
     filepath: str
     line: int
     column: int = 0
     id: str = ""
+    override: str = ""
 
     def __post_init__(self) -> None:
         """Validate line number after initialization."""
-        if self.line < 1:
+        if self.line < 1 and not self.override:
             raise ValueError(f"line must be >= 1, got {self.line}")
 
     def __str__(self) -> str:
-        return f"{self.filepath}:{self.line}"
+        return f"override `{self.override}`" if self.override else f"{self.filepath}:{self.line}"
 
 
 class BaseError(Exception):
@@ -73,7 +75,7 @@ class BaseError(Exception):
 
         # Put file:line on the FIRST line for Rich visibility
         if self.source_location:
-            location = f"{self.source_location.filepath}:{self.source_location.line}"
+            location = "override" if self.source_location.override else str(self.source_location)
             if self.source_location.id:
                 parts.append(f"{self._original_message}\n\n[{location} → {self.source_location.id}]:")
             else:
@@ -96,6 +98,8 @@ class BaseError(Exception):
         """Extract and format a code snippet from the config file."""
         if not self.source_location:
             return ""
+        if self.source_location.override:
+            return f"  → {self.source_location.override}"
 
         try:
             filepath = Path(self.source_location.filepath)
