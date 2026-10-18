@@ -7,7 +7,7 @@ from pydoc import locate
 from typing import Any
 
 from .locations import LocationRegistry
-from .path_utils import replace_references
+from .path_utils import ref_name, replace_references, scan_references
 from .utils import CompInitMode, instantiate, optional_import, run_debug, run_eval
 from .utils.constants import EXPR_KEY, ID_SEP_KEY
 from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
@@ -381,8 +381,8 @@ class Expression(Item):
     def evaluate(self, globals: dict[str, Any] | None = None, locals: dict[str, Any] | None = None) -> str | Any | None:
         """Evaluate the expression and return the result.
 
-        Uses Python's `eval()` to execute the expression string. `@id` references are looked up
-        in the resolved references passed as the `__local_refs` global.
+        Uses Python's `eval()` to execute the expression string. Each `@id` reference becomes a name bound
+        to its value from the resolved references passed as the `__local_refs` global.
 
         Args:
             globals: Additional global symbols for evaluation
@@ -406,7 +406,9 @@ class Expression(Item):
                 globals_[k] = v
         code = None
         try:
-            code = replace_references(value, globals_.get(self.refs_var, {}), self.refs_var)[len(self.prefix) :].strip()
+            refs = globals_.pop(self.refs_var, {})
+            code = replace_references(value, refs)[len(self.prefix) :].strip()
+            globals_.update({ref_name(ref_id): refs[ref_id] for ref_id in scan_references(value)})
             optional_module = self._parse_import_string(code)
             if optional_module is not None:
                 return optional_module

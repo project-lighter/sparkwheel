@@ -1,10 +1,9 @@
 """Tests for path utility functions."""
 
-import sys
-
 import pytest
 
-from sparkwheel.path_utils import PathPatterns, find_references, get_by_id, replace_references, scan_references
+from sparkwheel import Config
+from sparkwheel.path_utils import PathPatterns, find_references, get_by_id, ref_name, replace_references, scan_references
 
 
 class TestPathPatterns:
@@ -65,36 +64,26 @@ class TestExpressionReferences:
     def test_scan(self, text, refs):
         assert list(scan_references(text)) == refs
 
-    @pytest.mark.parametrize(
-        "literal, fields",
-        [
-            ('f"lr={x}"', ["x"]),
-            ("f'{x!r:>{w}}'", ["x", "w"]),
-            ("f\"{{x}} {d['k']} {y}\"", ["d['k']", "y"]),
-            ("rf'''{a:{b}}{c}'''", ["a", "b", "c"]),
-            ('f"{x != y}"', ["x != y"]),
-            ('f"{ {1: 2}[1] }"', [" {1: 2}[1] "]),
-            ("f\"{'}'}\"", ["'}'"]),
-        ],
-    )
-    def test_fstring_fields(self, literal, fields):
-        """Before Python 3.12 an f-string is one token, so its replacement fields are found by hand."""
-        from sparkwheel.path_utils import _fstring_fields
-
-        assert [literal[start:end] for start, end in _fstring_fields(literal)] == fields
-
-    def test_replace_uses_the_other_quote_inside_a_single_quoted_fstring(self):
-        from sparkwheel.path_utils import _reference_quotes
-
-        # Before Python 3.12 the lookup cannot reuse the f-string's own quote
-        quote = '"' if sys.version_info < (3, 12) else "'"
-        assert _reference_quotes("f'{@a}'", 0, "'") == {3: quote}
-
     def test_replace_keeps_strings_and_operators(self):
         refs = {"a": 1, "b": 2}
         assert replace_references("$not@a and '@a' or x @ @b", refs) == (
-            "$not __local_refs['a'] and '@a' or x @ __local_refs['b']"
+            f"$not {ref_name('a')} and '@a' or x @ {ref_name('b')}"
         )
+
+    @pytest.mark.parametrize(
+        "text, value",
+        [
+            ("$f'{@a}'", "1"),
+            ('$f"me@a {@a}"', "me@a 1"),
+            ("$f'{{@a}} {@a:>3}'", "{@a}   1"),
+            ("$f\"{f'{@a}'}\"", "1"),
+            ("$f'{@a!r}' + f'{@m::k}'", "12"),
+            ("$f\"{f'me@a {@a}'}\"", "me@a 1"),
+            ("$f\"{'x@a'} {not@z}\"", "x@a True"),
+        ],
+    )
+    def test_references_in_fstrings(self, text, value):
+        assert Config().update({"a": 1, "z": 0, "m": {"k": 2}, "v": text}).resolve("v") == value
 
     @pytest.mark.parametrize(
         "text,refs", [("@model::lr", ["model::lr"]), ("@model.lr", ["model.lr"]), ("@", []), ("@a @b", [])]

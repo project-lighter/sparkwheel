@@ -351,7 +351,7 @@ class Resolver:
                             )
                         )
             if isinstance(item, Expression) and not item.is_import_statement(config):
-                code = replace_references(config, dict.fromkeys(self.match_refs_pattern(config)), self._vars)
+                code = replace_references(config, dict.fromkeys(self.match_refs_pattern(config)))
                 code = code[len(EXPR_KEY) :].strip()
                 try:
                     compile(code, "<expression>", "eval")
@@ -482,7 +482,7 @@ class Resolver:
         value = normalize_id(value)
 
         try:
-            return replace_references(value, refs, cls._vars)
+            return replace_references(value, refs)
         except KeyError as e:
             # Extract reference ID from error message
             # The error message format is: "Reference '@ref_id' not found in resolved references"

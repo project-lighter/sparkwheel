@@ -517,7 +517,7 @@ class TestSelfContainedErrors:
             "Failed to evaluate expression '$@a.bit_lenght()': AttributeError: 'int' object has no attribute 'bit_lenght'"
         )
         assert f"{path}:3" in msg
-        assert "__local_refs" not in msg
+        assert "__ref_" not in msg
 
     @pytest.mark.parametrize("expression", ["$1 +", "$@a +", "$(@a"])
     def test_syntax_error_has_location(self, tmp_path, expression):

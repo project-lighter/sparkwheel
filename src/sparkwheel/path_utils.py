@@ -5,6 +5,7 @@ references, and file paths. Handles ID splitting, relative reference resolution,
 and file path extraction from combined strings like "config.yaml::model::lr".
 """
 
+import ast
 import functools
 import io
 import keyword
@@ -219,126 +220,64 @@ def _is_pure_reference(text: str) -> bool:
     return text.startswith(RESOLVED_REF_KEY) and len(text) > 1 and RESOLVED_REF_KEY not in text[1:]
 
 
-_FSTRING_START = getattr(token, "FSTRING_START", None)  # Python 3.12+ splits f-strings into tokens
-_FSTRING_END = getattr(token, "FSTRING_END", None)
-_STRING_PREFIXES = "rRbBuUfF"
+_VALUE_END = (token.NUMBER, token.STRING, getattr(token, "FSTRING_END", -1))  # Python 3.12+ splits f-strings
+_KEYWORDS = set(keyword.kwlist) - {"True", "False", "None"}  # an `@` after any other name follows a value
+
+
+def ref_name(ref_id: str) -> str:
+    """The Python name an `@id` reference becomes in a `$` expression."""
+    return "__ref_" + ref_id.encode().hex()
 
 
 @functools.lru_cache(maxsize=4096)
-def _expression_references(text: str) -> tuple[tuple[re.Match[str], str], ...]:
-    """Find the `@id` references in a `$` expression, each with the quote its lookup can use.
+def _expression_reference_matches(text: str) -> tuple[re.Match[str], ...]:
+    """The `@id` references in a `$` expression: each `@` token that does not follow a value (`a @ b` is matmul).
 
-    Python's tokenizer tells a reference apart from an `@` inside a string or comment, and from the
-    matrix multiplication operator (an `@` right after a value, as in `a @ b`). Inside an f-string,
-    only the replacement fields (`{@lr}`) are code.
+    An `@` inside a string or comment is not a token. Before Python 3.12 an f-string is one token, whose
+    replacement fields (`{@lr}`) `_fstring_field_references` looks into.
     """
-    quotes = _reference_quotes(text[len(EXPR_KEY) :], len(EXPR_KEY), "'")
-    return tuple(
-        (match, quotes[match.start()]) for match in PathPatterns.ABSOLUTE_REFERENCE.finditer(text) if match.start() in quotes
-    )
-
-
-def _expression_reference_matches(text: str) -> list[re.Match[str]]:
-    """The `@id` references in a `$` expression (see `_expression_references`)."""
-    return [match for match, _ in _expression_references(text)]
-
-
-def _reference_quotes(code: str, base: int, quote: str) -> dict[int, str]:
-    """Map the position (plus `base`) of each `@` in `code` that starts a reference to the quote its lookup can use."""
-    line_offsets = [base]
-    for line in io.StringIO(code):  # split lines as the tokenizer does (str.splitlines also splits at form feeds)
-        line_offsets.append(line_offsets[-1] + len(line))
-
-    def offset(position: tuple[int, int]) -> int:
-        return line_offsets[position[0] - 1] + position[1]
-
-    literal_spans: list[tuple[int, int]] = []
-    operator_positions: set[int] = set()
-    field_refs: dict[int, str] = {}
+    starts = [len(EXPR_KEY)]
+    for line in io.StringIO(text[len(EXPR_KEY) :]):  # split lines as the tokenizer does
+        starts.append(starts[-1] + len(line))
+    matches: list[re.Match[str]] = []
     previous: tokenize.TokenInfo | None = None
-    fstring_depth, fstring_start = 0, 0
     try:
-        for tok in tokenize.generate_tokens(io.StringIO(code).readline):
-            if tok.type == _FSTRING_START:
-                fstring_depth += 1
-                fstring_start = offset(tok.start) if fstring_depth == 1 else fstring_start
-            elif tok.type == _FSTRING_END:
-                fstring_depth -= 1
-                if fstring_depth == 0:
-                    literal_spans.append((fstring_start, offset(tok.end)))
-            elif tok.type in (token.STRING, token.COMMENT):
-                literal_spans.append((offset(tok.start), offset(tok.end)))
-                if tok.type == token.STRING and "f" in tok.string[: _prefix_length(tok.string)].lower():
-                    # Before Python 3.12 an f-string is one token: look inside its replacement fields
-                    inner_quote = '"' if tok.string[_prefix_length(tok.string)] == "'" else "'"
-                    for start, end in _fstring_fields(tok.string):
-                        field_refs.update(_reference_quotes(tok.string[start:end], offset(tok.start) + start, inner_quote))
-            elif tok.string == RESOLVED_REF_KEY:
+        for tok in tokenize.generate_tokens(io.StringIO(text[len(EXPR_KEY) :]).readline):
+            at = starts[tok.start[0] - 1] + tok.start[1]
+            if tok.type == token.OP and tok.string == RESOLVED_REF_KEY:
                 after_value = previous is not None and (
-                    previous.type in (token.NUMBER, token.STRING, _FSTRING_END) or previous.string in ")]}"
+                    previous.type in _VALUE_END
+                    or previous.string in (")", "]", "}")
+                    or (previous.type == token.NAME and previous.string not in _KEYWORDS)
                 )
-                after_name = (
-                    previous is not None
-                    and previous.type == token.NAME
-                    and (not keyword.iskeyword(previous.string) or previous.string in ("True", "False", "None"))
-                )
-                if after_value or after_name:
-                    operator_positions.add(offset(tok.start))
-                elif fstring_depth:
-                    field_refs[offset(tok.start)] = quote  # in a replacement field (Python 3.12+)
+                match = None if after_value else PathPatterns.ABSOLUTE_REFERENCE.match(text, at)
+                matches += [match] if match else []
+            elif tok.type == token.STRING and "f" in tok.string[: len(tok.string) - len(tok.string.lstrip("rRbBuUfF"))]:
+                matches += _fstring_field_references(text, at, at + len(tok.string))
             if tok.type not in (token.NL, token.NEWLINE, token.INDENT, token.DEDENT, token.COMMENT):
                 previous = tok
     except (tokenize.TokenError, SyntaxError):
         pass  # evaluating the expression reports the syntax error
-    refs = {
-        base + i: quote
-        for i, char in enumerate(code)
-        if char == RESOLVED_REF_KEY
-        and base + i not in operator_positions
-        and not any(start <= base + i < end for start, end in literal_spans)
-    }
-    refs.update(field_refs)
-    return refs
+    return tuple(matches)
 
 
-def _prefix_length(literal: str) -> int:
-    """Length of a string literal's prefix (`f`, `rb`, ...)."""
-    return len(literal) - len(literal.lstrip(_STRING_PREFIXES))
+def _fstring_field_references(text: str, start: int, end: int) -> list[re.Match[str]]:
+    """The `@id`s in the replacement fields of the f-string `text[start:end]` (before Python 3.12, a single token).
 
-
-def _fstring_fields(literal: str) -> list[tuple[int, int]]:
-    """Spans of the code in an f-string literal's replacement fields: `x` and `w` in `f"{x:>{w}}"`."""
-    body_start = _prefix_length(literal)
-    quote = (
-        literal[body_start : body_start + 3] if literal[body_start : body_start + 3] in ('"""', "'''") else literal[body_start]
-    )
-    i, end = body_start + len(quote), len(literal) - len(quote)
-    fields = []
-    while i < end:
-        char = literal[i]
-        if char in "{}" and literal[i + 1 : i + 2] == char:
-            i += 2  # an escaped brace
-            continue
-        if char == "{":
-            # The code runs to the first `!`, `:` or `}` outside brackets and strings
-            j, depth, string_quote = i + 1, 0, ""
-            while j < end:
-                c = literal[j]
-                if string_quote:
-                    string_quote = "" if c == string_quote else string_quote
-                elif c in "'\"":
-                    string_quote = c
-                elif c in "([{":
-                    depth += 1
-                elif c in ")]}" and depth:
-                    depth -= 1
-                elif depth == 0 and (c in ":}" or (c == "!" and literal[j + 1 : j + 2] != "=")):
-                    break
-                j += 1
-            fields.append((i + 1, j))
-            i = j
-        i += 1
-    return fields
+    Python's parser tells them apart: with each `@id` turned into a placeholder name, the references are the
+    placeholders that parse as names rather than as text.
+    """
+    candidates = list(PathPatterns.ABSOLUTE_REFERENCE.finditer(text, start, end))
+    code, last = "", start
+    for n, match in enumerate(candidates):
+        code += f"{text[last : match.start()]} _sparkwheel_ref_{n} "
+        last = match.end()
+    try:
+        tree = ast.parse(code + text[last:end], mode="eval")
+    except SyntaxError:
+        return candidates  # evaluating the expression reports any real syntax error
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    return [match for n, match in enumerate(candidates) if f"_sparkwheel_ref_{n}" in names]
 
 
 # ============================================================================
@@ -593,17 +532,16 @@ def scan_references(text: str) -> dict[str, int]:
     return refs
 
 
-def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name: str = "__local_refs") -> str | Any:
+def replace_references(text: str, resolved_refs: dict[str, Any]) -> str | Any:
     """Replace @ references with resolved values.
 
     For pure references: Returns the resolved value directly
-    For expressions: Replaces @ref with __local_refs['ref'] for eval()
+    For expressions: Replaces each @ref with the name `ref_name(ref)`, which evaluating it binds
     For other text: Returns unchanged
 
     Args:
         text: String containing references
         resolved_refs: Dict mapping reference IDs to resolved values
-        local_var_name: Variable name for expression substitution
 
     Returns:
         - Resolved value if text is a pure reference
@@ -615,7 +553,7 @@ def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name:
         >>> replace_references("@model::lr", refs)
         0.001
         >>> replace_references("$@x * 2", refs)
-        "$__local_refs['x'] * 2"
+        "$__ref_78 * 2"
         >>> replace_references("normal", refs)
         "normal"
 
@@ -633,14 +571,13 @@ def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name:
         # Not an expression or reference - return as-is
         return text
 
-    # Expression - replace each reference with a lookup, from the end so offsets stay valid
+    # Expression - replace each reference with a name, from the end so offsets stay valid
     result = text
-    for match, quote in reversed(_expression_references(text)):
+    for match in reversed(_expression_reference_matches(text)):
         ref_id = match.group(1)
         if ref_id not in resolved_refs:
             raise KeyError(f"Reference '@{ref_id}' not found in resolved references")
         before = text[match.start() - 1]
-        space = " " if before.isalnum() or before == "_" else ""  # `not@a` -> `not __local_refs['a']`
-        lookup = f"{local_var_name}[{quote}{ref_id}{quote}]"  # `"` inside a `'` f-string before Python 3.12
-        result = f"{result[: match.start()]}{space}{lookup}{result[match.end() :]}"
+        space = " " if before.isalnum() or before == "_" else ""  # `not@a` -> `not __ref_61`
+        result = f"{result[: match.start()]}{space}{ref_name(ref_id)}{result[match.end() :]}"
     return result
