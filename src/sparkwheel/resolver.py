@@ -6,9 +6,10 @@ from copy import copy
 from pydoc import ErrorDuringImport, locate
 from typing import Any
 
+from .errors import get_suggestions
 from .items import Component, Expression, Item
 from .path_utils import normalize_id, replace_references, scan_references
-from .utils import allow_missing_reference, look_up_option
+from .utils import CompInitMode, allow_missing_reference, look_up_option
 from .utils.constants import EXPR_KEY, ID_SEP_KEY, RESOLVED_REF_KEY
 from .utils.exceptions import (
     BaseError,
@@ -236,7 +237,7 @@ class Resolver:
         waiting_list.add(id)
 
         # A literally disabled component is skipped before its arguments are built
-        if isinstance(item, Component) and instantiate and self._disabled_flag(item_config):
+        if isinstance(item, Component) and self._disabled_flag(item_config):
             resolved[id] = None
             return None
 
@@ -328,16 +329,14 @@ class Resolver:
         skipped = [
             id
             for id, item in self._items.items()
-            if isinstance(item, Component) and self._disabled_flag(item.get_config()) is not False
+            if isinstance(item, Component) and self._checked_disabled_flag(item.get_config()) is not False
         ]
         for id, item in self._items.items():
             if any(id == s or id.startswith(f"{s}{self.sep}") for s in skipped):
                 continue
             config = item.get_config()
             if isinstance(item, Component):
-                problem = self._component_problem(item)
-                if problem is not None:
-                    problems.append(problem)
+                problems.extend(self._component_problems(item))
             if not isinstance(config, str):
                 continue
             if not self.allow_missing_reference:
@@ -359,30 +358,58 @@ class Resolver:
                     problems.append(item._evaluation_error(e))
         return problems
 
+    def _checked_disabled_flag(self, config: dict[str, Any]) -> bool | None:
+        """`_disabled_flag`, also when `_disabled_` references a plain value (`_disabled_: "@debug"`)."""
+        flag = config.get("_disabled_")
+        if isinstance(flag, str) and flag.startswith(RESOLVED_REF_KEY):
+            target = self._items.get(flag[len(RESOLVED_REF_KEY) :])
+            if type(target) is Item:  # neither a component nor an expression
+                return self._disabled_flag({"_disabled_": target.get_config()})
+        return self._disabled_flag(config)
+
     @staticmethod
-    def _component_problem(item: Component) -> BaseError | None:
-        """A `_target_` that cannot be imported, or arguments that do not fit its signature."""
+    def _component_problems(item: Component) -> list[BaseError]:
+        """An unknown `_mode_`, a `_target_` that cannot be imported, or arguments that do not fit its signature."""
         config = item.get_config()
+        problems: list[BaseError] = []
+        mode = config.get("_mode_", CompInitMode.DEFAULT)
+        literal_mode = isinstance(mode, str) and not mode.startswith((EXPR_KEY, RESOLVED_REF_KEY))
+        modes = [m.value for m in CompInitMode]
+        if literal_mode and mode.strip() not in modes:
+            close = get_suggestions(mode, modes, max_suggestions=1)
+            problems.append(
+                InstantiationError(
+                    f"Unknown _mode_ '{mode}'",
+                    source_location=item.location_of("_mode_"),
+                    suggestion=(f"Did you mean '{close[0][0]}'? " if close else "") + f"Modes: {', '.join(modes)}.",
+                )
+            )
         target = config["_target_"]
         if not isinstance(target, str) or target.startswith((EXPR_KEY, RESOLVED_REF_KEY)):
-            return None  # decided at resolve time
+            return problems  # decided at resolve time
         try:
             located = locate(target)
         except ErrorDuringImport as e:  # the module exists but raises when imported
             cause = getattr(e, "value", e)
-            return InstantiationError(
+            problem: BaseError = InstantiationError(
                 f"Cannot import '{target}': {type(cause).__name__}: {cause}",
                 source_location=item.location_of("_target_"),
             )
+            return [*problems, problem]
         if located is None:
-            return TargetNotFoundError(
+            problem = TargetNotFoundError(
                 f"Cannot locate class or function: '{target}'",
                 source_location=item.location_of("_target_"),
                 suggestion=item._suggest_similar_modules(target),
             )
+            return [*problems, problem]
         args = config.get("_args_", [])
         kwargs = {k: v for k, v in config.items() if k not in item.non_arg_keys}
-        return item.argument_error(located, args if isinstance(args, list) else [], kwargs, allow_missing=True)
+        # Called now with only these arguments, a default-mode target must get every one it needs
+        complete = literal_mode and mode.strip() == CompInitMode.DEFAULT and isinstance(args, list)
+        return problems + item.argument_errors(
+            located, args if isinstance(args, list) else [], kwargs, allow_missing=not complete
+        )
 
     @classmethod
     def normalize_id(cls, id: str | int) -> str:

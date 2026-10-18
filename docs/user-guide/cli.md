@@ -154,7 +154,7 @@ Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`). Three ope
 
 ## Check Before Running
 
-`config.check()` finds mistakes without building anything: `@` references that don't exist, `_target_`s that can't be imported, arguments the target doesn't accept, and `$` expressions that don't compile. It raises one `ValidationError` that lists every problem with its file:line or override, so call it right after applying the command line:
+`config.check()` finds mistakes without building anything: `@` references that don't exist, `_target_`s and `_imports_` that can't be imported, `_mode_`s that don't exist, arguments the target doesn't accept or is missing, and `$` expressions that don't compile. It raises one `ValidationError` that lists every problem with its file:line or override, so call it right after applying the command line:
 
 ```python
 config = Config()

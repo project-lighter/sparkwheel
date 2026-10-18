@@ -117,7 +117,7 @@ from .preprocessor import Preprocessor
 from .resolver import Resolver
 from .utils import PathLike, optional_import
 from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
-from .utils.exceptions import ConfigKeyError, Location, build_missing_key_error
+from .utils.exceptions import BaseError, ConfigKeyError, Location, TargetNotFoundError, build_missing_key_error
 
 __all__ = ["Config", "parse_overrides"]
 
@@ -214,6 +214,7 @@ class Config:
 
         # Process imports (import string module paths)
         self._imports: dict[str, Any] = {}
+        self._import_problems: list[BaseError] = []  # `_imports_` entries that failed, reported by check()
         if isinstance(imports, dict):
             for k, v in imports.items():
                 self._imports[k] = optional_import(v)[0] if isinstance(v, str) else v
@@ -768,10 +769,11 @@ class Config:
     def check(self) -> None:
         """Find mistakes in the config without building anything.
 
-        Checks that `@` references exist, `_target_`s can be imported, components' arguments match their
-        target's signature (missing arguments are allowed) and `$` expressions compile. Components with a
-        `_disabled_` that is not literally false are skipped. Nothing is instantiated or evaluated, so
-        `check()` is cheap to call before a run.
+        Checks that `@` references exist, `_target_`s and `_imports_` can be imported, `_mode_`s exist,
+        components' arguments match their target's signature (missing arguments are allowed with
+        `_mode_: callable`) and `$` expressions compile. Disabled components are skipped, as are those whose
+        `_disabled_` is decided by an expression. Nothing is instantiated or evaluated, so `check()` is cheap
+        to call before a run.
 
         Raises:
             ValidationError: Listing every problem found, each with its file:line or CLI override.
@@ -782,9 +784,13 @@ class Config:
         """
         from .schema import ValidationError
 
-        if not self._is_parsed:
-            self._parse()
-        problems = self._resolver.find_problems()
+        try:
+            if not self._is_parsed:
+                self._parse()
+        except BaseError as error:  # a `%` or relative reference that cannot be expanded stops parsing
+            problems = [error]
+        else:
+            problems = self._import_problems + self._resolver.find_problems()
         if not problems:
             return
         lines = [f"Config check found {len(problems)} problem{'s' if len(problems) > 1 else ''}:"]
@@ -824,7 +830,7 @@ class Config:
         data = self._preprocessor.process_raw_refs(data, data, id="", locations=self._locations, external_only=False)
 
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        data = self._preprocessor.process(data, data, id="")
+        data = self._preprocessor.process(data, data, id="", locations=self._locations)
 
         # Stage 2: Parse config tree to create Items
         parser = Parser(globals=self._imports, metadata=self._locations)
@@ -853,6 +859,7 @@ class Config:
         These imports become available to all expressions in the config.
         The _imports_ key is removed from the parsed copy, so it never becomes a config item.
         """
+        self._import_problems = []
         imports_key = "_imports_"
         if imports_key not in data:
             return
@@ -861,25 +868,24 @@ class Config:
         if not isinstance(imports_config, dict):
             return
 
-        # Process each import
         for name, module_path in imports_config.items():
-            if isinstance(module_path, str):
-                # Handle dotted paths like "pathlib.Path" or "collections.Counter"
-                # Split into module and attribute if needed
-                if "." in module_path:
-                    parts = module_path.rsplit(".", 1)
-                    # First try as a module (e.g., "os.path")
-                    module_obj, success = optional_import(module_path)
-                    if not success:
-                        # Try as module.attribute (e.g., "pathlib.Path")
-                        module_obj, success = optional_import(parts[0], name=parts[1])
-                    self._imports[name] = module_obj
-                else:
-                    # Simple module name like "json"
-                    self._imports[name] = optional_import(module_path)[0]
-            else:
-                # Already a module or callable
+            if not isinstance(module_path, str):  # already a module or callable
                 self._imports[name] = module_path
+                continue
+            # A module ("os.path"), else an attribute of one ("pathlib.Path")
+            module_obj, success = optional_import(module_path)
+            if not success and "." in module_path:
+                module, attribute = module_path.rsplit(".", 1)
+                module_obj, success = optional_import(module, name=attribute)
+            # A failed import raises when an expression uses it; check() reports it up front
+            self._imports[name] = module_obj
+            if not success:
+                self._import_problems.append(
+                    TargetNotFoundError(
+                        f"Cannot import '{module_path}'",
+                        source_location=self._locations.get(f"{imports_key}{ID_SEP_KEY}{name}"),
+                    )
+                )
 
     def _get_by_id(self, id: str) -> Any:
         """Get config value by ID path.

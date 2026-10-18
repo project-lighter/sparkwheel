@@ -201,4 +201,4 @@ Config check found 3 problems:
   Did you mean 'model.Model'?
 ```
 
-Components with `_disabled_` set are skipped. Missing arguments are not reported, because they may be passed later (`_mode_: callable`).
+Disabled components are skipped. A missing argument is reported for a component that is built right away, not for one with `_mode_: callable`, which gets the rest of its arguments later.

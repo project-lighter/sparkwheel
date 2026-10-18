@@ -116,7 +116,9 @@ class Preprocessor:
         """
         return self._process_raw_refs_recursive(config, base_data, id, set(), locations, external_only)
 
-    def process(self, config: Any, base_data: dict[str, Any], id: str = "") -> Any:
+    def process(
+        self, config: Any, base_data: dict[str, Any], id: str = "", locations: Optional["LocationRegistry"] = None
+    ) -> Any:
         """Preprocess entire config tree.
 
         Main entry point - walks config tree recursively and applies
@@ -128,13 +130,15 @@ class Preprocessor:
             base_data: Root config dict (for resolving local macros)
             id: Current ID path in tree (for relative ID resolution)
 
+            locations: LocationRegistry for error reporting (optional)
+
         Returns:
             Preprocessed config ready for parsing
 
         Raises:
-            CircularReferenceError: If circular raw reference detected
+            ConfigKeyError: If a relative reference goes above the root
         """
-        return self._process_recursive(config, base_data, id, set())
+        return self._process_recursive(config, base_data, id, set(), locations)
 
     def _process_raw_refs_recursive(
         self,
@@ -188,7 +192,7 @@ class Preprocessor:
         if isinstance(config, str):
             # First resolve relative IDs in raw references (e.g., %::key -> %parent::key)
             # This is necessary because raw references can use relative syntax
-            config = resolve_relative_ids(id, config)
+            config = _absolute(id, config, locations)
 
             # Then expand raw references
             if config.startswith(RAW_REF_KEY):
@@ -202,6 +206,7 @@ class Preprocessor:
         base_data: dict[str, Any],
         id: str,
         raw_ref_stack: set[str],
+        locations: Optional["LocationRegistry"] = None,
     ) -> Any:
         """Internal recursive preprocessing implementation.
 
@@ -210,6 +215,7 @@ class Preprocessor:
             base_data: Root config dict
             id: Current ID path
             raw_ref_stack: Circular reference detection
+            locations: LocationRegistry for error reporting (optional)
 
         Returns:
             Preprocessed config
@@ -218,17 +224,17 @@ class Preprocessor:
         if isinstance(config, dict):
             for key in list(config.keys()):
                 sub_id = f"{id}{ID_SEP_KEY}{key}" if id else str(key)
-                config[key] = self._process_recursive(config[key], base_data, sub_id, raw_ref_stack)
+                config[key] = self._process_recursive(config[key], base_data, sub_id, raw_ref_stack, locations)
 
         elif isinstance(config, list):
             for idx in range(len(config)):
                 sub_id = f"{id}{ID_SEP_KEY}{idx}" if id else str(idx)
-                config[idx] = self._process_recursive(config[idx], base_data, sub_id, raw_ref_stack)
+                config[idx] = self._process_recursive(config[idx], base_data, sub_id, raw_ref_stack, locations)
 
         # Process string values
         if isinstance(config, str):
             # Step 1: Resolve relative IDs (@::, @::::) to absolute (@)
-            config = resolve_relative_ids(id, config)
+            config = _absolute(id, config, locations)
 
             # Step 2: Expand raw references (%) - should already be expanded, but keep for safety
             if config.startswith(RAW_REF_KEY):
@@ -351,3 +357,11 @@ class Preprocessor:
         elif isinstance(config, list):
             return any(Preprocessor._contains_raw_refs(item) for item in config)
         return False
+
+
+def _absolute(id: str, value: str, locations: Optional["LocationRegistry"]) -> str:
+    """`value` with its relative references (`@::x`, `%::x`) made absolute, as seen from `id`."""
+    try:
+        return resolve_relative_ids(id, value)
+    except ValueError as e:
+        raise ConfigKeyError(str(e), source_location=locations.get(id) if locations else None) from None

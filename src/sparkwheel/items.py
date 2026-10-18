@@ -240,9 +240,9 @@ class Component(Item, Instantiable):
             if isinstance(e.__cause__, TypeError):
                 # Wrong argument names point at the argument; a TypeError raised inside the target is kept as is
                 target = locate(modname) if isinstance(modname, str) else modname
-                error = self.argument_error(target, args, config_kwargs, allow_missing=mode == "callable")
-                if error is not None:
-                    raise error from e.__cause__
+                errors = self.argument_errors(target, args, config_kwargs, allow_missing=mode == "callable")
+                if errors:
+                    raise errors[0] from e.__cause__
             # Add source location if not already present, preserving original message and suggestion
             if e.source_location is None:
                 raise InstantiationError(
@@ -256,19 +256,23 @@ class Component(Item, Instantiable):
                 source_location=self.source_location,
             ) from e
 
-    def argument_error(
+    def argument_errors(
         self, target: Any, args: list[Any], kwargs: dict[str, Any], allow_missing: bool = False
-    ) -> InstantiationError | None:
-        """The error for arguments that do not fit `target`'s signature, pointing at the offending argument."""
-        problem = describe_argument_error(target, args, kwargs, allow_missing=allow_missing)
-        if problem is None:
-            return None
-        message, suggestion, key = problem
-        return InstantiationError(
-            f"'{self.resolve_module_name()}' {message}",
-            source_location=self.location_of(key) if key else self.source_location,
-            suggestion=suggestion,
-        )
+    ) -> list[InstantiationError]:
+        """The errors for arguments that do not fit `target`'s signature: one per unknown argument, each pointing
+        at it, or else the other mismatch (such as a missing argument)."""
+        errors: list[InstantiationError] = []
+        kwargs = dict(kwargs)
+        while (problem := describe_argument_error(target, args, kwargs, allow_missing=allow_missing)) is not None:
+            message, suggestion, key = problem
+            if key is None and errors:
+                break  # a missing argument is most likely the misspelled one already reported
+            location = self.location_of(key) if key else self.source_location
+            errors.append(InstantiationError(f"'{self.resolve_module_name()}' {message}", location, suggestion))
+            if key is None:
+                break
+            del kwargs[key]
+        return errors
 
     def _suggest_similar_modules(self, target: str) -> str | None:
         """Suggest similar valid module names using fuzzy matching.
