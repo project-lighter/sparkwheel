@@ -389,7 +389,11 @@ class Expression(Item):
         detail = error.msg if isinstance(error, SyntaxError) else str(error)
         suggestion = None
         name = getattr(error, "name", None)
-        if isinstance(error, NameError) and name:
+        if isinstance(error, SyntaxError) and "f-string" in detail and "@" in self.get_config():
+            suggestion = (
+                "`@` references are not replaced inside f-strings. Format outside instead, e.g. `$'lr={}'.format(@lr)`."
+            )
+        elif isinstance(error, NameError) and name:
             suggestion = (
                 f"To use the module `{name}` in expressions, import it in the config:\n"
                 f"  _imports_:\n    {name}: {name}\n"

@@ -2,7 +2,7 @@
 
 import pytest
 
-from sparkwheel.path_utils import PathPatterns, find_references, get_by_id
+from sparkwheel.path_utils import PathPatterns, find_references, get_by_id, replace_references, scan_references
 
 
 class TestPathPatterns:
@@ -30,6 +30,46 @@ class TestPathPatterns:
         """Test find_references returns empty for plain text."""
         refs = find_references("just plain text")
         assert refs == []
+
+
+class TestExpressionReferences:
+    """Which `@` in a `$` expression is a reference: Python's tokenizer decides."""
+
+    @pytest.mark.parametrize(
+        "text,refs",
+        [
+            ("$not@a", ["a"]),
+            ("$1 in@a", ["a"]),
+            ("$(@a)", ["a"]),
+            ("$[@a,@b]", ["a", "b"]),
+            ("${'k':@a}", ["a"]),
+            ("$@a if@flag else-@b", ["a", "flag", "b"]),
+            ("$@m::k * 2", ["m::k"]),
+            ("$'user@a'", []),
+            ('$"@a" + @b', ["b"]),
+            ("$@a  # note@b", ["a"]),
+            ("$x @ y", []),
+            ("$@a @ @b", ["a", "b"]),
+            ("$(@a)@(@b)", ["a", "b"]),
+            ("$f'{@a}'", []),
+            ("$f'{x}' @ @b", ["b"]),
+            ("$True@a", []),
+        ],
+    )
+    def test_scan(self, text, refs):
+        assert list(scan_references(text)) == refs
+
+    def test_replace_keeps_strings_and_operators(self):
+        refs = {"a": 1, "b": 2}
+        assert replace_references("$not@a and '@a' or x @ @b", refs) == (
+            "$not __local_refs['a'] and '@a' or x @ __local_refs['b']"
+        )
+
+    @pytest.mark.parametrize(
+        "text,refs", [("@model::lr", ["model::lr"]), ("@model.lr", ["model.lr"]), ("@", []), ("@a @b", [])]
+    )
+    def test_pure_reference_is_the_whole_value(self, text, refs):
+        assert list(scan_references(text)) == refs
 
 
 class TestGetById:

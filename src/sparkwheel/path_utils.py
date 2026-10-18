@@ -5,10 +5,14 @@ references, and file paths. Handles ID splitting, relative reference resolution,
 and file path extraction from combined strings like "config.yaml::model::lr".
 """
 
+import io
+import keyword
 import re
+import token
+import tokenize
 from typing import Any
 
-from .utils.constants import ID_SEP_KEY, RAW_REF_KEY, RESOLVED_REF_KEY
+from .utils.constants import EXPR_KEY, ID_SEP_KEY, RAW_REF_KEY, RESOLVED_REF_KEY
 
 __all__ = [
     "split_id",
@@ -202,13 +206,68 @@ class PathPatterns:
             >>> PathPatterns.find_absolute_references("normal text")
             []
         """
-        is_expr = text.startswith("$")
-        is_pure_ref = text.startswith("@")
+        if _is_pure_reference(text):
+            return [text[1:]]
+        if text.startswith(EXPR_KEY):
+            return [match.group(1) for match in _expression_reference_matches(text)]
+        return []
 
-        if not (is_expr or is_pure_ref):
-            return []
 
-        return cls.ABSOLUTE_REFERENCE.findall(text)
+def _is_pure_reference(text: str) -> bool:
+    """Whether the whole value is one `@id` reference (anything after `@` is the id)."""
+    return text.startswith(RESOLVED_REF_KEY) and len(text) > 1 and RESOLVED_REF_KEY not in text[1:]
+
+
+_FSTRING_START = getattr(token, "FSTRING_START", None)  # Python 3.12+ splits f-strings into tokens
+_FSTRING_END = getattr(token, "FSTRING_END", None)
+
+
+def _expression_reference_matches(text: str) -> list[re.Match[str]]:
+    """Find the `@id` references in a `$` expression.
+
+    Python's tokenizer tells a reference apart from an `@` inside a string, f-string or comment,
+    and from the matrix multiplication operator (an `@` right after a value, as in `a @ b`).
+    References inside f-strings are not supported: Python then reports the f-string as invalid.
+    """
+    code = text[len(EXPR_KEY) :]
+    line_offsets = [len(EXPR_KEY)]
+    for line in code.splitlines(keepends=True):
+        line_offsets.append(line_offsets[-1] + len(line))
+
+    def offset(position: tuple[int, int]) -> int:
+        return line_offsets[position[0] - 1] + position[1]
+
+    literal_spans: list[tuple[int, int]] = []
+    operator_positions: set[int] = set()
+    previous: tokenize.TokenInfo | None = None
+    fstring_depth, fstring_start = 0, 0
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(code).readline):
+            if tok.type == _FSTRING_START:
+                fstring_depth += 1
+                fstring_start = offset(tok.start) if fstring_depth == 1 else fstring_start
+            elif tok.type == _FSTRING_END:
+                fstring_depth -= 1
+                if fstring_depth == 0:
+                    literal_spans.append((fstring_start, offset(tok.end)))
+            elif tok.type in (token.STRING, token.COMMENT):
+                literal_spans.append((offset(tok.start), offset(tok.end)))
+            elif tok.string == RESOLVED_REF_KEY and previous is not None:
+                after_value = previous.type in (token.NUMBER, token.STRING, _FSTRING_END) or previous.string in ")]}"
+                after_name = previous.type == token.NAME and (
+                    not keyword.iskeyword(previous.string) or previous.string in ("True", "False", "None")
+                )
+                if after_value or after_name:
+                    operator_positions.add(offset(tok.start))
+            if tok.type not in (token.NL, token.NEWLINE, token.INDENT, token.DEDENT, token.COMMENT):
+                previous = tok
+    except (tokenize.TokenError, SyntaxError):
+        pass  # evaluating the expression reports the syntax error
+    return [
+        match
+        for match in PathPatterns.ABSOLUTE_REFERENCE.finditer(text)
+        if match.start() not in operator_positions and not any(start <= match.start() < end for start, end in literal_spans)
+    ]
 
 
 # ============================================================================
@@ -453,14 +512,7 @@ def scan_references(text: str) -> dict[str, int]:
     """
     refs: dict[str, int] = {}
 
-    # Only process expressions or pure references
-    is_expr = text.startswith("$")
-    is_pure_ref = text.startswith("@")
-
-    if not (is_expr or is_pure_ref):
-        return refs
-
-    # Use centralized pattern to find all references
+    # Only expressions and pure references contain references
     ref_ids = PathPatterns.find_absolute_references(text)
 
     # Count occurrences
@@ -499,27 +551,24 @@ def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name:
     Raises:
         KeyError: If a referenced ID is not in resolved_refs
     """
-    is_expr = text.startswith("$")
-    is_pure_ref = text.startswith("@") and "@" not in text[1:]
-
-    if is_pure_ref:
+    if _is_pure_reference(text):
         # Entire value is a single reference - return resolved value
         ref_id = text[1:]  # Strip @
         if ref_id not in resolved_refs:
             raise KeyError(f"Reference '@{ref_id}' not found in resolved references")
         return resolved_refs[ref_id]
 
-    if not is_expr:
+    if not text.startswith(EXPR_KEY):
         # Not an expression or reference - return as-is
         return text
 
-    # Expression - find all references and replace with variable access
-    # Use regex to find and replace
-    def replace_match(match):
+    # Expression - replace each reference with a lookup, from the end so offsets stay valid
+    result = text
+    for match in reversed(_expression_reference_matches(text)):
         ref_id = match.group(1)
         if ref_id not in resolved_refs:
             raise KeyError(f"Reference '@{ref_id}' not found in resolved references")
-        return f"{local_var_name}['{ref_id}']"
-
-    result = PathPatterns.ABSOLUTE_REFERENCE.sub(replace_match, text)
+        before = text[match.start() - 1]
+        space = " " if before.isalnum() or before == "_" else ""  # `not@a` -> `not __local_refs['a']`
+        result = f"{result[: match.start()]}{space}{local_var_name}['{ref_id}']{result[match.end() :]}"
     return result

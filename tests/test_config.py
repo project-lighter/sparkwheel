@@ -355,6 +355,44 @@ class TestExpressions:
         assert result == 1
 
 
+class TestExpressionReferences:
+    """`@` references work anywhere in a `$` expression; `@` in strings and `a @ b` are left alone."""
+
+    @pytest.mark.parametrize(
+        "expression,expected",
+        [
+            ("$not@flag", True),
+            ("$1 in@items", True),
+            ("$(@n)*2", 6),
+            ("$'user@n'", "user@n"),
+            ("$'{}@{}'.format(@n, @n)", "3@3"),
+            ("$M(@n) @ M(2)", 6),
+        ],
+    )
+    def test_expressions(self, expression, expected):
+        class M:
+            def __init__(self, v):
+                self.v = v
+
+            def __matmul__(self, other):
+                return self.v * other.v
+
+        config = Config(imports={"M": M}).update({"flag": False, "items": [1, 2], "n": 3, "x": expression})
+        assert config.resolve("x") == expected
+
+    def test_reference_in_fstring_has_clear_error(self):
+        from sparkwheel import EvaluationError
+
+        with pytest.raises(EvaluationError, match="not replaced inside f-strings"):
+            Config().update({"a": 1, "x": "$f'{@a}'"}).resolve("x")
+
+    def test_dotted_reference_is_reported_as_missing_with_suggestion(self):
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        with pytest.raises(ConfigKeyError, match="model::lr"):
+            Config().update({"model": {"lr": 1}, "x": "@model.lr"}).resolve("x")
+
+
 class TestConfigMacros:
     """Test macro expansion."""
 
