@@ -46,6 +46,7 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 
 ### Fixed
 
+- Errors about a value under a YAML alias or merge key (`<<: *base`) name its line; only the key holding the alias had one.
 - `resolve(..., instantiate=False)` no longer makes a later `resolve()` return `Component` wrappers (and vice versa): each mode has its own cache.
 - A component with a literal `_disabled_: true` no longer builds its arguments, whether it is resolved directly or as part of its parent (e.g. a disabled callback inside `trainer`): its nested components are not built, its expressions are not evaluated and its references need not exist.
 - YAML merge keys (`<<: *base`) work in config files.

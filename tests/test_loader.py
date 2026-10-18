@@ -211,6 +211,13 @@ class TestLoaderYamlRules:
         assert config == {"base": {"x": 1, "y": 2}, "derived": {"x": 1, "y": 3}}
         assert locations.get("derived::y").line == 6
 
+    def test_values_under_an_alias_have_locations(self, tmp_path):
+        path = tmp_path / "alias.yaml"
+        path.write_text("base: &b\n  nested:\n    value: [1]\nderived:\n  <<: *b\ncopy: *b\n")
+        _, locations = Loader().load_file(str(path))
+        assert locations.get("derived::nested::value").line == 3
+        assert locations.get("copy::nested::value::0").line == 3
+
     def test_merge_key_list(self, tmp_path):
         path = tmp_path / "merge.yaml"
         path.write_text("a: &a {x: 1}\nb: &b {x: 2, y: 2}\nc:\n  <<: [*a, *b]\n")

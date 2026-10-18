@@ -85,10 +85,29 @@ class MetadataTrackingYamlLoader(YamlLoader):
                 self.registry.register(key_id, key_location)
 
             # Construct value with updated path
+            reused = value_node in self.constructed_objects  # an alias or a merged anchor: built under another key
             mapping[key] = self.construct_object(value_node, deep=True)
+            if reused:
+                self._register_children(value_node, key_id)
             self.id_path_stack.pop()
 
         return mapping
+
+    def _register_children(self, node: Any, node_id: str) -> None:
+        """Record where the keys and items under an already-built node are, for this path too."""
+        if isinstance(node, yaml.MappingNode):
+            children = [(str(self.construct_object(k)), k, v) for k, v in node.value]
+        elif isinstance(node, yaml.SequenceNode):
+            children = [(str(i), v, v) for i, v in enumerate(node.value)]
+        else:
+            return
+        for name, mark_node, child in children:
+            child_id = f"{node_id}{ID_SEP_KEY}{name}"
+            if child_id not in self.registry:
+                mark = mark_node.start_mark
+                location = Location(filepath=self.filepath, line=mark.line + 1, column=mark.column + 1, id=child_id)
+                self.registry.register(child_id, location)
+            self._register_children(child, child_id)
 
     def construct_sequence(self, node, deep=False):
         """Construct a list, tracking source locations of its items."""
