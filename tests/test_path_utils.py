@@ -1,5 +1,7 @@
 """Tests for path utility functions."""
 
+import sys
+
 import pytest
 
 from sparkwheel.path_utils import PathPatterns, find_references, get_by_id, replace_references, scan_references
@@ -59,6 +61,31 @@ class TestExpressionReferences:
     )
     def test_scan(self, text, refs):
         assert list(scan_references(text)) == refs
+
+    @pytest.mark.parametrize(
+        "literal, fields",
+        [
+            ('f"lr={x}"', ["x"]),
+            ("f'{x!r:>{w}}'", ["x", "w"]),
+            ("f\"{{x}} {d['k']} {y}\"", ["d['k']", "y"]),
+            ("rf'''{a:{b}}{c}'''", ["a", "b", "c"]),
+            ('f"{x != y}"', ["x != y"]),
+            ('f"{ {1: 2}[1] }"', [" {1: 2}[1] "]),
+            ("f\"{'}'}\"", ["'}'"]),
+        ],
+    )
+    def test_fstring_fields(self, literal, fields):
+        """Before Python 3.12 an f-string is one token, so its replacement fields are found by hand."""
+        from sparkwheel.path_utils import _fstring_fields
+
+        assert [literal[start:end] for start, end in _fstring_fields(literal)] == fields
+
+    def test_replace_uses_the_other_quote_inside_a_single_quoted_fstring(self):
+        from sparkwheel.path_utils import _reference_quotes
+
+        # Before Python 3.12 the lookup cannot reuse the f-string's own quote
+        quote = '"' if sys.version_info < (3, 12) else "'"
+        assert _reference_quotes("f'{@a}'", 0, "'") == {3: quote}
 
     def test_replace_keeps_strings_and_operators(self):
         refs = {"a": 1, "b": 2}
