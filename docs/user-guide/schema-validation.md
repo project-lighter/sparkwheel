@@ -1,6 +1,6 @@
 # Schema Validation
 
-Validate configurations at runtime using Python dataclasses with **continuous validation** - errors caught immediately when you mutate the config.
+Validate configurations at runtime using Python dataclasses with **continuous validation**: a config with a schema is checked after every `update()`, so a bad file or override fails right away. `set()` does not validate; call `config.validate(MySchema)` after it.
 
 ## Quick Start
 

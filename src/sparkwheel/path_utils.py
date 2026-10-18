@@ -301,18 +301,6 @@ def split_file_and_id(src: str) -> tuple[str, str]:
     return PathPatterns.split_file_and_id(src)
 
 
-def find_references(text: str) -> list[str]:
-    """Convenience function wrapping PathPatterns.find_absolute_references().
-
-    Args:
-        text: String to search
-
-    Returns:
-        List of reference IDs found (without @ prefix)
-    """
-    return PathPatterns.find_absolute_references(text)
-
-
 # ============================================================================
 # ID Manipulation Functions
 # ============================================================================

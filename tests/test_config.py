@@ -1681,14 +1681,14 @@ class TestParseOverrides:
     """Test parse_overrides helper function."""
 
     def test_parse_exponent_floats_like_yaml_files(self):
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         result = parse_overrides(["a=1e-3", "b=1E5", "c=-2.5e-4", "d=+1e3", "e=[1e-3]", "f='1e-3'"])
         assert result == {"a": 1e-3, "b": 1e5, "c": -2.5e-4, "d": 1e3, "e": [1e-3], "f": "1e-3"}
 
     def test_parse_keyvalue_style(self):
         """Test parsing key=value style."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["model::lr=0.001", "trainer::epochs=100"]
         result = parse_overrides(args)
@@ -1696,7 +1696,7 @@ class TestParseOverrides:
 
     def test_parse_replace_operator(self):
         """Test parsing =key=value (replace operator)."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["=model={'_target_': 'ResNet'}", "=optimizer::lr=0.01"]
         result = parse_overrides(args)
@@ -1704,7 +1704,7 @@ class TestParseOverrides:
 
     def test_parse_delete_operator(self):
         """Test parsing ~key (delete operator)."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["~old_param", "~model::deprecated"]
         result = parse_overrides(args)
@@ -1712,7 +1712,7 @@ class TestParseOverrides:
 
     def test_parse_type_inference(self):
         """Test automatic type inference using YAML parsing."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = [
             # Numbers
@@ -1764,7 +1764,7 @@ class TestParseOverrides:
 
     def test_parse_yaml_style_booleans(self):
         """Test YAML-style boolean parsing (true/false/yes/no)."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = [
             "a=true",
@@ -1786,7 +1786,7 @@ class TestParseOverrides:
 
     def test_parse_yaml_null(self):
         """Test YAML-style null parsing."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["value=null", "tilde=~"]
         result = parse_overrides(args)
@@ -1796,7 +1796,7 @@ class TestParseOverrides:
 
     def test_parse_yaml_style_in_replace_operator(self):
         """Test YAML-style values work with replace operator."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["=debug=true", "=value=null"]
         result = parse_overrides(args)
@@ -1804,7 +1804,7 @@ class TestParseOverrides:
 
     def test_parse_invalid_yaml_keeps_string(self):
         """Test that invalid YAML values are kept as strings."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         # Unclosed quotes cause YAMLError, should fall back to string
         args = ['msg="unclosed', "=other='unclosed"]
@@ -1814,7 +1814,7 @@ class TestParseOverrides:
 
     def test_parse_nested_paths(self):
         """Test parsing deeply nested paths."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["model::optimizer::lr=0.001", "model::optimizer::betas=[0.9,0.999]"]
         result = parse_overrides(args)
@@ -1825,7 +1825,7 @@ class TestParseOverrides:
 
     def test_parse_operators_with_paths(self):
         """Test operators with nested paths."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["=model::optimizer={'type':'sgd'}", "~model::old_param"]
         result = parse_overrides(args)
@@ -1833,7 +1833,7 @@ class TestParseOverrides:
 
     def test_parse_value_with_equals(self):
         """Test parsing values that contain equals sign."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         args = ["equation=a=b+c"]
         result = parse_overrides(args)
@@ -1842,22 +1842,10 @@ class TestParseOverrides:
 
     def test_parse_empty_args(self):
         """Test parsing empty args list."""
-        from sparkwheel import parse_overrides
+        from sparkwheel.config import parse_overrides
 
         result = parse_overrides([])
         assert result == {}
-
-    def test_parse_with_config_update(self):
-        """Test using parse_overrides with Config.update()."""
-        from sparkwheel import Config, parse_overrides
-
-        config = Config().update({"model": {"lr": 0.01, "hidden_size": 256}})
-        overrides = parse_overrides(["model::lr=0.001", "trainer::epochs=100"])
-        config.update(overrides)
-
-        assert config["model"]["lr"] == 0.001
-        assert config["model"]["hidden_size"] == 256
-        assert config["trainer"]["epochs"] == 100
 
 
 class TestConfigFreeze:

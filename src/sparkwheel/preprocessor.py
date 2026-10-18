@@ -13,6 +13,7 @@ from .utils.constants import ID_SEP_KEY, RAW_REF_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
 
 if TYPE_CHECKING:
+    from .loader import Loader
     from .locations import LocationRegistry
 
 __all__ = ["Preprocessor"]
@@ -63,15 +64,13 @@ class Preprocessor:
         >>> # Result: ref=0.001 (now expanded)
     """
 
-    def __init__(self, loader, globals: dict[str, Any] | None = None):  # type: ignore[no-untyped-def]
+    def __init__(self, loader: "Loader") -> None:
         """Initialize preprocessor.
 
         Args:
             loader: Loader instance for loading external raw reference files
-            globals: Global context (unused here, kept for API consistency)
         """
         self.loader = loader
-        self.globals = globals or {}
 
     def process_raw_refs(
         self,
@@ -116,20 +115,14 @@ class Preprocessor:
         """
         return self._process_raw_refs_recursive(config, base_data, id, set(), locations, external_only)
 
-    def process(
-        self, config: Any, base_data: dict[str, Any], id: str = "", locations: Optional["LocationRegistry"] = None
-    ) -> Any:
-        """Preprocess entire config tree.
+    def process(self, config: Any, id: str = "", locations: Optional["LocationRegistry"] = None) -> Any:
+        """Make relative references (`@::x`) absolute in the whole config tree.
 
-        Main entry point - walks config tree recursively and applies
-        all preprocessing transformations. This is the second preprocessing stage
-        that runs lazily during resolve(), handling relative IDs and @ references.
+        The second preprocessing stage, run during resolve() after every `%` raw reference is expanded.
 
         Args:
             config: Raw config structure to process
-            base_data: Root config dict (for resolving local macros)
             id: Current ID path in tree (for relative ID resolution)
-
             locations: LocationRegistry for error reporting (optional)
 
         Returns:
@@ -138,7 +131,7 @@ class Preprocessor:
         Raises:
             ConfigKeyError: If a relative reference goes above the root
         """
-        return self._process_recursive(config, base_data, id, set(), locations)
+        return self._process_recursive(config, id, locations)
 
     def _process_raw_refs_recursive(
         self,
@@ -200,21 +193,12 @@ class Preprocessor:
 
         return config
 
-    def _process_recursive(
-        self,
-        config: Any,
-        base_data: dict[str, Any],
-        id: str,
-        raw_ref_stack: set[str],
-        locations: Optional["LocationRegistry"] = None,
-    ) -> Any:
+    def _process_recursive(self, config: Any, id: str, locations: Optional["LocationRegistry"] = None) -> Any:
         """Internal recursive preprocessing implementation.
 
         Args:
             config: Current config node
-            base_data: Root config dict
             id: Current ID path
-            raw_ref_stack: Circular reference detection
             locations: LocationRegistry for error reporting (optional)
 
         Returns:
@@ -224,21 +208,17 @@ class Preprocessor:
         if isinstance(config, dict):
             for key in list(config.keys()):
                 sub_id = f"{id}{ID_SEP_KEY}{key}" if id else str(key)
-                config[key] = self._process_recursive(config[key], base_data, sub_id, raw_ref_stack, locations)
+                config[key] = self._process_recursive(config[key], sub_id, locations)
 
         elif isinstance(config, list):
             for idx in range(len(config)):
                 sub_id = f"{id}{ID_SEP_KEY}{idx}" if id else str(idx)
-                config[idx] = self._process_recursive(config[idx], base_data, sub_id, raw_ref_stack, locations)
+                config[idx] = self._process_recursive(config[idx], sub_id, locations)
 
         # Process string values
         if isinstance(config, str):
-            # Step 1: Resolve relative IDs (@::, @::::) to absolute (@)
+            # Resolve relative IDs (@::, @::::) to absolute (@); raw references (%) are already expanded
             config = _absolute(id, config, locations)
-
-            # Step 2: Expand raw references (%) - should already be expanded, but keep for safety
-            if config.startswith(RAW_REF_KEY):
-                config = self._expand_raw_ref(config, base_data, raw_ref_stack)
 
         return config
 

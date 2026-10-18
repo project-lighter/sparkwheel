@@ -108,21 +108,13 @@ class Resolver:
         for item in items:
             self.add_item(item)
 
-    def get_item(self, id: str, resolve: bool = False, **kwargs: Any) -> Item | None:
-        """Get Item by id, optionally resolved.
+    def get_item(self, id: str) -> Item | None:
+        """Get the Item with this id, as written, or None if there is none.
 
         Args:
             id: ID of the config item
-            resolve: Whether to resolve the item (default: False)
-            **kwargs: Additional arguments for resolution
-
-        Returns:
-            Item if found, None otherwise (or resolved value if resolve=True)
         """
-        id = self.normalize_id(id)
-        if resolve:
-            self._resolve_one_item(id=id, **kwargs)
-        return self._items.get(id)
+        return self._items.get(self.normalize_id(id))
 
     def resolve(
         self,

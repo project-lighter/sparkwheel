@@ -24,12 +24,16 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
   Migration: write a number (`1`), or type the field `bool`.
 - `@validator` methods run even when the config has component keys (`_target_`) or, with `strict=False`, extra fields; an error raised while creating the dataclass for them (e.g. in `__post_init__`) is reported as a `ValidationError` instead of skipping the validators. Nested dataclass fields are passed to `__post_init__` and validators as instances, not dicts.
   Migration: fix the validator or `__post_init__` that now reports an error.
-- `Resolver.get_item(id, resolve=True)` returns the item as written, since resolving no longer rewrites it.
+- `Resolver.get_item()` no longer takes `resolve=`: it returns the item as written, since resolving no longer rewrites it.
   Migration: use `config.resolve(id)` for the resolved value.
 - A `$` value that starts with an import and goes on (`"$import os; os.getcwd()"`) raises a `SyntaxError` that suggests `_imports_`, instead of silently returning the module. A value that is only an import (`"$import numpy as np"`) works as before.
   Migration: name the module under `_imports_` (`_imports_: {os: os}`) and write the expression alone (`"$os.getcwd()"`).
-- Removed `sparkwheel.coercion` (it was never called). `Config(coerce=...)` still works but warns with a `DeprecationWarning`: values were never converted, and still are not.
+- Removed `sparkwheel.coercion` and `Config(coerce=...)`: values were never converted.
   Migration: remove the `coerce=` argument.
+- `parse_overrides` is no longer exported from `sparkwheel`: applying its result as a dict skipped the check that catches a misspelled key.
+  Migration: pass each override string to `config.update()`.
+- Removed `Loader.load_files`, `sparkwheel.path_utils.find_references` and `Preprocessor`'s `globals` argument (all unused).
+  Migration: call `Loader.load_file` once per file; use `PathPatterns.find_absolute_references`.
 
 ### Added
 

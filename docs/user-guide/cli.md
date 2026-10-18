@@ -163,25 +163,6 @@ for item in args.inputs:
 config.check()
 ```
 
-## Advanced: Manual Override Parsing
-
-If you need to separate override parsing from application, use `parse_overrides()`:
-
-```python
-from sparkwheel import Config, parse_overrides
-
-# Manually parse overrides
-overrides = parse_overrides(["model::lr=0.001", "=optimizer={'type':'sgd'}", "~debug"])
-# Result: {"model::lr": 0.001, "=optimizer": {"type": "sgd"}, "~debug": None}
-
-config = Config()
-config.update("base.yaml")
-config.update(overrides)
-```
-
-!!! warning "parse_overrides() Syntax"
-    `parse_overrides()` **only** supports `key=value` syntax (no `--key value` flag style).
-
 ## Schema Validation
 
 Add continuous validation with dataclasses:

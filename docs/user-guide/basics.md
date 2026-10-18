@@ -240,7 +240,7 @@ training:
 
 ### Schema Validation with Dataclasses
 
-Sparkwheel supports automatic validation using Python dataclasses with **continuous validation** - errors are caught immediately when you mutate the config:
+Sparkwheel supports automatic validation using Python dataclasses with **continuous validation**: a config with a schema is checked after every `update()`:
 
 ```python
 from dataclasses import dataclass

@@ -4,7 +4,7 @@ sparkwheel: A powerful YAML-based configuration system with references, expressi
 Uses YAML format only.
 """
 
-from .config import Config, parse_overrides
+from .config import Config
 from .items import Component, Expression, Instantiable, Item
 from .operators import apply_operators, validate_operators
 from .resolver import Resolver
@@ -27,7 +27,6 @@ __version__ = "0.0.11"
 __all__ = [
     "__version__",
     "Config",
-    "parse_overrides",
     "MISSING",
     "Item",
     "Component",

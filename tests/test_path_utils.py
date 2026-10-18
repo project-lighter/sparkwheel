@@ -3,7 +3,7 @@
 import pytest
 
 from sparkwheel import Config
-from sparkwheel.path_utils import PathPatterns, find_references, get_by_id, ref_name, replace_references, scan_references
+from sparkwheel.path_utils import PathPatterns, get_by_id, ref_name, replace_references, scan_references
 
 
 class TestPathPatterns:
@@ -19,17 +19,6 @@ class TestPathPatterns:
     def test_find_absolute_references_in_plain_text(self):
         """Test finding references returns empty for plain text."""
         refs = PathPatterns.find_absolute_references("plain text without references")
-        assert refs == []
-
-    def test_find_references_function(self):
-        """Test find_references utility function."""
-        # Test the wrapper function - returns IDs without @
-        refs = find_references("$some_func(@model::lr)")
-        assert "model::lr" in refs
-
-    def test_find_references_empty_for_plain_text(self):
-        """Test find_references returns empty for plain text."""
-        refs = find_references("just plain text")
         assert refs == []
 
 

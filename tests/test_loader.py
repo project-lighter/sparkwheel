@@ -108,58 +108,6 @@ class TestLoaderMetadataTracking:
         assert location is not None
 
 
-class TestLoaderMultipleFiles:
-    """Test loading multiple YAML files."""
-
-    def test_load_files_basic(self, tmp_path):
-        """Test loading multiple files."""
-        file1 = tmp_path / "config1.yaml"
-        file1.write_text("key1: value1\nshared: from_file1")
-
-        file2 = tmp_path / "config2.yaml"
-        file2.write_text("key2: value2\nshared: from_file2")
-
-        loader = Loader()
-        config, metadata = loader.load_files([str(file1), str(file2)])
-
-        # Later files should override earlier files
-        assert config["key1"] == "value1"
-        assert config["key2"] == "value2"
-        assert config["shared"] == "from_file2"
-
-    def test_load_files_empty_list(self):
-        """Test loading empty file list."""
-        loader = Loader()
-        config, metadata = loader.load_files([])
-
-        assert config == {}
-        assert isinstance(metadata, LocationRegistry)
-
-    def test_load_files_single_file(self, tmp_path):
-        """Test loading single file via load_files."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("key: value")
-
-        loader = Loader()
-        config, metadata = loader.load_files([str(config_file)])
-
-        assert config == {"key": "value"}
-
-    def test_load_files_metadata_merged(self, tmp_path):
-        """Test that metadata is merged from multiple files."""
-        file1 = tmp_path / "config1.yaml"
-        file1.write_text("key1: value1")
-
-        file2 = tmp_path / "config2.yaml"
-        file2.write_text("key2: value2")
-
-        loader = Loader()
-        config, metadata = loader.load_files([str(file1), str(file2)])
-
-        # Both files should have metadata tracked
-        assert metadata.get("") is not None
-
-
 class TestLoaderEdgeCases:
     """Test edge cases in loader."""
 

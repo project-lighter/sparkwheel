@@ -2,7 +2,6 @@
 
 import os
 import re
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -189,25 +188,3 @@ class Loader:
         # Load and return clean config
         config = yaml.load(stream, TrackerLoader)
         return config if config is not None else {}
-
-    def load_files(self, filepaths: Sequence[PathLike]) -> tuple[dict[str, Any], LocationRegistry]:
-        """Load multiple YAML files sequentially.
-
-        Files are loaded in order and merged using simple dict update
-        (not the merge_configs logic - that happens at a higher level).
-
-        Args:
-            filepaths: Sequence of file paths to load
-
-        Returns:
-            Tuple of (merged_config_dict, merged_metadata_registry)
-        """
-        combined_config = {}
-        combined_registry = LocationRegistry()
-
-        for filepath in filepaths:
-            config, registry = self.load_file(filepath)
-            combined_config.update(config)
-            combined_registry.merge(registry)
-
-        return combined_config, combined_registry

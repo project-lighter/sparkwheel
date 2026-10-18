@@ -1361,10 +1361,6 @@ class TestSchemaCleanup:
         with pytest.raises(ValidationError, match="n must be positive"):
             validate({"n": -1, "extra": 1}, Positive, strict=False)
 
-    def test_coerce_argument_is_deprecated(self):
-        with pytest.warns(DeprecationWarning, match="coerce"):
-            Config(coerce=False)
-
 
 class TestNestedDataclassesInValidators:
     """`__post_init__` and validators see nested dataclass fields as instances, not dicts."""

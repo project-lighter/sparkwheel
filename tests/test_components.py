@@ -464,15 +464,6 @@ class TestResolver:
         retrieved = resolver.get_item("nonexistent")
         assert retrieved is None
 
-    def test_get_item_with_resolve(self):
-        """Test get_item with resolve parameter."""
-        resolver = Resolver()
-        item = Item({"a": 1}, id="test")
-        resolver.add_item(item)
-        retrieved = resolver.get_item("test", resolve=True)
-        assert retrieved is item
-        assert "test" in resolver._resolved
-
     def test_normalize_id(self):
         """Test normalize_id converts to string."""
         assert Resolver.normalize_id("a::b::c") == "a::b::c"

@@ -96,7 +96,6 @@ See Config class docstring for full API details.
 """
 
 import os
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -146,7 +145,7 @@ class Config:
         # Access raw values
         lr = config.get("model::lr")
 
-        # Set values (validates automatically if schema provided)
+        # Set values (not validated: call config.validate(MySchema) to check)
         config.set("model::dropout", 0.1)
 
         # Freeze to prevent modifications
@@ -160,7 +159,6 @@ class Config:
     Args:
         imports: Pre-imported packages for expressions (e.g., {"torch": "torch"})
         schema: Dataclass schema for continuous validation
-        coerce: Deprecated and ignored (values are never converted)
         strict: Reject fields not in schema (default: True)
         allow_missing: Allow MISSING sentinel values (default: False)
     """
@@ -171,7 +169,6 @@ class Config:
         *,  # Rest are keyword-only
         imports: dict[str, Any] | None = None,
         schema: type | None = None,
-        coerce: bool | None = None,
         strict: bool = True,
         allow_missing: bool = False,
     ):
@@ -183,7 +180,6 @@ class Config:
             data: Initial data (internal/testing use only, not validated)
             imports: Pre-imported packages for expression evaluation
             schema: Dataclass schema for continuous validation
-            coerce: Deprecated and ignored (values are never converted)
             strict: Reject fields not in schema
             allow_missing: Allow MISSING sentinel values
 
@@ -202,13 +198,6 @@ class Config:
 
         # Schema validation state
         self._schema: type | None = schema
-        if coerce is not None:
-            warnings.warn(
-                "Config(coerce=...) is deprecated and has no effect: values are never converted, they must match "
-                "the schema's types. Remove the argument.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self._strict: bool = strict
         self._allow_missing: bool = allow_missing
 
@@ -220,7 +209,7 @@ class Config:
                 self._imports[k] = optional_import(v)[0] if isinstance(v, str) else v
 
         self._loader = Loader()
-        self._preprocessor = Preprocessor(self._loader, self._imports)
+        self._preprocessor = Preprocessor(self._loader)
 
     def get(self, id: str = "", default: Any = None) -> Any:
         """Get raw config value (unresolved).
@@ -693,7 +682,7 @@ class Config:
         and uses a separate cache for efficiency.
 
         Processing stages:
-        - `%` raw references: Already expanded during update() (eager)
+        - `%` raw references: from other files when loaded by update(), local ones now
         - `@` resolved references: Resolved now (lazy, supports circular deps)
         - `$` expressions: Evaluated now (lazy)
         - `_target_` components: Instantiated now (lazy)
@@ -741,8 +730,8 @@ class Config:
             >>> type(optimizer).__name__
             'Adam'
 
-            >>> # Disable instantiation (useful for inspection)
-            >>> config.resolve("optimizer", instantiate=False)
+            >>> # Disable instantiation (useful for inspection): the Component, not the object
+            >>> config.resolve("optimizer", instantiate=False).get_config()
             {'_target_': 'torch.optim.Adam', 'lr': 0.001}
 
             >>> # With default value
@@ -830,7 +819,7 @@ class Config:
         data = self._preprocessor.process_raw_refs(data, data, id="", locations=self._locations, external_only=False)
 
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        data = self._preprocessor.process(data, data, id="", locations=self._locations)
+        data = self._preprocessor.process(data, locations=self._locations)
 
         # Stage 2: Parse config tree to create Items
         parser = Parser(globals=self._imports, metadata=self._locations)
