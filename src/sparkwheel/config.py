@@ -95,6 +95,7 @@ config.update("~model::old_param")  # Delete
 See Config class docstring for full API details.
 """
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -592,8 +593,6 @@ class Config:
         """Parse and apply a single override string (e.g., 'key=value', '=key=value', '~key')."""
         for key, value in parse_overrides([override]).items():
             path = key.removeprefix(REPLACE_KEY)
-            if key == path and isinstance(value, list) and isinstance(self.get(path), list):
-                key = REPLACE_KEY + path  # `milestones=[10,20]` means that list, not two more items
             if not key.startswith(REMOVE_KEY):
                 self._check_override_path(path, value, override, merge=key == path)
             before = self.get(path) if key == path else None  # what a compose override merges into
@@ -638,6 +637,14 @@ class Config:
                 f"Cannot override '{path}': '{missing}' does not exist" if missing != path else f"'{path}' does not exist",
                 source_location=location,
                 suggestion=suggestion,
+            )
+        if merge and node and isinstance(node, list) and isinstance(value, list):
+            written = override.startswith(f"{path}=")
+            replace = f"={override}" if written else f"={path}={json.dumps(value, separators=(',', ':'))}"
+            raise ConfigKeyError(  # extending is what a YAML file does; on a command line it looks like setting
+                f"'{path}' is a list, so this override would add {value!r} to {node!r}",
+                source_location=Location(filepath="", line=0, id=path, override=override),
+                suggestion=f"To replace the list, write '{replace}'. To add items, put them in a YAML file.",
             )
         if merge and isinstance(node, dict) and isinstance(value, dict):
             for key, child in value.items():

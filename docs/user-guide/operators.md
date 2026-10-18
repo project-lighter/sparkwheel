@@ -76,8 +76,8 @@ plugins:
 !!! success "Natural Composition"
     **No operators needed for the common case!** Sparkwheel merges dicts and extends lists by default, matching how you naturally think about config layering.
 
-!!! info "Command-line overrides replace lists"
-    An override string such as `plugins=[cache]` sets the list to `[cache]`: on the command line you write the value you want. YAML files and dict updates extend.
+!!! info "Command-line overrides don't extend lists"
+    On the command line, `plugins=[cache]` reads like setting the list, so when `plugins` already has items it is an error that says to write `=plugins=[cache]`. YAML files and dict updates extend.
 
 ## The `=` Operator: Explicit Replace
 

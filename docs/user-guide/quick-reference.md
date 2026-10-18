@@ -151,8 +151,8 @@ model:
   channels: [16, 32]
 ```
 
-!!! info "A list on the command line replaces the list"
-    `model::channels=[64,128]` sets the list to `[64, 128]`, while a YAML file extends it.
+!!! warning "Replace a list with `=`"
+    `model::channels=[64,128]` is an error on a list that has items. Write `=model::channels=[64,128]` to replace it.
 
 === "Set values"
 
@@ -171,7 +171,7 @@ model:
 === "Lists"
 
     ```bash
-    python train.py config.yaml model::channels=[64,128]  # → [64, 128]
+    python train.py config.yaml =model::channels=[64,128]  # → [64, 128]
     ```
 
 === "Replace and delete"
@@ -250,6 +250,7 @@ d: "$@c * 2"         # resolved last → 40
 | **Expression error** | Invalid Python after `$` | Check syntax and references |
 | **Unexpected merge** | Dict merged when you wanted replace | Use `=key` to replace |
 | **List grew** | A YAML file's `layers: [1, 2]` extended the list | Use `=layers: [1, 2]` to replace |
+| **Override is a list** | `layers=[1,2]` on a list that has items | Use `=layers=[1,2]` to replace |
 | **Key does not exist** | An override names a missing key | Fix the typo (or use `::`, not `.`); put new keys in a YAML file |
 
 ## File Organization

@@ -627,15 +627,17 @@ class TestOverrideProvenance:
         assert config.locations.get("model::dim").override == "model={dim: 8}"
 
     def test_list_extension_registers_only_new_items(self):
-        config = Config().update({"m": {"xs": [1, 2]}}).update("m={xs: [3]}")
-        assert config.get("m::xs") == [1, 2, 3]
-        assert config.locations.get("m::xs::2").override == "m={xs: [3]}"
-        assert config.locations.get("m::xs::0") is None
-
-    def test_a_list_override_replaces_the_list(self):
-        config = Config().update({"xs": [1, 2], "n": None}).update("xs=[3]").update("n=[1]")
+        config = Config().update({"xs": [], "n": None}).update("xs=[3]").update("n=[1]")
         assert config.get("xs") == [3] and config.get("n") == [1]
         assert config.locations.get("xs::0").override == "xs=[3]"
+
+    @pytest.mark.parametrize(("override", "replace"), [("xs=[3]", "'=xs=[3]'"), ("m={xs: [3, 'a']}", "'=m::xs=[3,\"a\"]'")])
+    def test_an_override_does_not_extend_a_list(self, override, replace):
+        config = Config().update({"xs": [1, 2], "m": {"xs": [1]}})
+        with pytest.raises(ConfigKeyError, match="is a list") as error:
+            config.update(override)
+        assert replace in str(error.value) and "YAML file" in str(error.value)
+        assert config.get("xs") == [1, 2] and config.get("m::xs") == [1]
 
     def test_location_str(self):
         from sparkwheel import Location

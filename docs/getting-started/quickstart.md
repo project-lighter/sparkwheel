@@ -115,7 +115,7 @@ Run with overrides:
 python train.py training::learning_rate=0.01 dataset::batch_size=64
 ```
 
-Nested keys are separated by `::`, and values follow YAML rules. Overriding a list appends to it; `=key=[...]` replaces it. See [CLI Overrides](../user-guide/cli.md).
+Nested keys are separated by `::`, and values follow YAML rules. To replace a list that has items, write `=key=[...]`. See [CLI Overrides](../user-guide/cli.md).
 
 ## Next Steps
 

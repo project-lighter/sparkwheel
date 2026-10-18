@@ -12,8 +12,8 @@ Override configuration values from the command line with automatic file and over
     - Everything else → Loaded as file paths
     - No manual separation needed!
 
-!!! info "A list on the command line replaces the list"
-    `model::channels=[64,128]` sets the list to `[64, 128]`, while a YAML file extends it. To add items instead, put them in a YAML file listed on the command line.
+!!! warning "Replace a list with `=`"
+    `model::channels=[64,128]` on a list that has items is an error, because composing would append to it. Write `=model::channels=[64,128]` to replace the list, or put the items in a YAML file to add them.
 
 ## Quick Start
 
@@ -119,7 +119,7 @@ Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`). Three ope
 
 | Operator | Syntax | Behavior | Example |
 |----------|--------|----------|---------|
-| **Compose** (default) | `key=value` | Merges dicts, replaces lists | `model::lr=0.001` |
+| **Compose** (default) | `key=value` | Merges dicts; a list that has items needs `=` | `model::lr=0.001` |
 | **Replace** | `=key=value` | Completely replaces value | `=model={'_target_': 'ResNet'}` |
 | **Delete** | `~key` | Removes key (errors if missing) | `~debug` |
 
