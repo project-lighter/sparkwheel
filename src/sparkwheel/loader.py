@@ -26,7 +26,7 @@ class YamlLoader(yaml.SafeLoader):
 
 YamlLoader.add_implicit_resolver(
     "tag:yaml.org,2002:float",
-    re.compile(r"^[-+]?(?:[0-9][0-9_]*(?:\.[0-9_]*)?|\.[0-9_]+)[eE][-+]?[0-9]+$"),
+    re.compile(r"^[-+]?(?:[0-9][0-9_]*(?:\.[0-9_]*)?|\.[0-9][0-9_]*)[eE][-+]?[0-9]+$"),
     list("-+0123456789."),
 )
 

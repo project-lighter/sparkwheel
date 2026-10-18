@@ -24,12 +24,14 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
   Migration: write a number (`1`), or type the field `bool`.
 - `@validator` methods run even when the config has component keys (`_target_`) or, with `strict=False`, extra fields; an error raised while creating the dataclass for them (e.g. in `__post_init__`) is reported as a `ValidationError` instead of skipping the validators.
   Migration: fix the validator or `__post_init__` that now reports an error.
+- `Resolver.get_item(id, resolve=True)` returns the item as written, since resolving no longer rewrites it.
+  Migration: use `config.resolve(id)` for the resolved value.
 - Removed `sparkwheel.coercion` (it was never called). `Config(coerce=...)` still works but warns with a `DeprecationWarning`: values were never converted, and still are not.
   Migration: remove the `coerce=` argument.
 
 ### Added
 
-- `Config.check()` finds mistakes without building anything: missing references, `_target_`s that cannot be imported, arguments the target does not accept and `$` expressions that do not compile. It raises one `ValidationError` listing every problem with its file:line or override. Disabled components are skipped.
+- `Config.check()` finds mistakes without building anything: missing references, `_target_`s that cannot be found or whose module fails to import, arguments the target does not accept and `$` expressions that do not compile. It raises one `ValidationError` listing every problem with its file:line or override. Disabled components are skipped.
 - A wrong argument name raises `'pkg.Model' got an unexpected argument 'learnin_rate'` with a did-you-mean, the accepted arguments, and the line (or override) of that argument; a missing argument is reported the same way. A `TypeError` raised inside the target itself is passed through unchanged. With `_mode_: callable`, argument names are checked when the partial is created instead of when it is called.
 - An override with a dotted key (`model.lr=0.1`) suggests the `::` path (`model::lr`).
 - `Location.override`: the CLI override text (`model::lr=0.1`) that set a value. Errors about a value set by an override show ``[override → model::lr]`` and the override itself instead of a YAML line that is no longer in effect.
@@ -37,11 +39,11 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 ### Fixed
 
 - `resolve(..., instantiate=False)` no longer makes a later `resolve()` return `Component` wrappers (and vice versa): each mode has its own cache.
-- A component with a literal `_disabled_: true` no longer builds its arguments (no side effects from a disabled component's nested components or expressions).
+- A component with a literal `_disabled_: true` no longer builds its arguments, whether it is resolved directly or as part of its parent (e.g. a disabled callback inside `trainer`): its nested components are not built, its expressions are not evaluated and its references need not exist.
 - YAML merge keys (`<<: *base`) work in config files.
 - Error messages stand alone: a failed `$` expression shows the expression as written plus the Python error (`AttributeError: ...`), syntax errors in `$` expressions carry the file and line, a `NameError` suggests `_imports_`, an unknown `_target_` module names the part that cannot be imported, a missing `@` reference points at the key that holds it, and a missing id points at its nearest existing parent instead of the first key in the file. The doubled "💡 💡" is gone.
 - An expression containing the word `import` (e.g. `$@a['import']`) is no longer mistaken for an import statement.
-- `@` references work anywhere in a `$` expression (`$not@a`, `$1 in@a`); an `@` inside a string literal or comment, or used as the matrix-multiplication operator (`a @ b`), is no longer treated as a reference. A reference inside an f-string gives an error that says so.
+- `@` references work anywhere in a `$` expression (`$not@a`, `$1 in@a`); an `@` inside a string literal or comment, or used as the matrix-multiplication operator (`a @ b`), is no longer treated as a reference. References inside f-string replacement fields (`$f"lr={@lr:.2e}"`, `$f'{@lr}'`) work on every Python version.
 - A whole-value reference that is not a valid id (`@model.lr`) raises a `ConfigKeyError` with a did-you-mean instead of a bare `KeyError`.
 - A `_target_` that cannot be found points at the `_target_` line (or override), not at the component.
 - Loading a config path that contains `..` no longer warns about "path traversal attacks".

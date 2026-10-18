@@ -279,7 +279,8 @@ def describe_argument_error(
         or None if the arguments fit the signature or Python cannot tell the signature (some builtins).
     """
     try:
-        signature = inspect.signature(target)
+        # A decorator's wrapper (functools.wraps) may accept arguments the wrapped function does not
+        signature = inspect.signature(target, follow_wrapped=False)
     except (TypeError, ValueError):
         return None
     params = signature.parameters

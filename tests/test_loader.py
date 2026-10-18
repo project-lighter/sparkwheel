@@ -279,7 +279,7 @@ class TestLoaderYamlRules:
         config, _ = Loader().load_file(str(path))
         assert config["lr"] == value and isinstance(config["lr"], float)
 
-    @pytest.mark.parametrize("text", ["1e", "e5", "1e3x", "'1e-3'", "0x1e"])
+    @pytest.mark.parametrize("text", ["1e", "e5", "1e3x", "'1e-3'", "0x1e", "._e3"])
     def test_non_floats_stay_as_before(self, tmp_path, text):
         path = tmp_path / "floats.yaml"
         path.write_text(f"v: {text}\n")

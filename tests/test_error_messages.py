@@ -652,6 +652,17 @@ class TestArgumentErrors:
             "class Broken:\n"
             "    def __init__(self, n=1):\n"
             "        len(n)\n"
+            "\n"
+            "import functools\n"
+            "def injects(f):\n"
+            "    @functools.wraps(f)\n"
+            "    def wrapper(*args, injected=0, **kwargs):\n"
+            "        return f(*args, **kwargs) + injected\n"
+            "    return wrapper\n"
+            "\n"
+            "@injects\n"
+            "def wrapped(a):\n"
+            "    return a\n"
         )
         monkeypatch.syspath_prepend(str(tmp_path))
         self.path = tmp_path / "config.yaml"
@@ -694,6 +705,11 @@ class TestArgumentErrors:
     def test_callable_mode_allows_missing_arguments(self):
         self.path.write_text("model:\n  _target_: argmod.Model\n  _mode_: callable\n  dim: 3\n")
         assert Config().update(str(self.path)).resolve("model")(learning_rate=1).dim == 3
+
+    def test_decorator_wrapper_arguments_are_accepted(self):
+        config = Config().update({"f": {"_target_": "argmod.wrapped", "_mode_": "callable", "injected": 2}})
+        config.check()
+        assert config.resolve("f")(a=1) == 3
 
     def test_targets_without_signature_are_called_as_before(self):
         assert Config().update({"x": {"_target_": "builtins.dict", "a": 1}}).resolve("x") == {"a": 1}

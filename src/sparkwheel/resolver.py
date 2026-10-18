@@ -3,14 +3,21 @@
 import warnings
 from collections.abc import Iterator
 from copy import copy
-from pydoc import locate
+from pydoc import ErrorDuringImport, locate
 from typing import Any
 
 from .items import Component, Expression, Item
 from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
 from .utils.constants import EXPR_KEY, ID_SEP_KEY, RESOLVED_REF_KEY
-from .utils.exceptions import BaseError, CircularReferenceError, ConfigKeyError, Location, TargetNotFoundError
+from .utils.exceptions import (
+    BaseError,
+    CircularReferenceError,
+    ConfigKeyError,
+    InstantiationError,
+    Location,
+    TargetNotFoundError,
+)
 
 __all__ = ["Resolver"]
 
@@ -229,7 +236,7 @@ class Resolver:
         waiting_list.add(id)
 
         # A literally disabled component is skipped before its arguments are built
-        if isinstance(item, Component) and instantiate and self._disabled_flag(item):
+        if isinstance(item, Component) and instantiate and self._disabled_flag(item_config):
             resolved[id] = None
             return None
 
@@ -304,12 +311,12 @@ class Resolver:
         return None
 
     @staticmethod
-    def _disabled_flag(item: Component) -> bool | None:
-        """A literal `_disabled_` value, or None when a reference or expression decides it at resolve time."""
-        flag = item.get_config().get("_disabled_", False)
+    def _disabled_flag(config: dict[str, Any]) -> bool | None:
+        """A component's literal `_disabled_` value, or None when a reference or expression decides it at resolve time."""
+        flag = config.get("_disabled_", False)
         if isinstance(flag, (dict, list)) or (isinstance(flag, str) and flag.startswith((EXPR_KEY, RESOLVED_REF_KEY))):
             return None
-        return item.is_disabled()
+        return flag.lower().strip() == "true" if isinstance(flag, str) else bool(flag)
 
     def find_problems(self) -> list[BaseError]:
         """Find the mistakes resolving would raise, without building components or evaluating expressions.
@@ -319,7 +326,9 @@ class Resolver:
         """
         problems: list[BaseError] = []
         skipped = [
-            id for id, item in self._items.items() if isinstance(item, Component) and self._disabled_flag(item) is not False
+            id
+            for id, item in self._items.items()
+            if isinstance(item, Component) and self._disabled_flag(item.get_config()) is not False
         ]
         for id, item in self._items.items():
             if any(id == s or id.startswith(f"{s}{self.sep}") for s in skipped):
@@ -357,7 +366,14 @@ class Resolver:
         target = config["_target_"]
         if not isinstance(target, str) or target.startswith((EXPR_KEY, RESOLVED_REF_KEY)):
             return None  # decided at resolve time
-        located = locate(target)
+        try:
+            located = locate(target)
+        except ErrorDuringImport as e:  # the module exists but raises when imported
+            cause = getattr(e, "value", e)
+            return InstantiationError(
+                f"Cannot import '{target}': {type(cause).__name__}: {cause}",
+                source_location=item.location_of("_target_"),
+            )
         if located is None:
             return TargetNotFoundError(
                 f"Cannot locate class or function: '{target}'",
@@ -474,6 +490,8 @@ class Resolver:
                 # Instantiable and expression items are also dependencies
                 if (Component.is_instantiable(v) or Expression.is_expression(v)) and sub_id not in refs_:
                     refs_[sub_id] = 1
+                if Component.is_instantiable(v) and cls._disabled_flag(v):
+                    continue  # a disabled component resolves to None, so nothing inside it is needed
                 refs_ = cls.find_refs_in_config(v, sub_id, refs_)
 
         return refs_

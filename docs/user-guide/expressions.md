@@ -28,7 +28,7 @@ training:
   steps_per_epoch: "$@training::total_samples // @training::batch_size"
 ```
 
-A reference can appear anywhere a Python value can (`$not@debug`, `$(@a)`). An `@` inside a string (`$'user@host'`) or used as the matrix-multiplication operator (`$@a @ @b`) is left alone. References are not replaced inside f-strings; use `$'lr={}'.format(@lr)` instead.
+A reference can appear anywhere a Python value can (`$not@debug`, `$(@a)`). An `@` inside a string (`$'user@host'`) or used as the matrix-multiplication operator (`$@a @ @b`) is left alone. Inside an f-string, references work in the replacement fields: `$f"lr={@lr:.0e}"`.
 
 ## Importing Modules
 

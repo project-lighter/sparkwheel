@@ -10,6 +10,7 @@ def _module(tmp_path, monkeypatch):
     (tmp_path / "checkmod.py").write_text(
         "BUILT = []\nclass Model:\n    def __init__(self, learning_rate, dim=2):\n        BUILT.append(self)\n"
     )
+    (tmp_path / "brokenmod.py").write_text("import nonexistent_dependency_xyz\n")
     monkeypatch.syspath_prepend(str(tmp_path))
 
 
@@ -79,3 +80,11 @@ def test_check_after_resolve_keeps_built_objects(tmp_path):
     model = config.resolve("model")
     config.check()
     assert config.resolve("model") is model
+
+
+def test_target_whose_module_fails_to_import_is_a_problem(tmp_path):
+    with pytest.raises(ValidationError) as excinfo:
+        _check(tmp_path, "model:\n  _target_: brokenmod.Model\nother: '@missing'\n")
+    msg = str(excinfo.value)
+    assert msg.startswith("Config check found 2 problems:")
+    assert "config.yaml:2 → model::_target_: Cannot import 'brokenmod.Model': ModuleNotFoundError" in msg

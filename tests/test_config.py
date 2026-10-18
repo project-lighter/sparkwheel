@@ -380,11 +380,29 @@ class TestExpressionReferences:
         config = Config(imports={"M": M}).update({"flag": False, "items": [1, 2], "n": 3, "x": expression})
         assert config.resolve("x") == expected
 
-    def test_reference_in_fstring_has_clear_error(self):
-        from sparkwheel import EvaluationError
+    @pytest.mark.parametrize(
+        "expression, expected",
+        [
+            ('$f"lr={@lr}"', "lr=0.5"),
+            ("$f'lr={@lr}'", "lr=0.5"),
+            ('$f"{@lr:.2f}"', "0.50"),
+            ("$f'{@lr!r:>{@width}}'", "  0.5"),
+            ('$f"{{@lr}} {@lr}"', "{@lr} 0.5"),
+            ('$f"me@lr {@lr}"', "me@lr 0.5"),
+            ("$f\"{'a@lr'} {@lr}\"", "a@lr 0.5"),
+            ("$rf'{@lr}'", "0.5"),
+            ("$f'''{@names['a']}'''", "x"),
+            ('$f"{@m @ @m}"', "4"),
+            ("$f'{@lr}' + f'{@width}'", "0.55"),
+        ],
+    )
+    def test_references_in_fstring_replacement_fields(self, expression, expected):
+        class M:
+            def __matmul__(self, other):
+                return 4
 
-        with pytest.raises(EvaluationError, match="not replaced inside f-strings"):
-            Config().update({"a": 1, "x": "$f'{@a}'"}).resolve("x")
+        config = Config(imports={"M": M}).update({"lr": 0.5, "width": 5, "names": {"a": "x"}, "m": "$M()", "x": expression})
+        assert config.resolve("x") == expected
 
     def test_dotted_reference_is_reported_as_missing_with_suggestion(self):
         from sparkwheel.utils.exceptions import ConfigKeyError
@@ -578,6 +596,28 @@ class TestComponents:
             }
         )
         assert config.resolve("x") is None
+
+    def test_disabled_component_inside_a_resolved_parent_is_not_built(self):
+        """Resolving the parent (as Lighter resolves `trainer`) skips the disabled component's contents too."""
+        config = Config().update(
+            {
+                "trainer": {
+                    "_target_": "builtins.dict",
+                    "callbacks": [
+                        {"_target_": "builtins.dict", "a": 1},
+                        {
+                            "_target_": "builtins.dict",
+                            "_disabled_": True,
+                            "inner": {"_target_": "builtins.exec", "_args_": ["raise RuntimeError('built')"]},
+                            "expr": "$exec(\"raise RuntimeError('evaluated')\")",
+                            "ref": "@missing",
+                        },
+                    ],
+                }
+            }
+        )
+        config.check()
+        assert config.resolve("trainer") == {"callbacks": [{"a": 1}]}
 
     def test_disabled_flag_from_expression_still_disables(self):
         config = Config().update({"flag": True, "x": {"_target_": "collections.Counter", "_disabled_": "$@flag"}})

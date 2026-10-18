@@ -58,6 +58,8 @@ python train.py config.yaml trainer::max_epoch=5
 
 Overrides change keys that exist (or add an argument to a `_target_` component), so a typo can't silently add a key that nothing reads. To add a new key, put it in a YAML file.
 
+Here `trainer` has no `_target_`. When it does, the override is taken as a new argument and the typo is reported when `trainer` is built (or by `config.check()`): `'pkg.Trainer' got an unexpected argument 'max_epoch'`, with the same did-you-mean.
+
 ## An override uses `.` instead of `::`
 
 ```yaml title="config.yaml"
