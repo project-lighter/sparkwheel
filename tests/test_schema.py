@@ -1217,8 +1217,10 @@ class TestValidatorExceptionHandling:
                 # This validator won't run if __init__ fails
                 assert self.value > 0
 
-        # Should still validate the types even if instance creation fails
-        validate({"value": -5}, Config)
+        # An error raised while building the instance is reported, not skipped
+        with pytest.raises(ValidationError, match="Value must be positive") as excinfo:
+            validate({"value": -5}, Config)
+        assert isinstance(excinfo.value.__cause__, ValueError)
 
 
 class TestUnionValidationSuccess:
@@ -1281,3 +1283,84 @@ class TestMetadataExceptionHandling:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSchemaCleanup:
+    """Postponed annotations, bools as numbers, and validators that used to be skipped silently."""
+
+    def test_postponed_annotations(self, tmp_path, monkeypatch):
+        (tmp_path / "pep563_schema.py").write_text(
+            "from __future__ import annotations\n"
+            "from dataclasses import dataclass\n"
+            "@dataclass\n"
+            "class Child:\n    n: int\n"
+            "@dataclass\n"
+            "class Parent:\n    child: Child\n    tags: list[str] | None = None\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        from pep563_schema import Parent
+
+        validate({"child": {"n": 2}, "tags": ["a"]}, Parent)
+        with pytest.raises(ValidationError, match="child.n"):
+            validate({"child": {"n": "two"}}, Parent)
+
+    def test_unresolvable_annotation_names_the_schema(self):
+        @dataclass
+        class Broken:
+            n: "Undefined"  # noqa: F821
+
+        with pytest.raises(TypeError, match="Broken"):
+            validate({"n": 1}, Broken)
+
+    @pytest.mark.parametrize("annotation", [int, float])
+    def test_bool_is_not_a_number(self, annotation):
+        @dataclass
+        class Numeric:
+            n: annotation
+
+        with pytest.raises(ValidationError, match="Type mismatch"):
+            validate({"n": True}, Numeric)
+        validate({"n": 1}, Numeric)
+
+    def test_bool_is_a_bool(self):
+        @dataclass
+        class Flag:
+            on: bool
+
+        validate({"on": True}, Flag)
+        with pytest.raises(ValidationError):
+            validate({"on": 1}, Flag)
+
+    def test_component_keys_do_not_skip_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Positive:
+            n: int
+
+            @validator
+            def check_positive(self):
+                if self.n <= 0:
+                    raise ValueError("n must be positive")
+
+        with pytest.raises(ValidationError, match="n must be positive"):
+            Config(schema=Positive).update({"_target_": "builtins.dict", "n": -1})
+
+    def test_lenient_extra_fields_do_not_skip_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Positive:
+            n: int
+
+            @validator
+            def check_positive(self):
+                if self.n <= 0:
+                    raise ValueError("n must be positive")
+
+        with pytest.raises(ValidationError, match="n must be positive"):
+            validate({"n": -1, "extra": 1}, Positive, strict=False)
+
+    def test_coerce_argument_is_deprecated(self):
+        with pytest.warns(DeprecationWarning, match="coerce"):
+            Config(coerce=False)

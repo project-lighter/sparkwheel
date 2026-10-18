@@ -271,9 +271,8 @@ config.validate(AppConfigSchema)
 ```
 
 Schema validation provides:
-- **Continuous validation**: Errors caught immediately at mutation time (when schema provided to `Config()`)
-- **Type checking**: Ensures values have the correct types
-- **Type coercion**: Automatically converts compatible types (e.g., `"8080"` → `8080`)
+- **Continuous validation**: Errors caught on every `update()` (when schema provided to `Config()`)
+- **Type checking**: Ensures values have the correct types (values are never converted)
 - **Required fields**: Catches missing configuration
 - **Clear errors**: Points directly to the problem with helpful messages
 

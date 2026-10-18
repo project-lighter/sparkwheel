@@ -57,7 +57,7 @@ pip install sparkwheel
 
     ---
 
-    Validate configs with Python dataclasses. Continuous validation catches errors immediately at mutation time with type checking, coercion, and required field validation.
+    Validate configs with Python dataclasses. Continuous validation catches errors immediately at mutation time with type checking and required field validation.
 
 -   :material-console:{ .lg .middle } __CLI Overrides__
 

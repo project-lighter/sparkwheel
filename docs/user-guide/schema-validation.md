@@ -2,37 +2,11 @@
 
 Validate configurations at runtime using Python dataclasses with **continuous validation** - errors caught immediately when you mutate the config.
 
-## Type Coercion Matrix
-
-Sparkwheel automatically converts compatible types when coercion is enabled (default: `True`):
-
-| From ↓ To → | `int` | `float` | `str` | `bool` | `list` | `dict` |
-|-------------|-------|---------|-------|--------|--------|--------|
-| **int** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **float** | ✅* | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **str** | ✅** | ✅** | ✅ | ✅*** | ❌ | ❌ |
-| **bool** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **list** | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ |
-| **dict** | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
-
-\* Truncates decimal part (e.g., `3.14` → `3`)
-\*\* Requires valid format (e.g., `"42"` for int, `"3.14"` for float)
-\*\*\* Accepts: `"true"`, `"false"`, `"1"`, `"0"`, `"yes"`, `"no"` (case-insensitive)
-
-!!! success "Default Behavior"
-    Type coercion is **enabled by default** to handle common cases like environment variables and CLI arguments (which are always strings).
-
-!!! warning "Disable for Strict Validation"
-    Set `coerce=False` for strict type checking:
-    ```python
-    config = Config(schema=AppConfigSchema, coerce=False)
-    ```
-
 ## Quick Start
 
 Define a schema with dataclasses:
 
-```python title="app.py" hl_lines="10 14 15"
+```python title="app.py"
 from dataclasses import dataclass
 from sparkwheel import Config
 
@@ -42,45 +16,26 @@ class AppConfigSchema:
     port: int
     debug: bool = False
 
-# Continuous validation - validates on every update/set!
+# Continuous validation - validates on every update()
 config = Config(schema=AppConfigSchema)  # (1)!
 config.update("config.yaml")
-
-# Errors caught immediately at mutation time
-config.set("port", "8080")  # (2)!
-config.set("port", "not a number")  # (3)!
+config.update("port=8080")  # (2)!
 
 # Or validate explicitly after loading
 config = Config()
 config.update("config.yaml")
-config.validate(AppConfigSchema)  # (4)!
+config.validate(AppConfigSchema)  # (3)!
 ```
 
-1. ✅ Enable continuous validation - errors caught on every mutation
-2. ✅ Auto-coerced to `int(8080)` (coercion enabled by default)
-3. ❌ Raises `ValidationError` immediately - invalid type conversion
-4. ✅ Alternative: validate explicitly after loading all config
+1. ✅ Enable continuous validation - errors caught on every `update()`
+2. ✅ Checked right away: `port=eighty` would raise `ValidationError` here
+3. ✅ Alternative: validate explicitly after loading all config
 
-With **type coercion** enabled by default, compatible types are automatically converted:
-
-```python
-# config.yaml:
-# name: "myapp"
-# port: "8080"  # String value
-# debug: "true" # String value
-
-config = Config(schema=AppConfigSchema, coerce=True)
-config.update("config.yaml")
-# ✓ port coerced to int(8080)
-# ✓ debug coerced to bool(True)
-```
-
-If validation fails, you get clear errors:
+Values are checked, never converted. YAML already types them (`port: 8080` is an `int`, `port: "8080"` is a `str`), and overrides follow the same rules. An `int` is accepted where a `float` is expected; `true` is a `bool`, not a number.
 
 ```python
-# With coercion disabled
-config = Config(schema=AppConfigSchema, coerce=False)
-config.update({"port": "8080"})
+config = Config(schema=AppConfigSchema)
+config.update({"name": "myapp", "port": "8080"})
 # ValidationError: Validation error at 'port': Type mismatch
 #   Expected type: int
 #   Actual type: str
@@ -306,46 +261,6 @@ Sparkwheel detects `type` as a discriminator and validates against the matching 
 
 Validation works with references, expressions, and instantiation.
 
-## Type Coercion
-
-Sparkwheel automatically converts compatible types when `coerce=True` (default):
-
-```python
-@dataclass
-class ServerConfigSchema:
-    port: int
-    timeout: float
-    enabled: bool
-
-# Coercion enabled by default
-config = Config(schema=ServerConfigSchema)
-config.update({
-    "port": "8080",        # str → int
-    "timeout": "30.5",     # str → float
-    "enabled": "true"      # str → bool
-})
-
-print(config["port"])      # 8080 (int, not str!)
-print(config["timeout"])   # 30.5 (float)
-print(config["enabled"])   # True (bool)
-```
-
-**Supported coercions:**
-- `str → int` (e.g., `"42"` → `42`)
-- `str → float` (e.g., `"3.14"` → `3.14`)
-- `str → bool` (e.g., `"true"` → `True`, `"false"` → `False`)
-- `int → float` (e.g., `42` → `42.0`)
-- Recursive coercion through lists, dicts, and nested dataclasses
-
-**Disable coercion if needed:**
-
-```python
-config = Config(schema=ServerConfigSchema, coerce=False)
-config.update({
-    "port": "8080"  # ValidationError: expected int, got str
-})
-```
-
 ## Strict vs Lenient Mode
 
 Control whether extra fields are rejected:
@@ -518,10 +433,10 @@ config.update({
 ### Continuous (Recommended)
 
 ```python
-# Validates on every update() and set()
+# Validates on every update() (set() does not validate)
 config = Config(schema=MySchema)
 config.update("config.yaml")
-config.set("port", "8080")  # Validates immediately!
+config.update("port=8080")  # Validates immediately!
 ```
 
 ### Explicit

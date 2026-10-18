@@ -95,6 +95,7 @@ config.update("~model::old_param")  # Delete
 See Config class docstring for full API details.
 """
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +122,7 @@ __all__ = ["Config", "parse_overrides"]
 
 
 class Config:
-    """Configuration management with continuous validation, coercion, resolved references, and instantiation.
+    """Configuration management with continuous validation, resolved references, and instantiation.
 
     Main entry point for loading, managing, and resolving configurations.
     Supports YAML files with resolved references (@), raw references (%), expressions ($),
@@ -158,7 +159,7 @@ class Config:
     Args:
         imports: Pre-imported packages for expressions (e.g., {"torch": "torch"})
         schema: Dataclass schema for continuous validation
-        coerce: Auto-convert compatible types (default: True)
+        coerce: Deprecated and ignored (values are never converted)
         strict: Reject fields not in schema (default: True)
         allow_missing: Allow MISSING sentinel values (default: False)
     """
@@ -169,7 +170,7 @@ class Config:
         *,  # Rest are keyword-only
         imports: dict[str, Any] | None = None,
         schema: type | None = None,
-        coerce: bool = True,
+        coerce: bool | None = None,
         strict: bool = True,
         allow_missing: bool = False,
     ):
@@ -181,7 +182,7 @@ class Config:
             data: Initial data (internal/testing use only, not validated)
             imports: Pre-imported packages for expression evaluation
             schema: Dataclass schema for continuous validation
-            coerce: Auto-convert compatible types
+            coerce: Deprecated and ignored (values are never converted)
             strict: Reject fields not in schema
             allow_missing: Allow MISSING sentinel values
 
@@ -200,7 +201,13 @@ class Config:
 
         # Schema validation state
         self._schema: type | None = schema
-        self._coerce: bool = coerce
+        if coerce is not None:
+            warnings.warn(
+                "Config(coerce=...) is deprecated and has no effect: values are never converted, they must match "
+                "the schema's types. Remove the argument.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._strict: bool = strict
         self._allow_missing: bool = allow_missing
 

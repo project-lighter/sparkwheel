@@ -21,6 +21,13 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - Setting a path through a value that is not a mapping (`model::dim::x=1` or `config.set("model::dim::x", 1)` when `dim` is `4`) raises `ConfigKeyError` instead of silently replacing the value with a dict.
   Migration: set the parent key itself (`=model::dim={x: 1}`).
 
+- A schema field typed `int` or `float` rejects `True`/`False`.
+  Migration: write a number (`1`), or type the field `bool`.
+- `@validator` methods run even when the config has component keys (`_target_`) or, with `strict=False`, extra fields; an error raised while creating the dataclass for them (e.g. in `__post_init__`) is reported as a `ValidationError` instead of skipping the validators.
+  Migration: fix the validator or `__post_init__` that now reports an error.
+- Removed `sparkwheel.coercion` (it was never called). `Config(coerce=...)` still works but warns with a `DeprecationWarning`: values were never converted, and still are not.
+  Migration: remove the `coerce=` argument.
+
 ### Added
 
 - `Config.check()` finds mistakes without building anything: missing references, `_target_`s that cannot be imported, arguments the target does not accept and `$` expressions that do not compile. It raises one `ValidationError` listing every problem with its file:line or override. Disabled components are skipped.
@@ -39,3 +46,4 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 - A `_target_` that cannot be found points at the `_target_` line (or override), not at the component.
 - Loading a config path that contains `..` no longer warns about "path traversal attacks".
 - `set()` and overrides can go through list items (`model::layers::1::dim=8`).
+- Schemas from modules that use `from __future__ import annotations` validate instead of crashing with `TypeError: isinstance() arg 2 must be a type`.

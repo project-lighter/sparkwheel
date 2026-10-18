@@ -227,7 +227,7 @@ d: "$@c * 2"         # Resolved last (depends on c)
 |-------|---------|----------|
 | **Reference not found** | `@key` doesn't exist | Check spelling and nesting |
 | **Circular reference** | `a: "@b"`, `b: "@a"` | Restructure to break cycle |
-| **Type mismatch** | Schema expects `int`, got `str` | Enable coercion or fix type |
+| **Type mismatch** | Schema expects `int`, got `str` | Fix the value's type (quote it for `str`, leave quotes off for numbers) |
 | **Expression error** | Invalid Python in `$()` | Check syntax and references |
 | **Unexpected merge** | Dict merged when you wanted replace | Use `=key` to replace |
 | **List not extending** | List replaced instead of extended | This is default for scalars, expected |
