@@ -404,7 +404,7 @@ class Config:
             self (for chaining)
 
         Operators:
-            - key=value      - Compose (default): merge dict or extend list
+            - key=value      - Compose (default): merge a dict; a list replaces the list
             - =key=value     - Replace operator: completely replace value
             - ~key           - Remove operator: delete key (errors if missing)
 
@@ -592,6 +592,8 @@ class Config:
         """Parse and apply a single override string (e.g., 'key=value', '=key=value', '~key')."""
         for key, value in parse_overrides([override]).items():
             path = key.removeprefix(REPLACE_KEY)
+            if key == path and isinstance(value, list) and isinstance(self.get(path), list):
+                key = REPLACE_KEY + path  # `milestones=[10,20]` means that list, not two more items
             if not key.startswith(REMOVE_KEY):
                 self._check_override_path(path, value, override, merge=key == path)
             before = self.get(path) if key == path else None  # what a compose override merges into

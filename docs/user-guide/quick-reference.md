@@ -151,8 +151,8 @@ model:
   channels: [16, 32]
 ```
 
-!!! warning "Overriding a list appends to it"
-    `model::channels=[64,128]` **appends** to the list from the YAML file. To replace the list, use `=model::channels=[64,128]`.
+!!! info "A list on the command line replaces the list"
+    `model::channels=[64,128]` sets the list to `[64, 128]`, while a YAML file extends it.
 
 === "Set values"
 
@@ -171,8 +171,7 @@ model:
 === "Lists"
 
     ```bash
-    python train.py config.yaml model::channels=[64,128]   # → [16, 32, 64, 128]
-    python train.py config.yaml =model::channels=[64,128]  # → [64, 128]
+    python train.py config.yaml model::channels=[64,128]  # → [64, 128]
     ```
 
 === "Replace and delete"
@@ -250,7 +249,7 @@ d: "$@c * 2"         # resolved last → 40
 | **Type mismatch** | Schema expects `int`, got `str` | Fix the value's type (quote it for `str`, leave quotes off for numbers) |
 | **Expression error** | Invalid Python after `$` | Check syntax and references |
 | **Unexpected merge** | Dict merged when you wanted replace | Use `=key` to replace |
-| **List grew** | `layers=[1,2]` appended to the list | Use `=layers=[1,2]` to replace |
+| **List grew** | A YAML file's `layers: [1, 2]` extended the list | Use `=layers: [1, 2]` to replace |
 | **Key does not exist** | An override names a missing key | Fix the typo (or use `::`, not `.`); put new keys in a YAML file |
 
 ## File Organization

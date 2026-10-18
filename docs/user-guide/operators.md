@@ -76,6 +76,9 @@ plugins:
 !!! success "Natural Composition"
     **No operators needed for the common case!** Sparkwheel merges dicts and extends lists by default, matching how you naturally think about config layering.
 
+!!! info "Command-line overrides replace lists"
+    An override string such as `plugins=[cache]` sets the list to `[cache]`: on the command line you write the value you want. YAML files and dict updates extend.
+
 ## The `=` Operator: Explicit Replace
 
 When you need to completely replace something, use `=key`:
@@ -497,7 +500,7 @@ plugins: [cache]
 | Feature | Hydra | Sparkwheel |
 |---------|-------|------------|
 | Dict merge default | Yes ✅ | Yes ✅ |
-| List extend default | No ❌ | **Yes** ✅ |
+| List extend default | No ❌ | **Yes** ✅ (in YAML files) |
 | Operators in YAML | CLI-only | **Yes** ✅ (YAML + CLI) |
 | Operator count | 4 (`=`, `+`, `++`, `~`) | **2** (`=`, `~`) ✅ |
 | Delete dict keys | CLI-only (`~foo.bar`) | **Yes** ✅ (YAML + CLI) |

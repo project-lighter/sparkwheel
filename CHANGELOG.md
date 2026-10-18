@@ -18,6 +18,8 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
   Migration: use `sparkwheel.loader.YamlLoader` to read YAML the way Sparkwheel does.
 - Override strings (`key=value` passed to `update()`) can no longer add keys, so a typo no longer silently adds a key that nothing reads. They may set any existing key, add one argument or special key (`_disabled_`, `_mode_`, ...) directly under a `_target_` component, or add a `_target_` to a plain dict. Anything else raises `ConfigKeyError` with a did-you-mean. Dict updates and YAML files add keys as before.
   Migration: put new keys in a YAML file (for a command line, an extra YAML file listed on it).
+- An override string whose value is a list replaces the list instead of extending it: `milestones=[10,20]` on `[30, 60]` gives `[10, 20]`, not `[30, 60, 10, 20]`. YAML files and dict updates still extend.
+  Migration: to add items from the command line, put them in a YAML file listed on it.
 - Setting a path through a value that is not a mapping (`model::dim::x=1` or `config.set("model::dim::x", 1)` when `dim` is `4`) raises `ConfigKeyError` instead of silently replacing the value with a dict.
   Migration: set the parent key itself (`=model::dim={x: 1}`).
 - A schema field typed `int` or `float` rejects `True`/`False`.
