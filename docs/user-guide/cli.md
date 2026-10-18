@@ -7,8 +7,9 @@ Override configuration values from the command line with automatic file and over
 !!! success "Dead Simple CLI Integration"
     **Just loop over CLI arguments** - `config.update()` automatically detects whether each string is a file path or an override!
 
-    - Strings **with** `=` → Parsed as overrides (e.g., `key=value`, `=key=value`, `~key`)
-    - Strings **without** `=` → Loaded as file paths
+    - Strings naming an existing file → Loaded as files (so `runs/lr=0.1/config.yaml` works)
+    - Other strings **with** `=` or starting with `~` → Parsed as overrides (e.g., `key=value`, `=key=value`, `~key`)
+    - Everything else → Loaded as file paths
     - No manual separation needed!
 
 !!! warning "Overriding a list appends to it"
@@ -131,7 +132,7 @@ Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`). Three ope
     [override → trainer::max_epoch]:
       → trainer::max_epoch=5
 
-      💡 Did you mean 'max_epochs'? To add a new key, put it in your YAML file or in an extra YAML file listed on the command line.
+      💡 Did you mean 'max_epochs'? To add a new key, put it in a YAML file.
     ```
 
 !!! info "Values are YAML"

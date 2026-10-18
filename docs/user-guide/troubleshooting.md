@@ -53,7 +53,7 @@ python train.py config.yaml trainer::max_epoch=5
 [override → trainer::max_epoch]:
   → trainer::max_epoch=5
 
-  💡 Did you mean 'max_epochs'? To add a new key, put it in your YAML file or in an extra YAML file listed on the command line.
+  💡 Did you mean 'max_epochs'? To add a new key, put it in a YAML file.
 ```
 
 Overrides change keys that exist (or add an argument to a `_target_` component), so a typo can't silently add a key that nothing reads. To add a new key, put it in a YAML file.

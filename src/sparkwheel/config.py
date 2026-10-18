@@ -95,6 +95,7 @@ config.update("~model::old_param")  # Delete
 See Config class docstring for full API details.
 """
 
+import os
 import warnings
 from pathlib import Path
 from typing import Any
@@ -401,8 +402,9 @@ class Config:
         """Update configuration with changes from another source.
 
         Auto-detects strings as either file paths or CLI overrides:
-        - Strings with '=' are parsed as overrides (e.g., "key=value", "=key=value", "~key")
-        - Strings without '=' are treated as file paths
+        - Strings naming an existing file are loaded as YAML files
+        - Other strings with '=' or starting with '~' are parsed as overrides (e.g., "key=value", "=key=value", "~key")
+        - Other strings are treated as file paths
         - Dicts and Config instances work as before
 
         Args:
@@ -455,7 +457,11 @@ class Config:
                 self._apply_path_updates(source)
             else:
                 self._apply_structural_update(source)
-        elif isinstance(source, str) and ("=" in source or source.startswith("~")):
+        elif (
+            isinstance(source, str)
+            and not os.path.isfile(os.path.expanduser(source))
+            and ("=" in source or source.startswith("~"))
+        ):
             # Auto-detect override string (key=value, =key=value, ~key)
             self._update_from_override_string(source)
         else:
@@ -559,6 +565,8 @@ class Config:
             parent = self[parent_id] if parent_id else self._data
             if isinstance(parent, dict) and keys[-1] in parent:
                 del parent[keys[-1]]
+            elif isinstance(parent, list):
+                del parent[int(keys[-1])]
         else:
             # Top-level key
             if isinstance(self._data, dict) and key in self._data:
@@ -604,6 +612,9 @@ class Config:
     def _check_override_path(self, path: str, value: Any, override: str, merge: bool) -> None:
         """Overrides set keys that exist; the only new keys allowed are a component's arguments and special keys.
 
+        A plain dict can gain a `_target_` (becoming a component), but not the other special keys: they do
+        nothing without one.
+
         A typo would otherwise silently add a key that nothing reads.
         """
         keys = split_id(path)
@@ -623,14 +634,12 @@ class Config:
                     suggestion=f"To replace the value, override '{parent}' itself.",
                 )
             if depth == len(keys) - 1 and depth > 0 and isinstance(node, dict):
-                if Component.is_instantiable(node) or key in Component.non_arg_keys:
-                    return  # a new argument (checked against the target's signature when built) or special key
+                if Component.is_instantiable(node) or key == "_target_":
+                    return  # a new argument (checked against the target's signature when built), or a new component
             missing = ID_SEP_KEY.join(keys[: depth + 1])
             close = get_suggestions(key, [str(k) for k in node], max_suggestions=1) if isinstance(node, dict) else []
             hint = f"Did you mean '{close[0][0]}'? " if close else ""
-            suggestion = (
-                f"{hint}To add a new key, put it in your YAML file or in an extra YAML file listed on the command line."
-            )
+            suggestion = f"{hint}To add a new key, put it in a YAML file."
             if "." in path and path.replace(".", ID_SEP_KEY) in self:
                 suggestion = f"Nested keys are separated by '::'. Did you mean '{path.replace('.', ID_SEP_KEY)}'?"
             raise ConfigKeyError(

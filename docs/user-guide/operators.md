@@ -198,20 +198,8 @@ dataloaders:
 #   val: {batch_size: 16}
 ```
 
-!!! warning "Removing List Items"
-    To remove items from a list, **you must use the batch syntax** `~key: [indices]`:
-
-    ```yaml
-    # ✓ CORRECT - Batch deletion syntax
-    ~plugins: [0, 2, 4]
-    ```
-
-    ```yaml
-    # ✗ WRONG - Path notation doesn't work for list items!
-    ~plugins::0: null
-    ```
-
-    **Why?** Path notation is designed for dict keys, not list indices. The batch syntax handles index normalization and processes deletions correctly (high to low order).
+!!! tip "One list item by path"
+    `~plugins::0: null` removes a single item. To remove several, use the batch syntax `~plugins: [0, 2, 4]`: it removes them from the highest index down, so every index refers to the list as it was.
 
 ## Combining Operators
 
@@ -488,16 +476,6 @@ plugins: [cache]
 
 # Use = to replace
 =plugins: [cache]
-```
-
-### Wrong List Deletion Syntax
-
-```yaml
-# Wrong - path notation doesn't work for list indices
-~plugins::0: null
-
-# Correct - use batch syntax
-~plugins: [0]
 ```
 
 ### Forgetting Quotes for Operators

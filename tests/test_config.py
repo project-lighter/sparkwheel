@@ -1585,6 +1585,7 @@ class TestOverrideKeys:
             ("model::opts::b=2", "model::opts::b", None),
             ("=trainer::max_epoch=5", "trainer::max_epoch", "max_epochs"),
             ("model::layers::5=1", "model::layers::5", None),
+            ("trainer::_disabled_=true", "trainer::_disabled_", None),  # does nothing without a _target_
         ],
     )
     def test_new_keys_are_rejected(self, override, missing, did_you_mean):
@@ -1597,7 +1598,7 @@ class TestOverrideKeys:
         msg = str(excinfo.value)
         assert f"'{missing}' does not exist" in msg
         assert f"→ {override}" in msg
-        assert "put it in your YAML file or in an extra YAML file" in msg
+        assert "To add a new key, put it in a YAML file." in msg
         if did_you_mean:
             assert f"Did you mean '{did_you_mean}'?" in msg
         assert config.get() == before
@@ -1615,6 +1616,16 @@ class TestOverrideKeys:
         with pytest.raises(ConfigKeyError, match="'model::dim' is 4, not a mapping"):
             config.update("model::dim::x=1")
         assert config.get("model::dim") == 4
+
+    def test_a_file_whose_path_holds_an_equals_sign_is_loaded(self, tmp_path):
+        (tmp_path / "lr=0.1").mkdir()
+        (tmp_path / "lr=0.1" / "config.yaml").write_text("extra: 1\n")
+        assert self._config().update(str(tmp_path / "lr=0.1" / "config.yaml")).get("extra") == 1
+
+    def test_delete_a_list_item_by_path(self):
+        config = self._config().update("~model::layers::0")
+        assert config.get("model::layers") == [2]
+        assert config.update({"~model::layers::-1": None}).get("model::layers") == []
 
     def test_dicts_and_files_still_add_keys(self, tmp_path):
         (tmp_path / "extra.yaml").write_text("extra:\n  x: 1\n")

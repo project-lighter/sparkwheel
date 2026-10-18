@@ -1,5 +1,6 @@
 """YAML configuration loading with source location tracking."""
 
+import os
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -149,7 +150,7 @@ class Loader:
         if not filepath:
             return {}, LocationRegistry()
 
-        filepath_str = str(Path(filepath))
+        filepath_str = os.path.expanduser(str(Path(filepath)))
 
         # Validate YAML extension
         if not is_yaml_file(filepath_str):
