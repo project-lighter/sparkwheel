@@ -183,6 +183,18 @@ def validate_operators(config: dict[str, Any], parent_key: str = "") -> None:
             validate_operators(value, full_key)
 
 
+def _apply_operators_to_value(value: Any, context: MergeContext) -> Any:
+    """Copy a value that has nothing to merge into, still applying the operators nested in it.
+
+    Keeps ``=key``/``~key`` meaning the same whether or not the parent already exists.
+    """
+    if isinstance(value, dict):
+        return apply_operators({}, value, context=context)
+    if isinstance(value, list):
+        return [_apply_operators_to_value(item, context.child_path(str(i))) for i, item in enumerate(value)]
+    return deepcopy(value)
+
+
 def apply_operators(
     base: dict[str, Any],
     override: dict[str, Any],
@@ -255,13 +267,13 @@ def apply_operators(
 
     for key, value in override.items():
         if not isinstance(key, str):
-            result[key] = deepcopy(value)  # type: ignore[unreachable]
+            result[key] = _apply_operators_to_value(value, context.child_path(str(key)))  # type: ignore[unreachable]
             continue
 
         # Process replace operator (=key)
         if key.startswith(REPLACE_KEY):
             actual_key = key[1:]
-            result[actual_key] = deepcopy(value)
+            result[actual_key] = _apply_operators_to_value(value, context.child_path(actual_key))
             continue
 
         # Process remove operator (~key)
@@ -353,13 +365,13 @@ def apply_operators(
 
             # For lists: EXTEND (composition)
             if isinstance(base_val, list) and isinstance(value, list):
-                result[key] = base_val + value
+                result[key] = base_val + _apply_operators_to_value(value, context.child_path(key))
                 continue
 
             # For scalars: REPLACE
             # For type mismatches: REPLACE
 
         # Set/replace (for new keys or non-matching types)
-        result[key] = deepcopy(value)
+        result[key] = _apply_operators_to_value(value, context.child_path(key))
 
     return result

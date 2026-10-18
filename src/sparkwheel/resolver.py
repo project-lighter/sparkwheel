@@ -2,12 +2,13 @@
 
 import warnings
 from collections.abc import Iterator
+from copy import copy
 from typing import Any
 
 from .items import Component, Expression, Item
 from .path_utils import normalize_id, replace_references, scan_references
 from .utils import allow_missing_reference, look_up_option
-from .utils.constants import ID_SEP_KEY, RESOLVED_REF_KEY
+from .utils.constants import EXPR_KEY, ID_SEP_KEY, RESOLVED_REF_KEY
 from .utils.exceptions import CircularReferenceError, ConfigKeyError
 
 __all__ = ["Resolver"]
@@ -54,6 +55,8 @@ class Resolver:
         """
         self._items: dict[str, Item] = {}
         self._resolved: dict[str, Any] = {}
+        # One cache per (instantiate, eval_expr) mode: a Component wrapper is never an instance.
+        self._resolved_by_mode: dict[tuple[bool, bool], dict[str, Any]] = {(True, True): self._resolved}
 
         if items:
             for item in items:
@@ -63,10 +66,11 @@ class Resolver:
         """Clear all items and resolved content."""
         self._items = {}
         self._resolved = {}
+        self._resolved_by_mode = {(True, True): self._resolved}
 
     def is_resolved(self) -> bool:
         """Check if any items have been resolved."""
-        return bool(self._resolved)
+        return any(self._resolved_by_mode.values())
 
     def add_item(self, item: Item) -> None:
         """Add a Item to resolve.
@@ -107,7 +111,7 @@ class Resolver:
             Item if found, None otherwise (or resolved value if resolve=True)
         """
         id = self.normalize_id(id)
-        if resolve and id not in self._resolved:
+        if resolve:
             self._resolve_one_item(id=id, **kwargs)
         return self._items.get(id)
 
@@ -173,10 +177,11 @@ class Resolver:
             )
 
         id = self.normalize_id(id)
+        resolved = self._resolved_by_mode.setdefault((instantiate, eval_expr), {})
 
         # Return cached result if available
-        if id in self._resolved:
-            return self._resolved[id]
+        if id in resolved:
+            return resolved[id]
 
         # Look up the item
         try:
@@ -221,10 +226,15 @@ class Resolver:
             waiting_list = set()
         waiting_list.add(id)
 
+        # A literally disabled component is skipped before its arguments are built
+        if isinstance(item, Component) and instantiate and self._is_literally_disabled(item):
+            resolved[id] = None
+            return None
+
         # First, resolve any import expressions (they need to run first)
         for t, v in self._items.items():
-            if t not in self._resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
-                self._resolved[t] = v.evaluate() if eval_expr else v
+            if t not in resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
+                resolved[t] = v.evaluate() if eval_expr else v
 
         # Find all references in this item's config
         refs = self.find_refs_in_config(config=item_config, id=id)
@@ -239,7 +249,7 @@ class Resolver:
                 )
 
             # Resolve dependency if not already resolved
-            if dep_id not in self._resolved:
+            if dep_id not in resolved:
                 try:
                     look_up_option(dep_id, self._items, print_all_options=False)
                 except ValueError as err:
@@ -265,19 +275,28 @@ class Resolver:
                 )
                 waiting_list.discard(dep_id)
 
-        # All dependencies resolved, now resolve this item
-        new_config = self.update_config_with_refs(config=item_config, id=id, refs=self._resolved)
+        # All dependencies resolved, now resolve a copy of this item (the parsed item stays as authored)
+        new_config = self.update_config_with_refs(config=item_config, id=id, refs=resolved)
+        item = copy(item)
         item.update_config(config=new_config)
 
         # Generate final resolved value based on item type
         if isinstance(item, Component):
-            self._resolved[id] = item.instantiate() if instantiate else item
+            resolved[id] = item.instantiate() if instantiate else item
         elif isinstance(item, Expression):
-            self._resolved[id] = item.evaluate(globals={f"{self._vars}": self._resolved}) if eval_expr else item
+            resolved[id] = item.evaluate(globals={f"{self._vars}": resolved}) if eval_expr else item
         else:
-            self._resolved[id] = new_config
+            resolved[id] = new_config
 
-        return self._resolved[id]
+        return resolved[id]
+
+    @staticmethod
+    def _is_literally_disabled(item: Component) -> bool:
+        """Whether `_disabled_` is a literal true value (not a reference or expression still to resolve)."""
+        flag = item.get_config().get("_disabled_", False)
+        if isinstance(flag, (dict, list)) or (isinstance(flag, str) and flag.startswith((EXPR_KEY, RESOLVED_REF_KEY))):
+            return False
+        return item.is_disabled()
 
     @classmethod
     def normalize_id(cls, id: str | int) -> str:

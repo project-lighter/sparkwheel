@@ -100,7 +100,13 @@ from typing import Any
 
 from .loader import Loader
 from .locations import LocationRegistry
-from .operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
+from .operators import (
+    MergeContext,
+    _apply_operators_to_value,
+    _validate_delete_operator,
+    apply_operators,
+    validate_operators,
+)
 from .parser import Parser
 from .path_utils import get_by_id, split_id
 from .preprocessor import Preprocessor
@@ -213,7 +219,8 @@ class Config:
 
         - Returns `@` references as strings (e.g., "@model::lr")
         - Returns `$` expressions as strings (e.g., "$@lr * 2")
-        - Returns `%` raw references already expanded (eager expansion during update())
+        - Returns external `%file.yaml::key` references already expanded (during update());
+          local `%key` references and `_imports_` stay as written, even after resolve()
         - Fast, no resolution overhead
 
         Use this when you need to:
@@ -228,7 +235,7 @@ class Config:
             default: Default value if id not found
 
         Returns:
-            Raw configuration value from _data (@ and $ unresolved, % already expanded)
+            Raw configuration value from _data (@, $ and local % unresolved)
 
         Examples:
             >>> # Basic usage
@@ -477,13 +484,12 @@ class Config:
         """Apply nested path updates (e.g., model::lr=value, =model=replace, ~old::param=null)."""
         for key, value in source.items():
             if not isinstance(key, str):
-                self.set(str(key), value)  # type: ignore[unreachable]
-                continue
+                key = str(key)  # type: ignore[unreachable]
 
             if key.startswith(REPLACE_KEY):
                 # Replace operator: =key (explicit override)
                 actual_key = key[1:]
-                self.set(actual_key, value)
+                self.set(actual_key, _apply_operators_to_value(value, MergeContext(self._locations, actual_key)))
 
             elif key.startswith(REMOVE_KEY):
                 # Delete operator: ~key
@@ -525,10 +531,10 @@ class Config:
                     merged = apply_operators(self[key], value, context=context)
                     self.set(key, merged)
                 elif key in self and isinstance(self[key], list) and isinstance(value, list):
-                    self.set(key, self[key] + value)
+                    self.set(key, self[key] + _apply_operators_to_value(value, MergeContext(self._locations, key)))
                 else:
                     # Normal set (handles nested paths with ::)
-                    self.set(key, value)
+                    self.set(key, _apply_operators_to_value(value, MergeContext(self._locations, key)))
 
     def _delete_nested_key(self, key: str) -> None:
         """Delete a key, supporting nested paths with ::."""
@@ -683,30 +689,31 @@ class Config:
         if reset:
             self._resolver.reset()
 
+        # Work on a copy: get() and exports keep `_imports_`, local `%` refs and relative `@::` refs
+        data = _copy_containers(self._data)
+
         # Process _imports_ key if present in config data
         # This allows YAML-based imports that become available to all expressions
-        self._process_imports_key()
+        self._process_imports_key(data)
 
         # Phase 2: Expand local raw references (%key) now that all composition is complete
         # CLI overrides have been applied, so local refs will see final values
-        self._data = self._preprocessor.process_raw_refs(
-            self._data, self._data, id="", locations=self._locations, external_only=False
-        )
+        data = self._preprocessor.process_raw_refs(data, data, id="", locations=self._locations, external_only=False)
 
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        self._data = self._preprocessor.process(self._data, self._data, id="")
+        data = self._preprocessor.process(data, data, id="")
 
         # Stage 2: Parse config tree to create Items
         parser = Parser(globals=self._imports, metadata=self._locations)
-        items = parser.parse(self._data)
+        items = parser.parse(data)
 
         # Stage 3: Add items to resolver
         self._resolver.add_items(items)
 
         self._is_parsed = True
 
-    def _process_imports_key(self) -> None:
-        """Process _imports_ key from config data.
+    def _process_imports_key(self, data: dict[str, Any]) -> None:
+        """Process _imports_ key from the copy of the config data being parsed.
 
         The _imports_ key allows declaring imports directly in YAML:
 
@@ -721,13 +728,13 @@ class Config:
         ```
 
         These imports become available to all expressions in the config.
-        The _imports_ key is removed from the data after processing.
+        The _imports_ key is removed from the parsed copy, so it never becomes a config item.
         """
         imports_key = "_imports_"
-        if imports_key not in self._data:
+        if imports_key not in data:
             return
 
-        imports_config = self._data.pop(imports_key)
+        imports_config = data.pop(imports_key)
         if not isinstance(imports_config, dict):
             return
 
@@ -833,6 +840,15 @@ class Config:
         filepath_str = str(Path(filepath))
         with open(filepath_str, "w") as f:
             yaml.safe_dump(config, f, **kwargs)
+
+
+def _copy_containers(value: Any) -> Any:
+    """Copy dicts and lists recursively; leaves (which may be arbitrary Python objects) are shared."""
+    if isinstance(value, dict):
+        return {k: _copy_containers(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_copy_containers(v) for v in value]
+    return value
 
 
 def parse_overrides(args: list[str]) -> dict[str, Any]:

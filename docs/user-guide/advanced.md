@@ -310,7 +310,7 @@ data: "$np.array([1, 2, 3])"
 save_path: "$Path('/data/models')"
 ```
 
-The `_imports_` key is removed from the config after processing—it won't appear in your resolved config.
+The `_imports_` key won't appear in your resolved config. `config.get()` still shows it, so a saved config can be loaded and run again.
 
 ### Method 2: `imports` Parameter in Python
 

@@ -353,6 +353,25 @@ class TestApplyOperatorsEdgeCases:
         assert result == {"a": 10, "b": 20, "d": {"x": 10, "y": 2}}
 
 
+class TestOperatorsInNewSubtrees:
+    """Operators mean the same thing whether or not the key already exists."""
+
+    @pytest.mark.parametrize("base", [{}, {"group": 0}, {"group": {"n": 0}}])
+    def test_nested_replace_in_new_or_existing_parent(self, base):
+        assert apply_operators(base, {"group": {"=n": 1}})["group"] == {"n": 1}
+
+    def test_replace_value_is_normalized(self):
+        assert apply_operators({"group": {"old": 1}}, {"=group": {"=n": 1}}) == {"group": {"n": 1}}
+
+    def test_new_list_entries_are_normalized(self):
+        result = apply_operators({"values": [{"kept": 2}]}, {"values": [{"=n": 1}], "fresh": [{"=m": 2}]})
+        assert result == {"values": [{"kept": 2}, {"n": 1}], "fresh": [{"m": 2}]}
+
+    def test_remove_missing_key_in_new_subtree_raises(self):
+        with pytest.raises(ConfigMergeError, match="missing"):
+            apply_operators({}, {"fresh": {"~missing": None}})
+
+
 class TestApplyOperatorsDeepCopy:
     """Test that apply_operators properly deep copies values."""
 

@@ -179,8 +179,8 @@ class TestConfigImports:
         assert config.resolve("sep") == os.sep
         assert config.resolve("path_type") is Path
 
-    def test_imports_key_removed_from_data(self):
-        """Test _imports_ key is removed from config data after processing."""
+    def test_imports_key_kept_in_data(self):
+        """Test _imports_ key stays in the config after resolving, so exports can be re-run."""
         config = Config().update(
             {
                 "_imports_": {"json": "json"},
@@ -188,7 +188,7 @@ class TestConfigImports:
             }
         )
         config.resolve()  # Trigger parsing
-        assert "_imports_" not in config._data
+        assert config.get("_imports_") == {"json": "json"}
 
     def test_imports_key_combined_with_imports_parameter(self):
         """Test _imports_ key works with imports parameter."""
@@ -362,16 +362,16 @@ class TestConfigMacros:
         """Test basic macro expansion with %."""
         config = {"original": {"a": 1, "b": 2}, "copy": "%original"}
         parser = Config().update(config)
-        parser.resolve()
-        assert parser["copy"] == {"a": 1, "b": 2}
-        assert parser["copy"] is not parser["original"]
+        assert parser.resolve("copy") == {"a": 1, "b": 2}
+        assert parser.resolve("copy") is not parser.resolve("original")
+        assert parser["copy"] == "%original"
 
     def test_do_resolve_macro_from_config(self):
         """Test preprocessing with macro referencing same config."""
         parser = Config({"template": {"a": 1, "b": 2}, "copy": "%template"})
-        parser._parse()
-        assert parser["copy"] == {"a": 1, "b": 2}
-        parser["copy"]["a"] = 99
+        copy = parser.resolve("copy")
+        assert copy == {"a": 1, "b": 2}
+        copy["a"] = 99
         assert parser["template"]["a"] == 1
 
     def test_do_resolve_macro_load(self):
@@ -382,8 +382,7 @@ class TestConfigMacros:
 
         try:
             parser = Config({"local": f"%{filepath}::external"})
-            parser._parse()
-            assert parser["local"] == {"value": 42}
+            assert parser.resolve("local") == {"value": 42}
         finally:
             Path(filepath).unlink()
 
@@ -527,6 +526,119 @@ class TestComponents:
         result = parser.resolve("components")
         assert "enabled" in result
         assert "disabled" not in result
+
+    def test_disabled_component_does_not_build_its_arguments(self):
+        """A literally disabled component never builds its arguments."""
+        config = Config().update(
+            {
+                "x": {
+                    "_target_": "collections.Counter",
+                    "_disabled_": True,
+                    "iterable": {"_target_": "builtins.exec", "_args_": ["raise RuntimeError('built')"]},
+                    "other": "$exec(\"raise RuntimeError('evaluated')\")",
+                }
+            }
+        )
+        assert config.resolve("x") is None
+
+    def test_disabled_flag_from_expression_still_disables(self):
+        config = Config().update({"flag": True, "x": {"_target_": "collections.Counter", "_disabled_": "$@flag"}})
+        assert config.resolve("x") is None
+
+
+class TestResolveIsSideEffectFree:
+    """resolve() reads the config; it never rewrites it or leaks results across modes."""
+
+    def test_wrappers_from_instantiate_false_do_not_leak_into_resolve(self):
+        from collections import Counter
+
+        config = Config().update({"c": {"_target_": "collections.Counter", "_args_": [[1, 1, 2]]}})
+        assert type(config.resolve("c", instantiate=False)).__name__ == "Component"
+        assert config.resolve("c") == Counter([1, 1, 2])
+
+    def test_instances_do_not_leak_into_instantiate_false(self):
+        config = Config().update(
+            {"inner": {"_target_": "collections.Counter"}, "outer": {"_target_": "builtins.dict", "x": "@inner"}}
+        )
+        config.resolve("outer")
+        wrapper = config.resolve("outer", instantiate=False)
+        assert type(wrapper).__name__ == "Component"
+        assert type(wrapper.get_config()["x"]).__name__ == "Component"
+
+    def test_each_mode_keeps_sharing_its_own_objects(self):
+        config = Config().update({"a": {"_target_": "collections.Counter"}, "b": "@a"})
+        first = config.resolve("a")
+        config.resolve("a", instantiate=False)
+        assert config.resolve("b") is first
+
+    def test_get_after_resolve_shows_authored_config(self):
+        authored = {
+            "_imports_": {"m": "math"},
+            "a": 2,
+            "b": "%a",
+            "e": "$m.sqrt(@a)",
+            "model": {"a": 3, "lr": "@::a"},
+        }
+        config = Config().update(authored)
+        assert config.get() == authored
+        config.resolve()
+        assert config.get() == authored
+        assert config.resolve("b") == 2
+        assert config.resolve("model::lr") == 3
+
+    def test_resolve_after_update_sees_imports_and_local_refs(self):
+        config = Config().update({"_imports_": {"m": "math"}, "a": 4, "b": "%a", "e": "$m.sqrt(@a)"})
+        assert config.resolve("e") == 2.0
+        config.update("a=9")
+        assert config.resolve("b") == 9
+        assert config.resolve("e") == 3.0
+
+    def test_export_after_resolve_round_trips(self, tmp_path):
+        config = Config().update({"_imports_": {"m": "math"}, "a": 2, "b": "%a", "e": "$m.sqrt(@a)"})
+        config.resolve()
+        Config.export_config_file(config.get(), tmp_path / "saved.yaml")
+        reloaded = Config().update(str(tmp_path / "saved.yaml"))
+        assert reloaded.get() == config.get()
+        assert reloaded.resolve("e") == config.resolve("e")
+
+
+class TestOperatorsInNewSubtrees:
+    """=/~ inside a newly added subtree are applied, never stored as literal keys."""
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            {"group": {"=n": 1}},
+            {"=group": {"=n": 1}},
+            {"group": {"=n": 1}, "items::kept": 2},
+            {"=group": {"=n": 1}, "items::kept": 2},
+            {"group::sub": {"=n": 1}},
+        ],
+    )
+    def test_dict_updates(self, source):
+        config = Config().update({"items": {"kept": 1}}).update(source)
+        group = config.get("group")
+        assert group in ({"n": 1}, {"sub": {"n": 1}})
+        assert "=n" not in str(config.get())
+
+    def test_override_string(self):
+        config = Config().update({"a": 1}).update("b={=y: 2, z: {=w: 3}}")
+        assert config.get("b") == {"y": 2, "z": {"w": 3}}
+
+    def test_yaml_file(self, tmp_path):
+        (tmp_path / "c.yaml").write_text("a: 1\nb:\n  =y: 2\n")
+        assert Config().update(str(tmp_path / "c.yaml")).get("b") == {"y": 2}
+
+    def test_missing_removal_in_new_subtree_raises(self):
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        with pytest.raises(ConfigMergeError, match="missing"):
+            Config().update({"fresh": {"~missing": None}})
+
+    def test_set_remains_exact_assignment(self):
+        config = Config()
+        config.set("payload", {"=literal": 1})
+        assert config.get("payload") == {"=literal": 1}
 
 
 class TestConfigFileOperations:
