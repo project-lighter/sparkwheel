@@ -93,7 +93,7 @@ class Parser:
 
         # Create appropriate Item for this node
         if Component.is_instantiable(config):
-            items.append(Component(config=config, id=id, source_location=source_location))
+            items.append(Component(config=config, id=id, source_location=source_location, locations=self._metadata))
         elif Expression.is_expression(config):
             items.append(Expression(config=config, id=id, globals=self._globals, source_location=source_location))
         else:

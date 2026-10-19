@@ -4,7 +4,7 @@ __all__ = [
     "ID_SEP_KEY",
     "EXPR_KEY",
     "REMOVE_KEY",
-    "REPLACE_KEY",
+    "COMBINE_KEY",
     "SIMILARITY_THRESHOLD",
 ]
 
@@ -13,5 +13,5 @@ RAW_REF_KEY = "%"  # start of a raw reference (to unprocessed YAML content)
 ID_SEP_KEY = "::"  # separator for the ID of an Item
 EXPR_KEY = "$"  # start of an Expression
 REMOVE_KEY = "~"  # remove operator for config modifications (delete keys/items)
-REPLACE_KEY = "="  # replace operator for config modifications (explicit override)
+COMBINE_KEY = "+"  # combine operator: merge a dict into a dict, append a list to a list
 SIMILARITY_THRESHOLD = 0.6  # minimum similarity score for key name suggestions (0-1)

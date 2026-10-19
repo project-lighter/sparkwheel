@@ -45,7 +45,7 @@ pip install sparkwheel
 
     ---
 
-    Configs compose naturally by default (merge dicts, extend lists). Use `=` to replace or `~` to delete. Build modular configs for experiments and environments.
+    Keys set, `+` combines (merges dicts, appends lists), `~` deletes: what you write is what you get. Build modular configs for experiments and environments.
 
 -   :material-function-variant:{ .lg .middle } __Python Expressions__
 
@@ -57,7 +57,7 @@ pip install sparkwheel
 
     ---
 
-    Validate configs with Python dataclasses. Continuous validation catches errors immediately at mutation time with type checking, coercion, and required field validation.
+    Validate configs with Python dataclasses. Continuous validation catches errors immediately at mutation time with type checking and required field validation.
 
 -   :material-console:{ .lg .middle } __CLI Overrides__
 
@@ -115,13 +115,10 @@ If you're tired of **hardcoding parameters** and want **configuration-driven wor
 === "Experiment Override"
 
     ```yaml title="experiment_large.yaml"
-    # Override specific values, keep the rest (merges by default!)
-    model:
-      _args_:
-        - 0:  # Override first layer
-            out_features: 20  # More classes
+    # Change only what differs, keep the rest
+    model::_args_::0::out_features: 20  # More classes in the first layer
 
-    training:
+    +training:
       learning_rate: 0.0001  # Lower LR
       # epochs inherited from base!
     ```
@@ -130,24 +127,14 @@ If you're tired of **hardcoding parameters** and want **configuration-driven wor
     from sparkwheel import Config
     import sys
 
-    # Load base + experiment (composes automatically!)
-    config = (Config()
-              .update("config.yaml")
-              .update("experiment_large.yaml"))
+    # Load base + experiment
+    config = Config().update("config.yaml").update("experiment_large.yaml")
 
-    # Or override from CLI (parse args yourself)
+    # Or override from the CLI: `python train.py training::learning_rate=0.01`
     config = Config()
     config.update("config.yaml")
     for arg in sys.argv[1:]:
-        if "=" in arg:
-            key, value = arg.split("=", 1)
-            # Simple parsing - use ast.literal_eval for type conversion
-            try:
-                import ast
-                value = ast.literal_eval(value)
-            except (ValueError, SyntaxError):
-                pass  # Keep as string
-            config.set(key, value)
+        config.update(arg)
     ```
 
 ## Understanding References
@@ -196,21 +183,19 @@ Sparkwheel has two types of references with distinct purposes:
 
     If you've used **Hydra** or **OmegaConf**, you'll feel right at home. Sparkwheel adds:
 
-    - **Composition-by-default** - Configs merge/extend naturally, no operators needed for common case
-    - **List extension** - Lists extend by default (unique vs Hydra!)
-    - **`=` replace operator** - Explicit control when you need replacement
-    - **`~` delete operator** - Remove inherited keys explicitly
+    - **What you write is what you get** - A key sets its value; `+key` merges a dict or appends to a list
+    - **`~` delete operator** - Remove inherited keys and list items, in YAML or on the CLI
     - **Python expressions with `$`** - Compute values dynamically
     - **Dataclass validation** - Type-safe configs without boilerplate
     - **Dual reference system** - `@` for resolved values, `%` for raw YAML
     - **Simpler API** - Less magic, clearer behavior
 
     ```yaml
-    # Merges by default - no operator needed!
-    model:
+    # + merges into model
+    +model:
       hidden_size: 1024  # Override just this
       ~dropout: null     # Remove dropout
-      # Other fields preserved automatically!
+      # Other fields preserved!
     ```
 
 ## Start Learning
@@ -229,7 +214,7 @@ Sparkwheel has two types of references with distinct purposes:
 
     ---
 
-    Deep dive into references, expressions, and composition
+    Deep dive into references, expressions, and layering configs
 
     [:octicons-arrow-right-24: Core Concepts](user-guide/basics.md)
 
@@ -255,9 +240,9 @@ Sparkwheel has two types of references with distinct purposes:
 
     Execute Python code in configs with `$`
 
--   :material-merge:{ .lg .middle } [**Composition & Operators**](user-guide/operators.md)
+-   :material-merge:{ .lg .middle } [**Set, Combine, Delete**](user-guide/operators.md)
 
-    Composition-by-default with `=` (replace) and `~` (delete) operators
+    Keys set, `+` combines, `~` deletes
 
 -   :material-check-circle-outline:{ .lg .middle } [**Schema Validation**](user-guide/schema-validation.md)
 

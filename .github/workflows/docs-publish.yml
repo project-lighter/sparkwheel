@@ -1,9 +1,11 @@
 name: Docs Publish
 
+# Publish docs for released versions only, so the site never documents unreleased behaviour
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write

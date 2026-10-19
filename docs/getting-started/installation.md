@@ -69,6 +69,7 @@ Test that Sparkwheel is installed correctly:
 
 ```python
 import sparkwheel
+
 print(sparkwheel.__version__)
 ```
 

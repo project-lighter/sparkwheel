@@ -99,7 +99,7 @@ class TestFormatSuggestions:
         assert "parameters" in formatted
         assert "✓" in formatted
         assert "90% match" in formatted
-        assert "💡 Did you mean" in formatted
+        assert formatted.startswith("Did you mean")  # BaseError adds the 💡 marker
 
     def test_format_with_low_similarity(self):
         """Test formatting suggestions with lower similarity (no checkmark)."""
@@ -496,3 +496,237 @@ class TestExceptionEdgeCases:
         assert "Key not found" in msg
         # Should have suggestion for "vlue" -> "value"
         assert "💡" in msg
+
+
+class TestSelfContainedErrors:
+    """Each error message alone tells the user what failed, where, and what to do."""
+
+    @staticmethod
+    def _error(tmp_path, text, id, error=Exception):
+        path = tmp_path / "config.yaml"
+        path.write_text(text)
+        with pytest.raises(error) as excinfo:
+            Config().update(str(path)).resolve(id)
+        return str(excinfo.value), str(path)
+
+    def test_expression_error_shows_python_error_and_written_expression(self, tmp_path):
+        from sparkwheel import EvaluationError
+
+        msg, path = self._error(tmp_path, 'a: 3\nmodel:\n  size: "$@a.bit_lenght()"\n', "model::size", EvaluationError)
+        assert msg.splitlines()[0] == (
+            "Failed to evaluate expression '$@a.bit_lenght()': AttributeError: 'int' object has no attribute 'bit_lenght'"
+        )
+        assert f"{path}:3" in msg
+        assert "__ref_" not in msg
+
+    @pytest.mark.parametrize("expression", ["$1 +", "$@a +", "$(@a"])
+    def test_syntax_error_has_location(self, tmp_path, expression):
+        from sparkwheel import EvaluationError
+
+        msg, path = self._error(tmp_path, f'a: 3\nx: "{expression}"\n', "x", EvaluationError)
+        assert f"'{expression}': SyntaxError" in msg
+        assert f"{path}:2" in msg
+
+    def test_name_error_suggests_imports(self, tmp_path):
+        msg, _ = self._error(tmp_path, 'x: "$torch.zeros(3)"\n', "x")
+        assert "NameError: name 'torch' is not defined" in msg
+        assert "`_imports_: {torch: torch}`" in msg
+
+    def test_word_import_inside_expression_is_not_an_import_statement(self):
+        config = Config().update({"a": {"import": 1}, "b": "$@a['import']"})
+        assert config.resolve("b") == 1
+
+    def test_unevaluated_expression_keeps_written_text(self):
+        config = Config().update({"a": 1, "x": "$@a + 1"})
+        assert config.resolve("x", eval_expr=False).get_config() == "$@a + 1"
+
+    def test_missing_top_level_id_has_no_unrelated_location(self, tmp_path):
+        msg, path = self._error(tmp_path, "a: 3\nmodel:\n  size: 1\n", "modle", ConfigKeyError)
+        assert path not in msg
+        assert "model" in msg
+
+    def test_missing_nested_id_points_at_nearest_existing_parent(self, tmp_path):
+        msg, path = self._error(tmp_path, "a: 3\nmodel:\n  size: 1\n", "model::sise", ConfigKeyError)
+        assert f"{path}:2" in msg
+        assert "size" in msg
+
+    def test_missing_reference_points_at_the_key_that_holds_it(self, tmp_path):
+        text = (
+            "num_classes: 3\nmodel:\n  _target_: builtins.dict\n  head:\n    _target_: builtins.dict\n    n: '@num_clases'\n"
+        )
+        msg, path = self._error(tmp_path, text, "model", ConfigKeyError)
+        assert f"{path}:6 → model::head::n" in msg
+        assert "num_classes" in msg
+
+    def test_single_suggestion_marker(self, tmp_path):
+        msg, _ = self._error(tmp_path, "value: 1\nref: '@valeu'\n", "ref", ConfigKeyError)
+        assert "💡 💡" not in msg
+        assert msg.count("💡") == 1
+
+    def test_unknown_target_module_names_the_part_that_cannot_be_imported(self):
+        from sparkwheel import TargetNotFoundError
+
+        with pytest.raises(TargetNotFoundError, match="'collectionz' cannot be imported"):
+            Config().update({"x": {"_target_": "collectionz.abc.Counter"}}).resolve("x")
+
+
+class TestOverrideProvenance:
+    """Errors caused by a CLI override point at the override, not at the YAML line it replaced."""
+
+    @staticmethod
+    def _config(tmp_path):
+        (tmp_path / "overridemod.py").write_text(
+            "class Model:\n    def __init__(self, learning_rate, dim=2):\n        self.lr, self.dim = learning_rate, dim\n"
+        )
+        path = tmp_path / "config.yaml"
+        path.write_text("model:\n  _target_: overridemod.Model\n  learning_rate: 0.1\n  dim: 4\n")
+        return Config().update(str(path))
+
+    @pytest.fixture(autouse=True)
+    def _importable(self, tmp_path, monkeypatch):
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+    def test_bad_reference_in_override(self, tmp_path):
+        config = self._config(tmp_path).update("model::dim=$@missing + 1")
+        with pytest.raises(ConfigKeyError) as excinfo:
+            config.resolve("model")
+        msg = str(excinfo.value)
+        assert "[override → model::dim]:\n  → model::dim=$@missing + 1" in msg
+        assert "config.yaml" not in msg
+
+    def test_bad_target_in_override(self, tmp_path):
+        from sparkwheel import TargetNotFoundError
+
+        config = self._config(tmp_path).update("model::_target_=overridemod.Modl")
+        with pytest.raises(TargetNotFoundError) as excinfo:
+            config.resolve("model")
+        msg = str(excinfo.value)
+        assert "→ model::_target_=overridemod.Modl" in msg
+        assert "overridemod.Model" in msg  # did-you-mean
+
+    def test_bad_target_in_file_points_at_target_line(self, tmp_path):
+        from sparkwheel import TargetNotFoundError
+
+        path = tmp_path / "config.yaml"
+        path.write_text("model:\n  learning_rate: 0.1\n  _target_: overridemod.Modl\n")
+        with pytest.raises(TargetNotFoundError) as excinfo:
+            Config().update(str(path)).resolve("model")
+        assert f"[{path}:3 → model::_target_]" in str(excinfo.value)
+
+    def test_new_subtree_from_override(self, tmp_path):
+        config = self._config(tmp_path).update("model={_target_: overridemod.Model, learning_rate: '@nope'}")
+        with pytest.raises(ConfigKeyError) as excinfo:
+            config.resolve("model")
+        assert "→ model={_target_: overridemod.Model, learning_rate: '@nope'}" in str(excinfo.value)
+        assert config.locations.get("model::learning_rate").override.startswith("model=")
+        assert config.locations.get("model::dim") is None  # the file's `dim` was replaced
+
+    def test_merging_override_keeps_file_locations_of_untouched_keys(self, tmp_path):
+        config = self._config(tmp_path).update("+model={dim: 8}")
+        assert config.locations.get("model").override == ""
+        assert config.locations.get("model::learning_rate").line == 3
+        assert config.locations.get("model::dim").override == "+model={dim: 8}"
+
+    def test_appended_items_point_at_the_override(self, tmp_path):
+        path = tmp_path / "base.yaml"
+        path.write_text("xs:\n  - {a: 1}\n  - {a: 2}\n")
+        config = Config().update(str(path)).update("+xs=[{a: 3}]")
+        assert config.get("xs::2") == {"a": 3}
+        assert config.locations.get("xs::1::a").line == 3
+        assert config.locations.get("xs::2::a").override == "+xs=[{a: 3}]"
+
+    def test_appended_items_point_at_the_file(self, tmp_path):
+        (tmp_path / "base.yaml").write_text("xs:\n  - {a: 0}\n")
+        (tmp_path / "more.yaml").write_text("# more\n+xs:\n  - {a: 1}\n")
+        config = Config().update(str(tmp_path / "base.yaml")).update(str(tmp_path / "more.yaml"))
+        assert config.locations.get("xs::0::a").filepath.endswith("base.yaml")
+        assert config.locations.get("xs::1::a").filepath.endswith("more.yaml")
+        assert config.locations.get("xs::1::a").line == 3
+
+    def test_a_set_list_replaces_the_list(self):
+        config = Config().update({"xs": [1, 2], "m": {"xs": [1]}}).update("xs=[3]").update("m={xs: [4]}")
+        assert config.get("xs") == [3] and config.get("m::xs") == [4]
+        assert config.locations.get("xs::0").override == "xs=[3]"
+
+    def test_location_str(self):
+        from sparkwheel import Location
+
+        assert str(Location("", 0, id="a", override="a=1")) == "override `a=1`"
+        with pytest.raises(ValueError):
+            Location("f.yaml", 0)
+
+
+class TestArgumentErrors:
+    """A wrong argument name is reported with did-you-mean and the line (or override) that set it."""
+
+    @pytest.fixture(autouse=True)
+    def _module(self, tmp_path, monkeypatch):
+        (tmp_path / "argmod.py").write_text(
+            "class Model:\n"
+            "    def __init__(self, learning_rate, dim=2):\n"
+            "        self.lr, self.dim = learning_rate, dim\n"
+            "\n"
+            "class Broken:\n"
+            "    def __init__(self, n=1):\n"
+            "        len(n)\n"
+            "\n"
+            "import functools\n"
+            "def injects(f):\n"
+            "    @functools.wraps(f)\n"
+            "    def wrapper(*args, injected=0, **kwargs):\n"
+            "        return f(*args, **kwargs) + injected\n"
+            "    return wrapper\n"
+            "\n"
+            "@injects\n"
+            "def wrapped(a):\n"
+            "    return a\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        self.path = tmp_path / "config.yaml"
+
+    def _error(self, text, *overrides):
+        from sparkwheel import InstantiationError
+
+        self.path.write_text(text)
+        config = Config().update(str(self.path))
+        for override in overrides:
+            config.update(override)
+        with pytest.raises(InstantiationError) as excinfo:
+            config.resolve("model")
+        return excinfo.value
+
+    def test_typo_in_yaml(self):
+        error = self._error("model:\n  _target_: argmod.Model\n  learnin_rate: 0.1\n")
+        msg = str(error)
+        assert msg.startswith("'argmod.Model' got an unexpected argument 'learnin_rate'")
+        assert f"[{self.path}:3 → model::learnin_rate]" in msg
+        assert "Did you mean 'learning_rate'?" in msg and "Accepted arguments: learning_rate, dim" in msg
+
+    def test_typo_in_override(self):
+        msg = str(self._error("model:\n  _target_: argmod.Model\n  learning_rate: 0.1\n", "model::dimm=3"))
+        assert "unexpected argument 'dimm'" in msg and "→ model::dimm=3" in msg and "Did you mean 'dim'?" in msg
+
+    def test_missing_argument(self):
+        msg = str(self._error("model:\n  _target_: argmod.Model\n  dim: 3\n"))
+        assert "missing a required argument: 'learning_rate'" in msg and f"{self.path}:1 → model" in msg
+
+    def test_type_error_inside_user_code_is_not_reinterpreted(self):
+        error = self._error("model:\n  _target_: argmod.Broken\n")
+        assert "object of type 'int' has no len()" in str(error)
+        assert isinstance(error.__cause__, TypeError)
+
+    def test_callable_mode_checks_arguments_when_the_partial_is_made(self):
+        msg = str(self._error("model:\n  _target_: argmod.Model\n  _mode_: callable\n  lerning_rate: 0.1\n"))
+        assert "unexpected argument 'lerning_rate'" in msg and f"{self.path}:4" in msg
+
+    def test_callable_mode_allows_missing_arguments(self):
+        self.path.write_text("model:\n  _target_: argmod.Model\n  _mode_: callable\n  dim: 3\n")
+        assert Config().update(str(self.path)).resolve("model")(learning_rate=1).dim == 3
+
+    def test_decorator_wrapper_arguments_are_accepted(self):
+        config = Config().update({"f": {"_target_": "argmod.wrapped", "_mode_": "callable", "injected": 2}})
+        config.check()
+        assert config.resolve("f")(a=1) == 3
+
+    def test_targets_without_signature_are_called_as_before(self):
+        assert Config().update({"x": {"_target_": "builtins.dict", "a": 1}}).resolve("x") == {"a": 1}

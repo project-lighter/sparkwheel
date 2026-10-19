@@ -2,7 +2,8 @@
 
 import pytest
 
-from sparkwheel.path_utils import PathPatterns, find_references, get_by_id
+from sparkwheel import Config
+from sparkwheel.path_utils import PathPatterns, get_by_id, ref_name, replace_references, scan_references
 
 
 class TestPathPatterns:
@@ -20,16 +21,64 @@ class TestPathPatterns:
         refs = PathPatterns.find_absolute_references("plain text without references")
         assert refs == []
 
-    def test_find_references_function(self):
-        """Test find_references utility function."""
-        # Test the wrapper function - returns IDs without @
-        refs = find_references("$some_func(@model::lr)")
-        assert "model::lr" in refs
 
-    def test_find_references_empty_for_plain_text(self):
-        """Test find_references returns empty for plain text."""
-        refs = find_references("just plain text")
-        assert refs == []
+class TestExpressionReferences:
+    """Which `@` in a `$` expression is a reference: Python's tokenizer decides."""
+
+    @pytest.mark.parametrize(
+        "text,refs",
+        [
+            ("$not@a", ["a"]),
+            ("$1 in@a", ["a"]),
+            ("$(@a)", ["a"]),
+            ("$[@a,@b]", ["a", "b"]),
+            ("${'k':@a}", ["a"]),
+            ("$@a if@flag else-@b", ["a", "flag", "b"]),
+            ("$@m::k * 2", ["m::k"]),
+            ("$'user@a'", []),
+            ('$"@a" + @b', ["b"]),
+            ("$@a  # note@b", ["a"]),
+            ("$x @ y", []),
+            ("$@a @ @b", ["a", "b"]),
+            ("$(@a)@(@b)", ["a", "b"]),
+            ("$f'{@a}'", ["a"]),
+            ("$f'me@a {{@b}} {x}'", []),
+            ("$f'{x}' @ @b", ["b"]),
+            ("$'a\f' + @b", ["b"]),
+            ('$"""a\f\n""" @x', []),
+            ("$'\x1c' if @a else\n@b", ["a", "b"]),
+            ("$True@a", []),
+        ],
+    )
+    def test_scan(self, text, refs):
+        assert list(scan_references(text)) == refs
+
+    def test_replace_keeps_strings_and_operators(self):
+        refs = {"a": 1, "b": 2}
+        assert replace_references("$not@a and '@a' or x @ @b", refs) == (
+            f"$not {ref_name('a')} and '@a' or x @ {ref_name('b')}"
+        )
+
+    @pytest.mark.parametrize(
+        "text, value",
+        [
+            ("$f'{@a}'", "1"),
+            ('$f"me@a {@a}"', "me@a 1"),
+            ("$f'{{@a}} {@a:>3}'", "{@a}   1"),
+            ("$f\"{f'{@a}'}\"", "1"),
+            ("$f'{@a!r}' + f'{@m::k}'", "12"),
+            ("$f\"{f'me@a {@a}'}\"", "me@a 1"),
+            ("$f\"{'x@a'} {not@z}\"", "x@a True"),
+        ],
+    )
+    def test_references_in_fstrings(self, text, value):
+        assert Config().update({"a": 1, "z": 0, "m": {"k": 2}, "v": text}).resolve("v") == value
+
+    @pytest.mark.parametrize(
+        "text,refs", [("@model::lr", ["model::lr"]), ("@model.lr", ["model.lr"]), ("@", []), ("@a @b", [])]
+    )
+    def test_pure_reference_is_the_whole_value(self, text, refs):
+        assert list(scan_references(text)) == refs
 
 
 class TestGetById:

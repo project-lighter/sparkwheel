@@ -49,8 +49,7 @@ model = config.resolve("model")  # Actual torch.nn.Linear(784, 10)
 
 - **Declarative Objects** - Instantiate any Python class with `_target_`
 - **Smart References** - `@` for resolved values, `%` for raw YAML
-- **Composition by Default** - Dicts merge, lists extend automatically
-- **Explicit Control** - `=` to replace, `~` to delete
+- **What You Write Is What You Get** - Keys set, `+` combines (merges dicts, appends lists), `~` deletes
 - **Python Expressions** - Dynamic values with `$`
 - **Schema Validation** - Type-check with dataclasses
 

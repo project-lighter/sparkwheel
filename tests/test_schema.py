@@ -1217,8 +1217,10 @@ class TestValidatorExceptionHandling:
                 # This validator won't run if __init__ fails
                 assert self.value > 0
 
-        # Should still validate the types even if instance creation fails
-        validate({"value": -5}, Config)
+        # An error raised while building the instance is reported, not skipped
+        with pytest.raises(ValidationError, match="Value must be positive") as excinfo:
+            validate({"value": -5}, Config)
+        assert isinstance(excinfo.value.__cause__, ValueError)
 
 
 class TestUnionValidationSuccess:
@@ -1281,3 +1283,166 @@ class TestMetadataExceptionHandling:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestSchemaCleanup:
+    """Postponed annotations, bools as numbers, and validators that used to be skipped silently."""
+
+    def test_postponed_annotations(self, tmp_path, monkeypatch):
+        (tmp_path / "pep563_schema.py").write_text(
+            "from __future__ import annotations\n"
+            "from dataclasses import dataclass\n"
+            "@dataclass\n"
+            "class Child:\n    n: int\n"
+            "@dataclass\n"
+            "class Parent:\n    child: Child\n    tags: list[str] | None = None\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        from pep563_schema import Parent
+
+        validate({"child": {"n": 2}, "tags": ["a"]}, Parent)
+        with pytest.raises(ValidationError, match="child.n"):
+            validate({"child": {"n": "two"}}, Parent)
+
+    def test_unresolvable_annotation_names_the_schema(self):
+        @dataclass
+        class Broken:
+            n: "Undefined"  # noqa: F821
+
+        with pytest.raises(TypeError, match="Broken"):
+            validate({"n": 1}, Broken)
+
+    @pytest.mark.parametrize("annotation", [int, float])
+    def test_bool_is_not_a_number(self, annotation):
+        @dataclass
+        class Numeric:
+            n: annotation
+
+        with pytest.raises(ValidationError, match="Type mismatch"):
+            validate({"n": True}, Numeric)
+        validate({"n": 1}, Numeric)
+
+    def test_bool_is_a_bool(self):
+        @dataclass
+        class Flag:
+            on: bool
+
+        validate({"on": True}, Flag)
+        with pytest.raises(ValidationError):
+            validate({"on": 1}, Flag)
+
+    def test_component_keys_do_not_skip_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Positive:
+            n: int
+
+            @validator
+            def check_positive(self):
+                if self.n <= 0:
+                    raise ValueError("n must be positive")
+
+        with pytest.raises(ValidationError, match="n must be positive"):
+            Config(schema=Positive).update({"_target_": "builtins.dict", "n": -1})
+
+    def test_lenient_extra_fields_do_not_skip_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Positive:
+            n: int
+
+            @validator
+            def check_positive(self):
+                if self.n <= 0:
+                    raise ValueError("n must be positive")
+
+        with pytest.raises(ValidationError, match="n must be positive"):
+            validate({"n": -1, "extra": 1}, Positive, strict=False)
+
+
+class TestNestedDataclassesInValidators:
+    """`__post_init__` and validators see nested dataclass fields as instances, not dicts."""
+
+    def test_post_init_reads_nested_fields(self):
+        from typing import Optional
+
+        from sparkwheel import validator
+
+        @dataclass
+        class Child:
+            n: int
+
+        @dataclass
+        class Parent:
+            child: Child
+            maybe: Optional[Child] = None
+            many: list[Child] = field(default_factory=list)
+            named: dict[str, Child] = field(default_factory=dict)
+
+            def __post_init__(self):
+                self.total = self.child.n + sum(c.n for c in self.many) + sum(c.n for c in self.named.values())
+                self.total += self.maybe.n if self.maybe else 0
+
+            @validator
+            def check_total(self):
+                if self.total < 0:
+                    raise ValueError(f"total must be >= 0, got {self.total}")
+
+        data = {"child": {"n": 1}, "maybe": {"n": 1}, "many": [{"n": 1}], "named": {"a": {"n": 1}}}
+        Config(schema=Parent).update(data)
+        with pytest.raises(ValidationError, match="total must be >= 0, got -5"):
+            Config(schema=Parent).update({**data, "child": {"n": -8}})
+
+    def test_nested_references_skip_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Child:
+            n: int
+
+            def __post_init__(self):
+                if self.n < 0:
+                    raise ValueError("n must be >= 0")
+
+        @dataclass
+        class Parent:
+            child: Child
+            children: list[Child] = field(default_factory=list)
+
+            @validator
+            def check(self):
+                pass
+
+        Config(schema=Parent).update({"child": {"n": "$1 + 1"}})
+        Config(schema=Parent).update({"child": {"n": 1}, "children": [{"n": "@child::n"}]})
+        with pytest.raises(ValidationError, match="n must be >= 0"):
+            Config(schema=Parent).update({"child": {"n": -1}})
+
+    def test_a_nested_reference_does_not_switch_off_the_root_validators(self):
+        from sparkwheel import validator
+
+        @dataclass
+        class Opt:
+            lr: float
+
+        @dataclass
+        class Root:
+            epochs: int
+            base_lr: float
+            optimizer: Opt
+
+            @validator
+            def check_epochs(self):
+                if self.epochs <= 0:
+                    raise ValueError("epochs must be positive")
+
+            @validator
+            def check_lr(self):
+                if self.optimizer.lr > 1:  # a TypeError while `lr` is still "@base_lr"
+                    raise ValueError("lr must be at most 1")
+
+        with pytest.raises(ValidationError, match="epochs must be positive"):
+            Config(schema=Root).update({"epochs": -1, "base_lr": 0.1, "optimizer": {"lr": "@base_lr"}})
+        Config(schema=Root).update({"epochs": 1, "base_lr": 0.1, "optimizer": {"lr": "@base_lr"}})

@@ -1,27 +1,38 @@
 """YAML configuration loading with source location tracking."""
 
-import warnings
-from collections.abc import Sequence
+import os
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml  # type: ignore[import-untyped]
+from yaml.constructor import ConstructorError  # type: ignore[import-untyped]
 
 from .locations import LocationRegistry
 from .path_utils import is_yaml_file
-from .utils import CheckKeyDuplicatesYamlLoader, PathLike
-from .utils.constants import ID_SEP_KEY
+from .utils import PathLike
+from .utils.constants import COMBINE_KEY, ID_SEP_KEY
 from .utils.exceptions import Location
 
-__all__ = ["Loader"]
+__all__ = ["Loader", "YamlLoader"]
 
 
-class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
-    """YAML loader that tracks source locations into LocationRegistry.
+class YamlLoader(yaml.SafeLoader):
+    """SafeLoader that also reads YAML 1.2 floats such as ``1e-3`` (YAML 1.1 reads them as strings).
 
-    Unlike the old approach that added __sparkwheel_metadata__ keys to dicts,
-    this loader populates a separate LocationRegistry during loading.
+    Used for config files and for values in CLI overrides, so both are typed the same way.
     """
+
+
+YamlLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:float",
+    re.compile(r"^[-+]?(?:[0-9][0-9_]*(?:\.[0-9_]*)?|\.[0-9][0-9_]*)[eE][-+]?[0-9]+$"),
+    list("-+0123456789."),
+)
+
+
+class MetadataTrackingYamlLoader(YamlLoader):
+    """YAML loader that tracks source locations into a LocationRegistry and rejects duplicate keys."""
 
     def __init__(self, stream, filepath: str, registry: LocationRegistry):  # type: ignore[no-untyped-def]
         super().__init__(stream)
@@ -30,11 +41,11 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
         self.id_path_stack: list[str] = []  # Track current path during construction
 
     def construct_mapping(self, node, deep=False):
-        """Override to track source locations for dict nodes."""
+        """Construct a dict, tracking source locations, expanding `<<:` merge keys and rejecting duplicate keys."""
         # Register source location for this dict node
         current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
 
-        if node.start_mark:
+        if node.start_mark and current_id not in self.registry:  # a nested node keeps its key's line
             location = Location(
                 filepath=self.filepath,
                 line=node.start_mark.line + 1,
@@ -43,47 +54,67 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
             )
             self.registry.register(current_id, location)
 
-        # For non-deep construction, we construct children manually to track paths
-        if not deep:
-            mapping = {}
-            for key_node, value_node in node.value:
-                # Construct key
-                key = self.construct_object(key_node, deep=False)
+        # Keys written in this mapping (merged-in keys may legitimately be overridden by them)
+        authored = {id(key_node) for key_node, _ in node.value}
+        self.flatten_mapping(node)
 
-                # Push key onto path stack before constructing value
-                self.id_path_stack.append(str(key))
+        mapping = {}
+        first_marks: dict[Any, Any] = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=True)
+            if id(key_node) in authored:
+                if key in first_marks:
+                    first_line = first_marks[key].line + 1
+                    problem = f"found duplicate key '{key}' (first defined on line {first_line})"
+                    raise ConstructorError(None, None, problem, key_node.start_mark)
+                first_marks[key] = key_node.start_mark
 
-                # Register source location for this specific key
-                # This allows us to track where each key was defined
-                key_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
-                if key_node.start_mark:
-                    key_location = Location(
-                        filepath=self.filepath,
-                        line=key_node.start_mark.line + 1,
-                        column=key_node.start_mark.column + 1,
-                        id=key_id,
-                    )
-                    self.registry.register(key_id, key_location)
+            # Push key onto path stack before constructing value
+            self.id_path_stack.append(str(key).removeprefix(COMBINE_KEY))  # `+key` is stored as `key`
 
-                # Construct value with updated path
-                value = self.construct_object(value_node, deep=True)
+            # Register source location for this specific key
+            # This allows us to track where each key was defined
+            key_id = ID_SEP_KEY.join(self.id_path_stack)
+            if key_node.start_mark:
+                key_location = Location(
+                    filepath=self.filepath,
+                    line=key_node.start_mark.line + 1,
+                    column=key_node.start_mark.column + 1,
+                    id=key_id,
+                )
+                self.registry.register(key_id, key_location)
 
-                # Pop key from path stack
-                self.id_path_stack.pop()
+            # Construct value with updated path
+            reused = value_node in self.constructed_objects  # an alias or a merged anchor: built under another key
+            mapping[key] = self.construct_object(value_node, deep=True)
+            if reused:
+                self._register_children(value_node, key_id)
+            self.id_path_stack.pop()
 
-                mapping[key] = value
+        return mapping
 
-            return mapping
+    def _register_children(self, node: Any, node_id: str) -> None:
+        """Record where the keys and items under an already-built node are, for this path too."""
+        if isinstance(node, yaml.MappingNode):
+            children = [(str(self.construct_object(k)), k, v) for k, v in node.value]
+        elif isinstance(node, yaml.SequenceNode):
+            children = [(str(i), v, v) for i, v in enumerate(node.value)]
         else:
-            # Use parent's deep construction
-            return super().construct_mapping(node, deep=True)
+            return
+        for name, mark_node, child in children:
+            child_id = f"{node_id}{ID_SEP_KEY}{name}"
+            if child_id not in self.registry:
+                mark = mark_node.start_mark
+                location = Location(filepath=self.filepath, line=mark.line + 1, column=mark.column + 1, id=child_id)
+                self.registry.register(child_id, location)
+            self._register_children(child, child_id)
 
     def construct_sequence(self, node, deep=False):
-        """Override to track source locations for list nodes."""
+        """Construct a list, tracking source locations of its items."""
         # Register source location for this list node
         current_id = ID_SEP_KEY.join(self.id_path_stack) if self.id_path_stack else ""
 
-        if node.start_mark:
+        if node.start_mark and current_id not in self.registry:  # a nested node keeps its key's line
             location = Location(
                 filepath=self.filepath,
                 line=node.start_mark.line + 1,
@@ -92,25 +123,13 @@ class MetadataTrackingYamlLoader(CheckKeyDuplicatesYamlLoader):
             )
             self.registry.register(current_id, location)
 
-        # For non-deep construction, construct children manually to track paths
-        if not deep:
-            sequence = []
-            for idx, child_node in enumerate(node.value):
-                # Push index onto path stack
-                self.id_path_stack.append(str(idx))
+        sequence = []
+        for idx, child_node in enumerate(node.value):
+            self.id_path_stack.append(str(idx))
+            sequence.append(self.construct_object(child_node, deep=True))
+            self.id_path_stack.pop()
 
-                # Construct child with updated path
-                value = self.construct_object(child_node, deep=True)
-
-                # Pop index from path stack
-                self.id_path_stack.pop()
-
-                sequence.append(value)
-
-            return sequence
-        else:
-            # Use parent's deep construction
-            return super().construct_sequence(node, deep=True)
+        return sequence
 
 
 class Loader:
@@ -144,34 +163,28 @@ class Loader:
 
         Raises:
             ValueError: If file is not a YAML file
+            yaml.YAMLError: If the file is not valid YAML or repeats a key
         """
         if not filepath:
             return {}, LocationRegistry()
 
-        filepath_str = str(Path(filepath))
+        filepath_str = os.path.expanduser(str(Path(filepath)))
 
         # Validate YAML extension
         if not is_yaml_file(filepath_str):
             raise ValueError(f'Unknown file input: "{filepath}", must be a YAML file (.yaml or .yml)')
 
-        # Resolve path (detect potential path traversal)
-        resolved_path = Path(filepath_str).resolve()
-        if ".." in str(filepath):
-            warnings.warn(
-                f"Config file path contains '..' (parent directory reference): {filepath}\n"
-                f"Resolved to: {resolved_path}\n"
-                f"This is allowed but ensure the path is from a trusted source to prevent path traversal attacks.",
-                UserWarning,
-                stacklevel=2,
-            )
-
         # Load YAML with metadata tracking
+        resolved_path = Path(filepath_str).resolve()
         registry = LocationRegistry()
         with open(resolved_path) as f:
-            config = self._load_yaml_with_metadata(f, str(resolved_path), registry)
-
-        # Strip metadata keys from config (they're now in registry)
-        config = self._strip_metadata(config)
+            try:
+                config = self._load_yaml_with_metadata(f, str(resolved_path), registry)
+            except yaml.scanner.ScannerError as e:  # `lr: @base`: YAML cannot start a plain value with @ or %
+                char = next((c for c in "@%" if e.problem == f"found character '{c}' that cannot start any token"), None)
+                if char:
+                    e.problem += f'. Quote a value that starts with {char}: "{char}key"'
+                raise
 
         return config, registry
 
@@ -200,42 +213,3 @@ class Loader:
         # Load and return clean config
         config = yaml.load(stream, TrackerLoader)
         return config if config is not None else {}
-
-    @staticmethod
-    def _strip_metadata(config: Any) -> Any:
-        """Remove __sparkwheel_metadata__ keys from config.
-
-        Args:
-            config: Config structure potentially containing metadata keys
-
-        Returns:
-            Config with metadata keys removed
-        """
-        if isinstance(config, dict):
-            return {k: Loader._strip_metadata(v) for k, v in config.items() if k != "__sparkwheel_metadata__"}
-        elif isinstance(config, list):
-            return [Loader._strip_metadata(item) for item in config]
-        else:
-            return config
-
-    def load_files(self, filepaths: Sequence[PathLike]) -> tuple[dict[str, Any], LocationRegistry]:
-        """Load multiple YAML files sequentially.
-
-        Files are loaded in order and merged using simple dict update
-        (not the merge_configs logic - that happens at a higher level).
-
-        Args:
-            filepaths: Sequence of file paths to load
-
-        Returns:
-            Tuple of (merged_config_dict, merged_metadata_registry)
-        """
-        combined_config = {}
-        combined_registry = LocationRegistry()
-
-        for filepath in filepaths:
-            config, registry = self.load_file(filepath)
-            combined_config.update(config)
-            combined_registry.merge(registry)
-
-        return combined_config, combined_registry

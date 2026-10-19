@@ -3,11 +3,15 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pprint import pformat
+from pydoc import locate
 from typing import Any
 
-from .utils import CompInitMode, first, instantiate, optional_import, run_debug, run_eval
-from .utils.constants import EXPR_KEY
+from .locations import LocationRegistry
+from .path_utils import ref_name, replace_references, scan_references
+from .utils import CompInitMode, instantiate, optional_import, run_debug, run_eval
+from .utils.constants import EXPR_KEY, ID_SEP_KEY
 from .utils.exceptions import EvaluationError, InstantiationError, Location, TargetNotFoundError
+from .utils.module import describe_argument_error
 
 __all__ = ["Item", "Expression", "Component", "Instantiable"]
 
@@ -110,6 +114,9 @@ class Component(Item, Instantiable):
     Args:
         config: Configuration content
         id: Identifier for this config item, defaults to ""
+        source_location: Location where this component was defined
+        locations: Registry with the locations of the component's keys, so errors can
+            point at the `_target_` or argument that caused them
 
     Note:
         Special configuration keys:
@@ -125,8 +132,20 @@ class Component(Item, Instantiable):
 
     non_arg_keys = {"_target_", "_disabled_", "_mode_", "_args_"}
 
-    def __init__(self, config: Any, id: str = "", source_location: Location | None = None) -> None:
+    def __init__(
+        self,
+        config: Any,
+        id: str = "",
+        source_location: Location | None = None,
+        locations: LocationRegistry | None = None,
+    ) -> None:
         super().__init__(config=config, id=id, source_location=source_location)
+        self.locations = locations
+
+    def location_of(self, key: str) -> Location | None:
+        """Location of one of this component's keys, or of the component itself if unknown."""
+        location = self.locations.get(f"{self.id}{ID_SEP_KEY}{key}" if self.id else key) if self.locations else None
+        return location or self.source_location
 
     @staticmethod
     def is_instantiable(config: Any) -> bool:
@@ -214,15 +233,21 @@ class Component(Item, Instantiable):
             suggestion = self._suggest_similar_modules(modname) if isinstance(modname, str) else None
             raise TargetNotFoundError(
                 f"Cannot locate class or function: '{modname}'",
-                source_location=self.source_location,
+                source_location=self.location_of("_target_"),
                 suggestion=suggestion,
             ) from e
         except InstantiationError as e:
+            if isinstance(e.__cause__, TypeError):
+                # Wrong argument names point at the argument; a TypeError raised inside the target is kept as is
+                target = locate(modname) if isinstance(modname, str) else modname
+                errors = self.argument_errors(target, args, config_kwargs, allow_missing=mode == "callable")
+                if errors:
+                    raise errors[0] from e.__cause__
             # Add source location if not already present, preserving original message and suggestion
             if e.source_location is None:
                 raise InstantiationError(
                     e._original_message, source_location=self.source_location, suggestion=e.suggestion
-                ) from e
+                ) from (e.__cause__ or e)
             raise  # Already has location, re-raise as-is
         except Exception as e:
             # Wrap unexpected errors with component context and location
@@ -230,6 +255,24 @@ class Component(Item, Instantiable):
                 f"Failed to instantiate '{modname}': {type(e).__name__}: {e}",
                 source_location=self.source_location,
             ) from e
+
+    def argument_errors(
+        self, target: Any, args: list[Any], kwargs: dict[str, Any], allow_missing: bool = False
+    ) -> list[InstantiationError]:
+        """The errors for arguments that do not fit `target`'s signature: one per unknown argument, each pointing
+        at it, or else the other mismatch (such as a missing argument)."""
+        errors: list[InstantiationError] = []
+        kwargs = dict(kwargs)
+        while (problem := describe_argument_error(target, args, kwargs, allow_missing=allow_missing)) is not None:
+            message, suggestion, key = problem
+            if key is None and errors:
+                break  # a missing argument is most likely the misspelled one already reported
+            location = self.location_of(key) if key else self.source_location
+            errors.append(InstantiationError(f"'{self.resolve_module_name()}' {message}", location, suggestion))
+            if key is None:
+                break
+            del kwargs[key]
+        return errors
 
     def _suggest_similar_modules(self, target: str) -> str | None:
         """Suggest similar valid module names using fuzzy matching.
@@ -244,8 +287,6 @@ class Component(Item, Instantiable):
             return None
 
         try:
-            from pydoc import locate
-
             from .utils import damerau_levenshtein_distance
 
             # Split into module path and attribute name
@@ -255,7 +296,9 @@ class Component(Item, Instantiable):
             # Try to import the base module
             base = locate(base_module)
             if base is None:
-                return None
+                parts = target.split(".")
+                missing = next(".".join(parts[:i]) for i in range(1, len(parts)) if locate(".".join(parts[:i])) is None)
+                return f"'{missing}' cannot be imported: check its spelling and that it is installed or on sys.path."
 
             # Find similar attribute names in the module
             similar = []
@@ -304,6 +347,7 @@ class Expression(Item):
 
     prefix = EXPR_KEY
     run_eval = run_eval
+    refs_var = "__local_refs"  # global holding resolved `@` references during evaluation
 
     def __init__(
         self,
@@ -317,8 +361,8 @@ class Expression(Item):
 
     def _parse_import_string(self, import_string: str) -> Any | None:
         """parse single import statement such as "from pathlib import Path" """
-        node = first(ast.iter_child_nodes(ast.parse(import_string)))
-        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        node = _single_import(import_string)
+        if node is None:
             return None
         if len(node.names) < 1:
             return None
@@ -337,7 +381,8 @@ class Expression(Item):
     def evaluate(self, globals: dict[str, Any] | None = None, locals: dict[str, Any] | None = None) -> str | Any | None:
         """Evaluate the expression and return the result.
 
-        Uses Python's `eval()` to execute the expression string.
+        Uses Python's `eval()` to execute the expression string. Each `@id` reference becomes a name bound
+        to its value from the resolved references passed as the `__local_refs` global.
 
         Args:
             globals: Additional global symbols for evaluation
@@ -347,38 +392,64 @@ class Expression(Item):
             Evaluation result, or None if not an expression
 
         Raises:
-            RuntimeError: If evaluation fails
+            EvaluationError: If parsing or evaluation fails. The message names the Python error
+                and shows the expression as written.
         """
         value = self.get_config()
         if not Expression.is_expression(value):
             return None
-        optional_module = self._parse_import_string(value[len(self.prefix) :])
-        if optional_module is not None:
-            return optional_module
-        if not self.run_eval:
-            return f"{value[len(self.prefix) :]}"
         globals_ = dict(self.globals)
         if globals is not None:
             for k, v in globals.items():
                 if k in globals_:
                     warnings.warn(f"the new global variable `{k}` conflicts with `self.globals`, override it.", stacklevel=2)
                 globals_[k] = v
-        if not run_debug:
-            try:
-                return eval(value[len(self.prefix) :], globals_, locals)
-            except Exception as e:
-                raise EvaluationError(
-                    f"Failed to evaluate expression: '{value[len(self.prefix) :]}'",
-                    source_location=self.source_location,
-                ) from e
+        code = None
+        try:
+            refs = globals_.pop(self.refs_var, {})
+            code = replace_references(value, refs)[len(self.prefix) :].strip()
+            globals_.update({ref_name(ref_id): refs[ref_id] for ref_id in scan_references(value)})
+            optional_module = self._parse_import_string(code)
+            if optional_module is not None:
+                return optional_module
+            if not self.run_eval:
+                return f"{value[len(self.prefix) :]}"
+            if not run_debug:
+                return eval(code, globals_, locals)
+        except Exception as e:
+            raise self._evaluation_error(e, code) from e
         warnings.warn(
             f"\n\npdb: value={value}\nSee also Debugger commands documentation: https://docs.python.org/3/library/pdb.html\n",
             stacklevel=2,
         )
         import pdb  # noqa: T100
 
-        pdb.run(value[len(self.prefix) :], globals_, locals)
+        pdb.run(code, globals_, locals)
         return None
+
+    def _evaluation_error(self, error: Exception, code: str | None = None) -> EvaluationError:
+        """Describe a failed expression with the Python error and the expression as written.
+
+        `code` is the expression's Python code, with its references replaced, when known.
+        """
+        detail = error.msg if isinstance(error, SyntaxError) else str(error)
+        suggestion = None
+        name = getattr(error, "name", None)
+        if isinstance(error, NameError) and name:
+            suggestion = (
+                f"To use the module `{name}`, import it in the config (`_imports_: {{{name}: {name}}}`); "
+                f"for the config value `{name}`, write `@{name}`."
+            )
+        elif isinstance(error, SyntaxError) and code is not None and _is_statements(code):
+            suggestion = (
+                "A `$` value is one Python expression, not statements. "
+                "Import modules with `_imports_` (`_imports_: {os: os}`) and use them in the expression."
+            )
+        return EvaluationError(
+            f"Failed to evaluate expression '{self.get_config()}': {type(error).__name__}: {detail}",
+            source_location=self.source_location,
+            suggestion=suggestion,
+        )
 
     @classmethod
     def is_expression(cls, config: dict[str, Any] | list[Any] | str) -> bool:
@@ -399,8 +470,24 @@ class Expression(Item):
         Args:
             config: input config content to check.
         """
-        if not cls.is_expression(config):
+        if not isinstance(config, str) or not cls.is_expression(config) or "import" not in config:
             return False
-        if "import" not in config:
-            return False
-        return isinstance(first(ast.iter_child_nodes(ast.parse(f"{config[len(cls.prefix) :]}"))), (ast.Import, ast.ImportFrom))  # type: ignore[index]
+        return _single_import(config[len(cls.prefix) :]) is not None
+
+
+def _single_import(code: str) -> ast.Import | ast.ImportFrom | None:
+    """The import statement that `code` consists of, or None if it is anything else (`import os; os.sep` too)."""
+    try:
+        body = ast.parse(code.strip()).body
+    except SyntaxError:
+        return None  # e.g. `$@a['import']`; evaluating it reports any real syntax error
+    return body[0] if len(body) == 1 and isinstance(body[0], (ast.Import, ast.ImportFrom)) else None
+
+
+def _is_statements(code: str) -> bool:
+    """Whether `code` is Python statements (`x = 1`, `import os; os.sep`) rather than one expression."""
+    try:
+        body = ast.parse(code.strip()).body
+    except SyntaxError:
+        return False
+    return not (len(body) == 1 and isinstance(body[0], ast.Expr))

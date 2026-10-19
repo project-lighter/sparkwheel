@@ -109,12 +109,12 @@ def format_suggestions(suggestions: list[tuple[str, float]]) -> str:
 
     Examples:
         >>> format_suggestions([('parameters', 0.9), ('param_groups', 0.54)])
-        '💡 Did you mean one of these?\\n    - parameters ✓ (90% match)\\n    - param_groups (54% match)'
+        'Did you mean one of these?\\n    - parameters ✓ (90% match)\\n    - param_groups (54% match)'
     """
     if not suggestions:
         return ""
 
-    lines = ["💡 Did you mean one of these?"]
+    lines = ["Did you mean one of these?"]
     for suggestion, score in suggestions:
         # Add checkmark for very close matches (>80% similarity)
         check = " ✓" if score > 0.8 else ""

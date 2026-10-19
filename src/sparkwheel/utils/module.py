@@ -1,13 +1,15 @@
 import enum
+import inspect
 import os
 import pdb  # noqa: T100
 import warnings
-from collections.abc import Collection, Hashable
+from collections.abc import Collection, Hashable, Sequence
 from functools import partial
 from importlib import import_module
 from pydoc import locate
 from typing import Any
 
+from sparkwheel.errors import get_suggestions
 from sparkwheel.utils.enums import CompInitMode
 from sparkwheel.utils.exceptions import InstantiationError, TargetNotFoundError
 
@@ -239,7 +241,12 @@ def instantiate(__path: str, __mode: str, *args: Any, **kwargs: Any) -> Any:
         if m == CompInitMode.DEFAULT:
             return component(*args, **kwargs)
         if m == CompInitMode.CALLABLE:
-            return partial(component, *args, **kwargs) if (args or kwargs) else component
+            if not (args or kwargs):
+                return component
+            problem = describe_argument_error(component, args, kwargs, allow_missing=True)
+            if problem is not None:  # fail now, not when the partial is called
+                raise TypeError(problem[0])
+            return partial(component, *args, **kwargs)
         if m == CompInitMode.DEBUG:
             warnings.warn(
                 f"\n\npdb: instantiating component={component}, mode={m}\n"
@@ -254,3 +261,42 @@ def instantiate(__path: str, __mode: str, *args: Any, **kwargs: Any) -> Any:
 
     warnings.warn(f"Component to instantiate must represent a valid class or function, but got {__path}.", stacklevel=2)
     return component
+
+
+def describe_argument_error(
+    target: Any, args: Sequence[Any], kwargs: dict[str, Any], allow_missing: bool = False
+) -> tuple[str, str, str | None] | None:
+    """Explain why `target` cannot be called with these arguments.
+
+    Args:
+        target: The class or function.
+        args: Positional arguments.
+        kwargs: Keyword arguments.
+        allow_missing: Accept missing arguments (given later, as for ``_mode_: callable``).
+
+    Returns:
+        ``(problem, suggestion, keyword)`` where `keyword` is the offending keyword argument (or None),
+        or None if the arguments fit the signature or Python cannot tell the signature (some builtins).
+    """
+    try:
+        # A decorator's wrapper (functools.wraps) may accept arguments the wrapped function does not
+        signature = inspect.signature(target, follow_wrapped=False)
+    except (TypeError, ValueError):
+        return None
+    params = signature.parameters
+    takes_any_keyword = any(p.kind is p.VAR_KEYWORD for p in params.values())
+    if takes_any_keyword:  # a keyword named like a positional-only parameter goes to **kwargs
+        kwargs = {k: v for k, v in kwargs.items() if k not in params or params[k].kind is not params[k].POSITIONAL_ONLY}
+    try:
+        (signature.bind_partial if allow_missing else signature.bind)(*args, **kwargs)
+        return None
+    except TypeError as error:
+        problem = str(error)
+    accepted = [p.name for p in params.values() if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+    suggestion = f"Accepted arguments: {', '.join(accepted)}" if accepted else "It takes no arguments."
+    unknown = None if takes_any_keyword else next((key for key in kwargs if key not in params), None)
+    if unknown is None:
+        return problem, suggestion, None
+    close = get_suggestions(unknown, accepted, max_suggestions=1)
+    hint = f"Did you mean '{close[0][0]}'? " if close else ""
+    return f"got an unexpected argument '{unknown}'", hint + suggestion, unknown

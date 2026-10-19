@@ -1,541 +1,225 @@
-# Composition & Operators
+# Set, Combine, Delete
 
-Sparkwheel uses **composition-by-default**: configs merge naturally with just 2 operators (`=`, `~`) for explicit control.
+Keys set, `+` combines, `~` deletes: what you write is what you get.
 
-## Composition Decision Flow
+## The Rules
 
-!!! abstract "How Sparkwheel Merges Configs"
+| You write | YAML / dict | CLI | It does |
+|-----------|-------------|-----|---------|
+| **Set** | `key: value` | `key=value` | Replaces whatever `key` held: a dict, a list or a scalar |
+| **Set deep inside** | `a::b::c: value` | `a::b::c=value` | Sets one value, leaving its neighbours alone |
+| **Combine** | `+key: value` | `+key=value` | Merges a dict into a dict (all the way down), appends a list to a list |
+| **Delete** | `~key` | `~key` | Removes `key` |
+| **Delete items** | `~key: [0, 2]` | `~key::0` (one at a time) | Removes list indices or dict keys |
 
-    When merging two configs, Sparkwheel follows this decision tree:
+`+key` on a missing or `null` key sets it. On a scalar or a string (including `@ref`, `%ref` and `$expr`), or a dict where a list was (or the other way round), it is an error.
 
-    **1. Key exists in both configs?**
+`null` is a value: `key: null` sets `key` to `None`. Only `~` deletes.
 
-    - ❌ **No** → Simply add the new key-value pair
-    - ✅ **Yes** → Continue to step 2
+## Statements, Applied in Order
 
-    **2. Does the key have an operator?**
+A YAML file, a dict passed to `update()` and a command-line override are each a list of **statements**. Every top-level key is one statement, and they are applied in order:
 
-    - **`~key`** → 🗑️ Delete the key (highest priority)
-    - **`=key`** → 🔄 Replace completely (overwrite everything)
-    - **No operator** → Continue to step 3
+```yaml
+# experiment.yaml: three statements
+model::hidden_size: 1024   # set one value inside model
++trainer:                  # merge into trainer
+  max_epochs: 50
+~debug: null               # delete debug
+```
 
-    **3. What's the value type?** (Default behavior)
+A file is not deep-merged into the config. `model:` in a second file sets `model` to what the second file says; `+model:` merges into it. Within a statement, everything below the key is the value you wrote.
 
-    - **Dict** → ✅ **Merge recursively** (combine keys)
-    - **List** → ✅ **Extend** (append items)
-    - **Other** → Replace with new value
+## Set: `key`
 
-!!! tip "Priority Order"
-    Delete (`~`) > Replace (`=`) > Type-based default (merge/extend)
-
-## Composition by Default
-
-By default, configs compose naturally - dicts merge, lists extend:
-
-**Dicts merge automatically:**
+Setting replaces the old value, whatever its type:
 
 ```yaml
 # base.yaml
+model: {hidden_size: 512, dropout: 0.1}
+plugins: [logger, metrics]
+
+# override.yaml
+model: {hidden_size: 1024}   # → {hidden_size: 1024}
+plugins: [cache]             # → [cache]
+```
+
+A `::` path sets one value deep inside and leaves the rest alone. Missing dicts on the way are created:
+
+```yaml
+model::hidden_size: 1024     # → {hidden_size: 1024, dropout: 0.1}
+plugins::0: console          # → [console, metrics]
+logging::wandb::project: x   # creates logging and logging::wandb
+```
+
+## Combine: `+key`
+
+`+key` merges a dict into a dict, all the way down:
+
+```yaml
+# base.yaml
+trainer:
+  max_epochs: 10
+  precision: 32
+  logger: {name: tb, save_dir: logs}
+
+# override.yaml
++trainer:
+  max_epochs: 50          # set
+  logger: {name: wandb}   # merged → {name: wandb, save_dir: logs}
+
+# Result:
+# trainer: {max_epochs: 50, precision: 32, logger: {name: wandb, save_dir: logs}}
+```
+
+and appends a list to a list:
+
+```yaml
+# base.yaml
+callbacks: [checkpoint]
+
+# override.yaml
++callbacks: [early_stopping]   # → [checkpoint, early_stopping]
+```
+
+Inside a `+key`, dicts keep merging, while lists and scalars are set. Operators and paths work there too:
+
+```yaml
++trainer:
+  +callbacks: [lr_monitor]   # append to trainer::callbacks
+  ~precision: null           # delete trainer::precision
+  logger::name: wandb        # set one value deeper down
+```
+
+!!! warning "A list inside `+key` is set, not appended"
+    `+trainer: {callbacks: [x]}` **sets** `trainer::callbacks` to `[x]`, dropping the callbacks that were there. To append, write `+callbacks` inside it, or the path `+trainer::callbacks: [x]`.
+
+`+key` on a missing or `null` key sets it, so an overlay can add a key that may or may not already be there:
+
+```yaml
++callbacks: [early_stopping]   # appends, or creates the list
+```
+
+`+` on anything else is an error that says what is there:
+
+```text
+Cannot combine 'lr': it is 0.001, and '+' adds 0.01
+  💡 To replace 'lr', drop the '+'.
+```
+
+## Delete: `~key`
+
+```yaml
+~debug: null                 # delete a key (`~debug:` works too)
+~model::dropout: null        # delete a nested key
+~plugins::0: null            # delete one list item
+~plugins: [0, 2]             # delete several list items
+~dataloaders: [train, test]  # delete several dict keys
+```
+
+Several list indices are removed from the highest down, so each index refers to the list as it was. Negative indices work (`~plugins: [-1]`). Deleting a key that does not exist is an error with a did-you-mean, so a typo can't go unnoticed.
+
+## Components
+
+A component is a dict with a `_target_`. Setting it to a dict **without** a `_target_` would drop its class, which is almost always a missing `+`, so it is an error:
+
+```yaml
+# base.yaml
+trainer:
+  _target_: pytorch_lightning.Trainer
+  max_epochs: 10
+  accelerator: gpu
+
+# override.yaml
+trainer:
+  max_epochs: 50
+```
+
+```text
+'trainer' replaces the component 'pytorch_lightning.Trainer' and drops '_target_', 'accelerator'
+  💡 To change only these keys, write '+trainer' instead of 'trainer', or set them one by one ('trainer::max_epochs').
+```
+
+What you can write instead, one of:
+
+| You write | Result |
+|---|---|
+| `+trainer: {max_epochs: 50}` | changes some arguments, keeps the rest |
+| `trainer::max_epochs: 50` | the same, one value |
+| `trainer: {_target_: my_project.FastTrainer, max_epochs: 50}` | swaps the class: the old arguments go |
+| `trainer: "@other_trainer"` | sets a reference, a string or null: fine |
+
+`+trainer: {_target_: my_project.FastTrainer}` swaps the class and keeps the old arguments.
+
+## Layering Files
+
+Each file after the first is a set of changes to what came before:
+
+```yaml
+# base.yaml
+_imports_: {math: math}
 model:
+  _target_: my_project.Net
   hidden_size: 512
-  activation: "relu"
   dropout: 0.1
-```
+callbacks: [checkpoint]
+debug: true
 
-```yaml
-# override.yaml
-model:
-  hidden_size: 1024  # Update this field
-  # Other fields preserved!
-```
-
-```python
-config = (Config()
-          .update("base.yaml")
-          .update("override.yaml"))
-# Result:
-# model:
-#   hidden_size: 1024   (updated)
-#   activation: "relu"  (preserved)
-#   dropout: 0.1        (preserved)
-```
-
-**Lists extend automatically:**
-
-```yaml
-# base.yaml
-plugins:
-  - logger
-  - metrics
-
-# override.yaml
-plugins:
-  - cache  # Adds to the list!
-
-# Result: [logger, metrics, cache]
-```
-
-!!! success "Natural Composition"
-    **No operators needed for the common case!** Sparkwheel merges dicts and extends lists by default, matching how you naturally think about config layering.
-
-## The `=` Operator: Explicit Replace
-
-When you need to completely replace something, use `=key`:
-
-```yaml
-# override.yaml
-=model:  # Replace the entire model dict
-  hidden_size: 1024
-  # Old fields (activation, dropout) are GONE!
+# experiment.yaml
++_imports_: {os: os}           # add an import
++model: {hidden_size: 1024}    # merge into the component
++callbacks: [early_stopping]   # append
+~debug: null                   # delete
 ```
 
 ```python
-config = (Config()
-          .update("base.yaml")
-          .update("override.yaml"))
-# Result:
-# model:
-#   hidden_size: 1024  (only this remains)
+config = Config().update("base.yaml").update("experiment.yaml")
 ```
 
-### When to Use `=`
+!!! warning "`_imports_` is a key like any other"
+    An overlay's `_imports_:` replaces the base's imports. Write `+_imports_:` to add to them.
 
-Use `=` when you want to:
-- Replace an entire section with a fresh start
-- Change the type of a value (e.g., dict → list)
-- Clear out all previous settings
+## In Python
 
-```yaml
-# Replace list entirely (no extension)
-=plugins: [redis, cache]
-
-# Replace nested section
-training:
-  =optimizer:  # Replace optimizer, but merge training
-    type: "sgd"
-    lr: 0.1
-```
-
-!!! tip "Quoting in YAML Files"
-    When using `=` in YAML files, you can quote the key (`'=model'`) for clarity, but it's not required. In Python code, no quoting is needed.
-
-## The `~` Operator: Delete
-
-Remove keys or list items with `~key`:
-
-### Delete Entire Keys
-
-```yaml
-# Remove keys explicitly
-~old_param: null
-~debug_settings: null
-```
-
-!!! warning "Key Must Exist"
-    The delete operator will raise an error if the key doesn't exist. This helps catch typos and configuration mistakes.
-
-### Delete Dict Keys
-
-Use path notation for nested keys:
-
-```yaml
-# Path notation
-~model::dropout: null
-~training::old_params: null
-```
-
-Or structural notation:
-
-```yaml
-# Structural notation (works without parent operator!)
-model:
-  lr: 0.01           # Update
-  ~dropout: null     # Delete
-  ~batch_norm: null  # Delete
-```
-
-!!! success "No Parent Context Required!"
-    With composition-by-default, nested `~` just works - no special parent operator needed!
-
-### Delete from Lists
-
-Remove items by index (batch syntax):
-
-```yaml
-# base.yaml
-plugins:
-  - logger    # 0
-  - metrics   # 1
-  - cache     # 2
-  - auth      # 3
-  - debug     # 4
-
-# override.yaml - Remove by indices
-~plugins: [0, 2, 4]  # Remove indices 0, 2, 4
-
-# Result: [metrics, auth]
-```
-
-**Negative indices work too:**
-
-```yaml
-~plugins: [-1]      # Remove last item
-~plugins: [0, -1]   # Remove first and last
-```
-
-### Delete from Dicts
-
-Remove nested dict keys by name:
-
-```yaml
-# base.yaml
-dataloaders:
-  train: {batch_size: 32}
-  val: {batch_size: 16}
-  test: {batch_size: 8}
-
-# override.yaml
-~dataloaders: ["train", "test"]
-
-# Result:
-# dataloaders:
-#   val: {batch_size: 16}
-```
-
-!!! warning "Removing List Items"
-    To remove items from a list, **you must use the batch syntax** `~key: [indices]`:
-
-    ```yaml
-    # ✓ CORRECT - Batch deletion syntax
-    ~plugins: [0, 2, 4]
-    ```
-
-    ```yaml
-    # ✗ WRONG - Path notation doesn't work for list items!
-    ~plugins::0: null
-    ```
-
-    **Why?** Path notation is designed for dict keys, not list indices. The batch syntax handles index normalization and processes deletions correctly (high to low order).
-
-## Combining Operators
-
-Mix composition, replace, and delete:
-
-```yaml
-# base.yaml
-application:
-  name: "MyApp"
-  version: 1.0
-  features:
-    auth: enabled
-    cache: enabled
-    debug: enabled
-  plugins: [logger, metrics]
-  database:
-    host: localhost
-    port: 5432
-    pool_size: 10
-
-# production.yaml
-application:
-  version: 1.1              # Compose: update (default)
-  features:                 # Compose: merge (default)
-    cache: redis            # Update
-    ~debug: null            # Delete
-  plugins: [monitor]        # Compose: extend (default!)
-  =database:                # Replace: fresh db config
-    host: prod.example.com
-    port: 5432
-    ssl: true
-
-# Result:
-# application:
-#   name: "MyApp"           (preserved)
-#   version: 1.1            (updated)
-#   features:
-#     auth: enabled         (preserved)
-#     cache: redis          (updated)
-#     # debug removed
-#   plugins: [logger, metrics, monitor]  (extended!)
-#   database:               (replaced entirely)
-#     host: prod.example.com
-#     port: 5432
-#     ssl: true
-```
-
-## Programmatic Usage
-
-Apply operators in Python:
+`update()` takes the same statements as a dict:
 
 ```python
-from sparkwheel import Config
-
-config = Config()
-config.update("base.yaml")
-
-# Compose (merge dict) - default behavior
-config.update({"model": {"hidden_size": 1024}})
-
-# Replace explicitly
-config.update({"=optimizer": {"type": "sgd", "lr": 0.1}})
-
-# Delete keys
-config.update({
-    "~training::old_param": None,
-    "~model::dropout": None
-})
-
-# Combine operations
-config.update({
-    "model": {                      # Merge
-        "hidden_size": 1024,        # Update
-        "~dropout": None            # Delete
-    },
-    "=database": {                  # Replace
-        "host": "prod.example.com"
-    }
-})
-
-# Remove list items by index
-config.update({"~plugins": [0, 2, 4]})
-
-# Remove dict keys
-config.update({"~dataloaders": ["train", "test"]})
+config.update({"model::hidden_size": 1024})  # set one value
+config.update({"+trainer": {"max_epochs": 50}})  # merge
+config.update({"+callbacks": ["early_stopping"]})  # append
+config.update({"~debug": None, "~plugins": [0, 2]})  # delete
+config.update(other_config)  # another Config's top-level keys, as statements
 ```
 
-### Merging Config Instances
-
-Configs compose when merged:
-
-```python
-base = Config()
-base.update("base.yaml")
-override = Config()
-override.update("override.yaml")
-
-# Merge one Config into another (composes by default!)
-base.update(override)
-```
-
-## Common Patterns
-
-### Environment-Specific Configs
-
-```yaml
-# base.yaml
-database:
-  host: "localhost"
-  port: 5432
-  pool_size: 10
-  ssl: false
-
-# production.yaml (merges automatically!)
-database:
-  host: "prod-db.example.com"
-  ssl: true
-  pool_size: 50
-  # Other settings inherited from base
-```
-
-### Experiment Variations
-
-```yaml
-# base_model.yaml
-model:
-  hidden_size: 512
-  num_layers: 6
-  dropout: 0.1
-
-# experiment_large.yaml (merges automatically!)
-model:
-  hidden_size: 1024
-  num_layers: 12
-
-# experiment_no_dropout.yaml (merges automatically, deletes dropout)
-model:
-  ~dropout: null
-```
-
-### Feature Flags
-
-```yaml
-# base.yaml
-plugins:
-  - logger
-  - metrics
-  - profiler
-  - debugger
-  - test_reporter
-
-# production.yaml - Remove debug/test plugins
-~plugins: [2, 3, 4]  # Remove profiler, debugger, test_reporter
-
-# Result: [logger, metrics]
-```
-
-### Layered Configuration
-
-```python
-# Build configs in layers (all compose naturally!)
-config = (Config()
-          .update("defaults.yaml")
-          .update("models/resnet50.yaml")
-          .update("datasets/imagenet.yaml")
-          .update("experiments/exp_042.yaml")
-          .update("env/production.yaml"))
-```
-
-## Best Practices
-
-### Leverage Composition
-
-```yaml
-# Good - natural composition (no operators!)
-optimizer:
-  lr: 0.01
-
-# Unnecessary - = not needed for simple updates
-=optimizer:
-  lr: 0.01
-```
-
-### Use `=` Only When Needed
-
-```yaml
-# Use = when completely replacing
-=optimizer:  # Start fresh, discard all old settings
-  type: "sgd"
-  lr: 0.1
-
-# Default composition is usually what you want
-optimizer:   # Keep other settings, update lr
-  lr: 0.01
-```
-
-### Choose Path vs Structural Notation
-
-**Use path notation** for single, independent operations:
-
-```yaml
-# Quick single updates/deletes
-~model::dropout: null
-~training::old_param: null
-```
-
-**Use structural notation** for bulk related operations:
-
-```yaml
-# Multiple related changes
-model:
-  hidden_size: 1024
-  num_layers: 12
-  ~dropout: null
-  ~batch_norm: null
-```
-
-### Write Reusable Configs
-
-!!! warning "Delete Requires Key Existence"
-    The delete operator (`~`) is **strict** - it raises an error if the key doesn't exist. This helps catch typos and configuration mistakes.
-
-When writing configs that should work with different base configurations, you have a few options:
-
-**Option 1: Document required keys**
-```yaml
-# production.yaml
-# Requires: base config must have debug_mode and verbose_logging
-~debug_mode: null
-~verbose_logging: null
-database:
-  pool_size: 100
-  ssl: true
-```
-
-**Option 2: Use composition order**
-```yaml
-# production.yaml - override instead of delete
-debug_mode: false        # Overrides if exists, sets if not
-verbose_logging: false
-database:
-  pool_size: 100
-  ssl: true
-```
-
-**Option 3: Conditional deletion with lists**
-```yaml
-# Delete multiple optional keys - fails only if ALL are missing
-~: [debug_mode, verbose_logging]  # At least one must exist
-database:
-  pool_size: 100
-```
+`config.set("model::hidden_size", 1024)` is a plain assignment: no operators, no checks, missing dicts on the path are created.
 
 ## Common Mistakes
 
-### Using `=` When Not Needed
+| You wrote | What happens | Write instead |
+|-----------|--------------|---------------|
+| `model: {lr: 0.01}` to change one value | `model` becomes `{lr: 0.01}` (or an error, if it is a component) | `model::lr: 0.01` or `+model: {lr: 0.01}` |
+| `+trainer: {callbacks: [x]}` to add a callback | `callbacks` is set to `[x]` | `+trainer::callbacks: [x]` |
+| `model: {+layers: [x]}` | Error: `'model' is set, so '+layers' inside it has nothing to combine with` | `+model: {+layers: [x]}` |
+| `key: null` to remove a key | `key` is `None` | `~key: null` |
+| `=model: {...}` (Sparkwheel < 0.1) | Error: the `=` operator was removed | `model: {...}` |
 
-```yaml
-# Unnecessary - composition merges by default!
-=model:
-  hidden_size: 1024
+## Comparison with Hydra
 
-# Better - let it compose naturally
-model:
-  hidden_size: 1024
-```
+| | Hydra | Sparkwheel |
+|---|-------|------------|
+| A later config's dict | Deep-merged | Set; `+key` deep-merges |
+| A later config's list | Replaced | Set; `+key` appends |
+| CLI `key=value` | Overrides an existing key | Same, with a did-you-mean for typos |
+| CLI `+key=value` | Adds a new key (error if it exists) | Combines: merges, appends, or adds a new key |
+| CLI `++key=value` | Adds or overrides | Not needed: `+key` adds or combines |
+| Delete | `~key` on the CLI | `~key` in YAML, dicts and the CLI; list items by index |
+| Operators in YAML files | No (the defaults list has `override`) | Yes |
+| Config groups, defaults list, multirun | Yes | No: load the files you want, in order |
 
-### Expecting List Replacement by Default
-
-```yaml
-# This EXTENDS the list (doesn't replace)
-plugins: [cache]
-
-# Use = to replace
-=plugins: [cache]
-```
-
-### Wrong List Deletion Syntax
-
-```yaml
-# Wrong - path notation doesn't work for list indices
-~plugins::0: null
-
-# Correct - use batch syntax
-~plugins: [0]
-```
-
-### Forgetting Quotes for Operators
-
-```yaml
-# Wrong - YAML might misinterpret
-=model:
-  lr: 0.001
-
-# Safer - quote operators (optional but clearer)
-'=model':
-  lr: 0.001
-```
-
-## Comparison with Other Systems
-
-### vs Hydra
-
-| Feature | Hydra | Sparkwheel |
-|---------|-------|------------|
-| Dict merge default | Yes ✅ | Yes ✅ |
-| List extend default | No ❌ | **Yes** ✅ |
-| Operators in YAML | CLI-only | **Yes** ✅ (YAML + CLI) |
-| Operator count | 4 (`=`, `+`, `++`, `~`) | **2** (`=`, `~`) ✅ |
-| Delete dict keys | CLI-only (`~foo.bar`) | **Yes** ✅ (YAML + CLI) |
-| Delete list items | No ❌ | **Yes** ✅ (by index) |
-
-Sparkwheel differs from Hydra:
-- **Full composition philosophy**: Both dicts AND lists compose by default
-- **Operators in YAML files**: Not just CLI overrides
-- **Simpler operator set**: Just 2 operators (`=`, `~`) vs 4 (`=`, `+`, `++`, `~`)
-- **List deletion**: Delete items by index with `~plugins: [0, 2]`
-- **Flexible delete**: Use `~` anywhere (YAML, CLI, programmatic)
+Hydra composes configs through its defaults list and merges them deeply. Sparkwheel applies each file as written, so a key in a later file means exactly what it says, and merging is something you ask for with `+`.
 
 ## Next Steps
 
+- **[CLI Overrides](cli.md)** - The same statements on the command line
 - **[Configuration Basics](basics.md)** - Core config management
 - **[Advanced Features](advanced.md)** - Macros and power features

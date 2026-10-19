@@ -2,13 +2,23 @@
 
 import warnings
 from collections.abc import Iterator
+from copy import copy
+from pydoc import ErrorDuringImport, locate
 from typing import Any
 
+from .errors import get_suggestions
 from .items import Component, Expression, Item
 from .path_utils import normalize_id, replace_references, scan_references
-from .utils import allow_missing_reference, look_up_option
-from .utils.constants import ID_SEP_KEY, RESOLVED_REF_KEY
-from .utils.exceptions import CircularReferenceError, ConfigKeyError
+from .utils import CompInitMode, allow_missing_reference, look_up_option
+from .utils.constants import EXPR_KEY, ID_SEP_KEY, RESOLVED_REF_KEY
+from .utils.exceptions import (
+    BaseError,
+    CircularReferenceError,
+    ConfigKeyError,
+    InstantiationError,
+    Location,
+    TargetNotFoundError,
+)
 
 __all__ = ["Resolver"]
 
@@ -40,7 +50,7 @@ class Resolver:
     - List indices: @list::0::subitem
     """
 
-    _vars = "__local_refs"  # Variable name for resolved refs in expression evaluation
+    _vars = Expression.refs_var  # Variable name for resolved refs in expression evaluation
     sep = ID_SEP_KEY  # Separator for nested key access
     ref = RESOLVED_REF_KEY  # Resolved reference prefix (@)
     allow_missing_reference = allow_missing_reference
@@ -54,6 +64,8 @@ class Resolver:
         """
         self._items: dict[str, Item] = {}
         self._resolved: dict[str, Any] = {}
+        # One cache per (instantiate, eval_expr) mode: a Component wrapper is never an instance.
+        self._resolved_by_mode: dict[tuple[bool, bool], dict[str, Any]] = {(True, True): self._resolved}
 
         if items:
             for item in items:
@@ -63,10 +75,11 @@ class Resolver:
         """Clear all items and resolved content."""
         self._items = {}
         self._resolved = {}
+        self._resolved_by_mode = {(True, True): self._resolved}
 
     def is_resolved(self) -> bool:
         """Check if any items have been resolved."""
-        return bool(self._resolved)
+        return any(self._resolved_by_mode.values())
 
     def add_item(self, item: Item) -> None:
         """Add a Item to resolve.
@@ -95,21 +108,13 @@ class Resolver:
         for item in items:
             self.add_item(item)
 
-    def get_item(self, id: str, resolve: bool = False, **kwargs: Any) -> Item | None:
-        """Get Item by id, optionally resolved.
+    def get_item(self, id: str) -> Item | None:
+        """Get the Item with this id, as written, or None if there is none.
 
         Args:
             id: ID of the config item
-            resolve: Whether to resolve the item (default: False)
-            **kwargs: Additional arguments for resolution
-
-        Returns:
-            Item if found, None otherwise (or resolved value if resolve=True)
         """
-        id = self.normalize_id(id)
-        if resolve and id not in self._resolved:
-            self._resolve_one_item(id=id, **kwargs)
-        return self._items.get(id)
+        return self._items.get(self.normalize_id(id))
 
     def resolve(
         self,
@@ -173,21 +178,23 @@ class Resolver:
             )
 
         id = self.normalize_id(id)
+        resolved = self._resolved_by_mode.setdefault((instantiate, eval_expr), {})
 
         # Return cached result if available
-        if id in self._resolved:
-            return self._resolved[id]
+        if id in resolved:
+            return resolved[id]
 
         # Look up the item
         try:
             item = look_up_option(id, self._items, print_all_options=False, default=default or "no_default")
         except ValueError as err:
-            # Provide helpful error with suggestions
+            # Point at the nearest existing parent (the id itself is not in any file)
             source_location = None
-            for config_item in self._items.values():
-                if hasattr(config_item, "source_location") and config_item.source_location:
-                    source_location = config_item.source_location
-                    break
+            parent_id = id
+            while ID_SEP_KEY in parent_id and source_location is None:
+                parent_id = parent_id.rsplit(ID_SEP_KEY, 1)[0]
+                parent = self._items.get(parent_id)
+                source_location = parent.source_location if isinstance(parent, Item) else None
 
             available_keys = list(self._items.keys())
             config_context = None
@@ -221,10 +228,15 @@ class Resolver:
             waiting_list = set()
         waiting_list.add(id)
 
+        # A literally disabled component is skipped before its arguments are built
+        if isinstance(item, Component) and self._disabled_flag(item_config):
+            resolved[id] = None
+            return None
+
         # First, resolve any import expressions (they need to run first)
         for t, v in self._items.items():
-            if t not in self._resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
-                self._resolved[t] = v.evaluate() if eval_expr else v
+            if t not in resolved and isinstance(v, Expression) and v.is_import_statement(v.get_config()):
+                resolved[t] = v.evaluate() if eval_expr else v
 
         # Find all references in this item's config
         refs = self.find_refs_in_config(config=item_config, id=id)
@@ -239,7 +251,7 @@ class Resolver:
                 )
 
             # Resolve dependency if not already resolved
-            if dep_id not in self._resolved:
+            if dep_id not in resolved:
                 try:
                     look_up_option(dep_id, self._items, print_all_options=False)
                 except ValueError as err:
@@ -248,7 +260,7 @@ class Resolver:
                         available_keys = list(self._items.keys())
                         raise ConfigKeyError(
                             f"Reference '@{dep_id}' not found in configuration",
-                            source_location=item.source_location if hasattr(item, "source_location") else None,
+                            source_location=self._location_of_ref(id, dep_id) or item.source_location,
                             missing_key=dep_id,
                             available_keys=available_keys,
                         ) from err
@@ -266,18 +278,131 @@ class Resolver:
                 waiting_list.discard(dep_id)
 
         # All dependencies resolved, now resolve this item
-        new_config = self.update_config_with_refs(config=item_config, id=id, refs=self._resolved)
+        if isinstance(item, Expression):
+            # The expression looks up its `@` references itself, so errors show it as written
+            resolved[id] = item.evaluate(globals={f"{self._vars}": resolved}) if eval_expr else item
+            return resolved[id]
+
+        # Resolve a copy of this item (the parsed item stays as authored)
+        new_config = self.update_config_with_refs(config=item_config, id=id, refs=resolved)
+        item = copy(item)
         item.update_config(config=new_config)
-
-        # Generate final resolved value based on item type
         if isinstance(item, Component):
-            self._resolved[id] = item.instantiate() if instantiate else item
-        elif isinstance(item, Expression):
-            self._resolved[id] = item.evaluate(globals={f"{self._vars}": self._resolved}) if eval_expr else item
+            resolved[id] = item.instantiate() if instantiate else item
         else:
-            self._resolved[id] = new_config
+            resolved[id] = new_config
 
-        return self._resolved[id]
+        return resolved[id]
+
+    def _location_of_ref(self, id: str, ref_id: str) -> Location | None:
+        """Location of the value under `id` that holds the reference `@ref_id`."""
+        for sub_id, sub_item in self._items.items():
+            in_subtree = sub_id == id or not id or sub_id.startswith(f"{id}{self.sep}")
+            config = sub_item.get_config() if isinstance(sub_item, Item) else None
+            if in_subtree and isinstance(config, str) and ref_id in self.match_refs_pattern(config):
+                return sub_item.source_location
+        return None
+
+    @staticmethod
+    def _disabled_flag(config: dict[str, Any]) -> bool | None:
+        """A component's literal `_disabled_` value, or None when a reference or expression decides it at resolve time."""
+        flag = config.get("_disabled_", False)
+        if isinstance(flag, (dict, list)) or (isinstance(flag, str) and flag.startswith((EXPR_KEY, RESOLVED_REF_KEY))):
+            return None
+        return flag.lower().strip() == "true" if isinstance(flag, str) else bool(flag)
+
+    def find_problems(self) -> list[BaseError]:
+        """Find the mistakes resolving would raise, without building components or evaluating expressions.
+
+        Checks that references exist, `_target_`s can be imported, components' arguments fit their target's
+        signature and expressions compile. Components that are (or may be) disabled are skipped.
+        """
+        problems: list[BaseError] = []
+        skipped = [
+            id
+            for id, item in self._items.items()
+            if isinstance(item, Component) and self._checked_disabled_flag(item.get_config()) is not False
+        ]
+        for id, item in self._items.items():
+            if any(id == s or id.startswith(f"{s}{self.sep}") for s in skipped):
+                continue
+            config = item.get_config()
+            if isinstance(item, Component):
+                problems.extend(self._component_problems(item))
+            if not isinstance(config, str):
+                continue
+            if not self.allow_missing_reference:
+                for ref_id in self.match_refs_pattern(config):
+                    if ref_id not in self._items:
+                        problems.append(
+                            ConfigKeyError(
+                                f"Reference '@{ref_id}' not found in configuration",
+                                source_location=item.source_location,
+                                missing_key=ref_id,
+                                available_keys=list(self._items),
+                            )
+                        )
+            if isinstance(item, Expression) and not item.is_import_statement(config):
+                code = replace_references(config, dict.fromkeys(self.match_refs_pattern(config)))
+                code = code[len(EXPR_KEY) :].strip()
+                try:
+                    compile(code, "<expression>", "eval")
+                except SyntaxError as e:
+                    problems.append(item._evaluation_error(e, code))
+        return problems
+
+    def _checked_disabled_flag(self, config: dict[str, Any]) -> bool | None:
+        """`_disabled_flag`, also when `_disabled_` references a plain value (`_disabled_: "@debug"`)."""
+        flag = config.get("_disabled_")
+        if isinstance(flag, str) and flag.startswith(RESOLVED_REF_KEY):
+            target = self._items.get(flag[len(RESOLVED_REF_KEY) :])
+            if type(target) is Item:  # neither a component nor an expression
+                return self._disabled_flag({"_disabled_": target.get_config()})
+        return self._disabled_flag(config)
+
+    @staticmethod
+    def _component_problems(item: Component) -> list[BaseError]:
+        """An unknown `_mode_`, a `_target_` that cannot be imported, or arguments that do not fit its signature."""
+        config = item.get_config()
+        problems: list[BaseError] = []
+        mode = config.get("_mode_", CompInitMode.DEFAULT)
+        literal_mode = isinstance(mode, str) and not mode.startswith((EXPR_KEY, RESOLVED_REF_KEY))
+        modes = [m.value for m in CompInitMode]
+        if literal_mode and mode.strip() not in modes:
+            close = get_suggestions(mode, modes, max_suggestions=1)
+            problems.append(
+                InstantiationError(
+                    f"Unknown _mode_ '{mode}'",
+                    source_location=item.location_of("_mode_"),
+                    suggestion=(f"Did you mean '{close[0][0]}'? " if close else "") + f"Modes: {', '.join(modes)}.",
+                )
+            )
+        target = config["_target_"]
+        if not isinstance(target, str) or target.startswith((EXPR_KEY, RESOLVED_REF_KEY)):
+            return problems  # decided at resolve time
+        try:
+            located = locate(target)
+        except ErrorDuringImport as e:  # the module exists but raises when imported
+            cause = getattr(e, "value", e)
+            problem: BaseError = InstantiationError(
+                f"Cannot import '{target}': {type(cause).__name__}: {cause}",
+                source_location=item.location_of("_target_"),
+            )
+            return [*problems, problem]
+        if located is None:
+            problem = TargetNotFoundError(
+                f"Cannot locate class or function: '{target}'",
+                source_location=item.location_of("_target_"),
+                suggestion=item._suggest_similar_modules(target),
+            )
+            return [*problems, problem]
+        args = config.get("_args_", [])
+        kwargs = {k: v for k, v in config.items() if k not in item.non_arg_keys}
+        # Called now with only these arguments, a default-mode target must get every one it needs
+        complete = literal_mode and mode.strip() == CompInitMode.DEFAULT and isinstance(args, list)
+        return problems + item.argument_errors(
+            located, args if isinstance(args, list) else [], kwargs, allow_missing=not complete
+        )
 
     @classmethod
     def normalize_id(cls, id: str | int) -> str:
@@ -349,7 +474,7 @@ class Resolver:
         value = normalize_id(value)
 
         try:
-            return replace_references(value, refs, cls._vars)
+            return replace_references(value, refs)
         except KeyError as e:
             # Extract reference ID from error message
             # The error message format is: "Reference '@ref_id' not found in resolved references"
@@ -385,6 +510,8 @@ class Resolver:
                 # Instantiable and expression items are also dependencies
                 if (Component.is_instantiable(v) or Expression.is_expression(v)) and sub_id not in refs_:
                     refs_[sub_id] = 1
+                if Component.is_instantiable(v) and cls._disabled_flag(v):
+                    continue  # a disabled component resolves to None, so nothing inside it is needed
                 refs_ = cls.find_refs_in_config(v, sub_id, refs_)
 
         return refs_

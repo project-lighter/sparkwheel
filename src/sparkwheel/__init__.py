@@ -4,12 +4,12 @@ sparkwheel: A powerful YAML-based configuration system with references, expressi
 Uses YAML format only.
 """
 
-from .config import Config, parse_overrides
+from .config import Config
 from .items import Component, Expression, Instantiable, Item
-from .operators import apply_operators, validate_operators
+from .operators import apply_operators
 from .resolver import Resolver
 from .schema import MISSING, ValidationError, validate, validator
-from .utils.constants import EXPR_KEY, ID_SEP_KEY, RAW_REF_KEY, REMOVE_KEY, REPLACE_KEY, RESOLVED_REF_KEY
+from .utils.constants import COMBINE_KEY, EXPR_KEY, ID_SEP_KEY, RAW_REF_KEY, REMOVE_KEY, RESOLVED_REF_KEY
 from .utils.exceptions import (
     BaseError,
     CircularReferenceError,
@@ -27,7 +27,6 @@ __version__ = "0.0.11"
 __all__ = [
     "__version__",
     "Config",
-    "parse_overrides",
     "MISSING",
     "Item",
     "Component",
@@ -35,7 +34,6 @@ __all__ = [
     "Instantiable",
     "Resolver",
     "apply_operators",
-    "validate_operators",
     "validate",
     "validator",
     "RESOLVED_REF_KEY",
@@ -43,7 +41,7 @@ __all__ = [
     "ID_SEP_KEY",
     "EXPR_KEY",
     "REMOVE_KEY",
-    "REPLACE_KEY",
+    "COMBINE_KEY",
     "BaseError",
     "TargetNotFoundError",
     "CircularReferenceError",

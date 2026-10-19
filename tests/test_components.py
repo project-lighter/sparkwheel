@@ -20,6 +20,7 @@ from sparkwheel import (
     Item,
     Resolver,
 )
+from sparkwheel.path_utils import ref_name
 
 
 class TestItem:
@@ -463,15 +464,6 @@ class TestResolver:
         retrieved = resolver.get_item("nonexistent")
         assert retrieved is None
 
-    def test_get_item_with_resolve(self):
-        """Test get_item with resolve parameter."""
-        resolver = Resolver()
-        item = Item({"a": 1}, id="test")
-        resolver.add_item(item)
-        retrieved = resolver.get_item("test", resolve=True)
-        assert retrieved is item
-        assert "test" in resolver._resolved
-
     def test_normalize_id(self):
         """Test normalize_id converts to string."""
         assert Resolver.normalize_id("a::b::c") == "a::b::c"
@@ -555,21 +547,21 @@ class TestResolver:
         """Test update_refs_pattern in expression."""
         refs = {"value": 10}
         result = Resolver.update_refs_pattern("$@value * 2", refs)
-        assert result == "$__local_refs['value'] * 2"
+        assert result == f"${ref_name('value')} * 2"
 
     def test_update_refs_pattern_multiple(self):
         """Test update_refs_pattern with multiple references."""
         refs = {"a": 1, "b": 2}
         result = Resolver.update_refs_pattern("$@a + @b", refs)
-        assert "__local_refs['a']" in result
-        assert "__local_refs['b']" in result
+        assert ref_name("a") in result
+        assert ref_name("b") in result
 
     def test_update_refs_pattern_substring_handling(self):
         """Test update_refs_pattern handles longer refs first."""
         refs = {"a": 1, "ab": 2}
         result = Resolver.update_refs_pattern("$@ab + @a", refs)
-        assert "__local_refs['ab']" in result
-        assert "__local_refs['a']" in result
+        assert ref_name("ab") in result
+        assert ref_name("a") in result
 
     def test_update_refs_pattern_missing_ref_warning(self):
         """Test update_refs_pattern warns on missing reference when allowed."""

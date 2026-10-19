@@ -1,40 +1,15 @@
 # Schema Validation
 
-Validate configurations at runtime using Python dataclasses with **continuous validation** - errors caught immediately when you mutate the config.
-
-## Type Coercion Matrix
-
-Sparkwheel automatically converts compatible types when coercion is enabled (default: `True`):
-
-| From ↓ To → | `int` | `float` | `str` | `bool` | `list` | `dict` |
-|-------------|-------|---------|-------|--------|--------|--------|
-| **int** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **float** | ✅* | ✅ | ✅ | ❌ | ❌ | ❌ |
-| **str** | ✅** | ✅** | ✅ | ✅*** | ❌ | ❌ |
-| **bool** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **list** | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ |
-| **dict** | ❌ | ❌ | ✅ | ❌ | ❌ | ✅ |
-
-\* Truncates decimal part (e.g., `3.14` → `3`)
-\*\* Requires valid format (e.g., `"42"` for int, `"3.14"` for float)
-\*\*\* Accepts: `"true"`, `"false"`, `"1"`, `"0"`, `"yes"`, `"no"` (case-insensitive)
-
-!!! success "Default Behavior"
-    Type coercion is **enabled by default** to handle common cases like environment variables and CLI arguments (which are always strings).
-
-!!! warning "Disable for Strict Validation"
-    Set `coerce=False` for strict type checking:
-    ```python
-    config = Config(schema=AppConfigSchema, coerce=False)
-    ```
+Validate configurations at runtime using Python dataclasses with **continuous validation**: a config with a schema is checked after every `update()`, so a bad file or override fails right away. `set()` does not validate; call `config.validate(MySchema)` after it.
 
 ## Quick Start
 
 Define a schema with dataclasses:
 
-```python title="app.py" hl_lines="10 14 15"
+```python title="app.py"
 from dataclasses import dataclass
 from sparkwheel import Config
+
 
 @dataclass
 class AppConfigSchema:
@@ -42,45 +17,27 @@ class AppConfigSchema:
     port: int
     debug: bool = False
 
-# Continuous validation - validates on every update/set!
+
+# Continuous validation - validates on every update()
 config = Config(schema=AppConfigSchema)  # (1)!
 config.update("config.yaml")
-
-# Errors caught immediately at mutation time
-config.set("port", "8080")  # (2)!
-config.set("port", "not a number")  # (3)!
+config.update("port=8080")  # (2)!
 
 # Or validate explicitly after loading
 config = Config()
 config.update("config.yaml")
-config.validate(AppConfigSchema)  # (4)!
+config.validate(AppConfigSchema)  # (3)!
 ```
 
-1. ✅ Enable continuous validation - errors caught on every mutation
-2. ✅ Auto-coerced to `int(8080)` (coercion enabled by default)
-3. ❌ Raises `ValidationError` immediately - invalid type conversion
-4. ✅ Alternative: validate explicitly after loading all config
+1. ✅ Enable continuous validation - errors caught on every `update()`
+2. ✅ Checked right away: `port=eighty` would raise `ValidationError` here
+3. ✅ Alternative: validate explicitly after loading all config
 
-With **type coercion** enabled by default, compatible types are automatically converted:
-
-```python
-# config.yaml:
-# name: "myapp"
-# port: "8080"  # String value
-# debug: "true" # String value
-
-config = Config(schema=AppConfigSchema, coerce=True)
-config.update("config.yaml")
-# ✓ port coerced to int(8080)
-# ✓ debug coerced to bool(True)
-```
-
-If validation fails, you get clear errors:
+Values are checked, never converted. YAML already types them (`port: 8080` is an `int`, `port: "8080"` is a `str`), and overrides follow the same rules. An `int` is accepted where a `float` is expected; `true` is a `bool`, not a number.
 
 ```python
-# With coercion disabled
-config = Config(schema=AppConfigSchema, coerce=False)
-config.update({"port": "8080"})
+config = Config(schema=AppConfigSchema)
+config.update({"name": "myapp", "port": "8080"})
 # ValidationError: Validation error at 'port': Type mismatch
 #   Expected type: int
 #   Actual type: str
@@ -109,6 +66,7 @@ class ConfigSchema:
 ```python
 from typing import Optional
 
+
 @dataclass
 class ConfigSchema:
     required: str
@@ -124,6 +82,7 @@ class DatabaseConfigSchema:
     host: str
     port: int
     pool_size: int = 10
+
 
 @dataclass
 class AppConfigSchema:
@@ -150,6 +109,7 @@ class PluginConfigSchema:
     name: str
     enabled: bool = True
 
+
 @dataclass
 class AppConfigSchema:
     plugins: list[PluginConfigSchema]
@@ -172,6 +132,7 @@ class ModelConfigSchema:
     hidden_size: int
     dropout: float
 
+
 @dataclass
 class ConfigSchema:
     models: dict[str, ModelConfigSchema]
@@ -193,6 +154,7 @@ Add validation logic with `@validator`:
 
 ```python
 from sparkwheel import validator
+
 
 @dataclass
 class TrainingConfigSchema:
@@ -258,17 +220,20 @@ Use tagged unions for type-safe variants:
 ```python
 from typing import Literal, Union
 
+
 @dataclass
 class SGDOptimizerSchema:
     type: Literal["sgd"]  # Discriminator
     lr: float
     momentum: float = 0.9
 
+
 @dataclass
 class AdamOptimizerSchema:
     type: Literal["adam"]  # Discriminator
     lr: float
     beta1: float = 0.9
+
 
 @dataclass
 class ConfigSchema:
@@ -306,46 +271,6 @@ Sparkwheel detects `type` as a discriminator and validates against the matching 
 
 Validation works with references, expressions, and instantiation.
 
-## Type Coercion
-
-Sparkwheel automatically converts compatible types when `coerce=True` (default):
-
-```python
-@dataclass
-class ServerConfigSchema:
-    port: int
-    timeout: float
-    enabled: bool
-
-# Coercion enabled by default
-config = Config(schema=ServerConfigSchema)
-config.update({
-    "port": "8080",        # str → int
-    "timeout": "30.5",     # str → float
-    "enabled": "true"      # str → bool
-})
-
-print(config["port"])      # 8080 (int, not str!)
-print(config["timeout"])   # 30.5 (float)
-print(config["enabled"])   # True (bool)
-```
-
-**Supported coercions:**
-- `str → int` (e.g., `"42"` → `42`)
-- `str → float` (e.g., `"3.14"` → `3.14`)
-- `str → bool` (e.g., `"true"` → `True`, `"false"` → `False`)
-- `int → float` (e.g., `42` → `42.0`)
-- Recursive coercion through lists, dicts, and nested dataclasses
-
-**Disable coercion if needed:**
-
-```python
-config = Config(schema=ServerConfigSchema, coerce=False)
-config.update({
-    "port": "8080"  # ValidationError: expected int, got str
-})
-```
-
 ## Strict vs Lenient Mode
 
 Control whether extra fields are rejected:
@@ -355,19 +280,24 @@ Control whether extra fields are rejected:
 class MySchema:
     required_field: int
 
+
 # Strict mode (default) - rejects extra fields
 config = Config(schema=MySchema, strict=True)
-config.update({
-    "required_field": 42,
-    "extra_field": "oops"  # ✗ ValidationError!
-})
+config.update(
+    {
+        "required_field": 42,
+        "extra_field": "oops",  # ✗ ValidationError!
+    }
+)
 
 # Lenient mode - allows extra fields
 config = Config(schema=MySchema, strict=False)
-config.update({
-    "required_field": 42,
-    "extra_field": "ok"  # ✓ Allowed
-})
+config.update(
+    {
+        "required_field": 42,
+        "extra_field": "ok",  # ✓ Allowed
+    }
+)
 ```
 
 Use lenient mode for:
@@ -382,21 +312,21 @@ Support partial configs with required-but-not-yet-set values:
 ```python
 from sparkwheel import Config, MISSING
 
+
 @dataclass
 class APIConfigSchema:
     api_key: str
     endpoint: str
     timeout: int = 30
 
+
 # Partial config - api_key not set yet
 config = Config(schema=APIConfigSchema, allow_missing=True)
-config.update({
-    "api_key": MISSING,
-    "endpoint": "https://api.example.com"
-})
+config.update({"api_key": MISSING, "endpoint": "https://api.example.com"})
 
 # Later, fill in the missing value
 import os
+
 config.set("api_key", os.getenv("API_KEY"))
 
 # Now validate that nothing is MISSING
@@ -414,7 +344,7 @@ config.freeze()
 
 # Mutations now raise FrozenConfigError
 config.set("model::lr", 0.001)  # ✗ FrozenConfigError!
-config.update({"new": "data"})   # ✗ FrozenConfigError!
+config.update({"new": "data"})  # ✗ FrozenConfigError!
 
 # Read operations still work
 value = config.get("model::lr")
@@ -437,11 +367,14 @@ class ConfigSchema:
     base_lr: float
     optimizer_lr: float  # Can be a reference
 
+
 config = Config(schema=ConfigSchema)
-config.update({
-    "base_lr": 0.001,
-    "optimizer_lr": "@base_lr"  # Reference allowed
-})
+config.update(
+    {
+        "base_lr": 0.001,
+        "optimizer_lr": "@base_lr",  # Reference allowed
+    }
+)
 ```
 
 ### Expressions
@@ -452,11 +385,14 @@ class ConfigSchema:
     batch_size: int
     total_steps: int  # Computed
 
+
 config = Config(schema=ConfigSchema)
-config.update({
-    "batch_size": 32,
-    "total_steps": "$@batch_size * 100"  # Expression allowed
-})
+config.update(
+    {
+        "batch_size": 32,
+        "total_steps": "$@batch_size * 100",  # Expression allowed
+    }
+)
 ```
 
 ### Instantiation
@@ -469,12 +405,15 @@ class OptimizerConfigSchema:
     lr: float
     momentum: float = 0.9
 
+
 config = Config(schema=OptimizerConfigSchema)
-config.update({
-    "_target_": "torch.optim.SGD",  # Ignored by validation
-    "lr": 0.001,
-    "momentum": 0.95
-})
+config.update(
+    {
+        "_target_": "torch.optim.SGD",  # Ignored by validation
+        "lr": 0.001,
+        "momentum": 0.95,
+    }
+)
 ```
 
 ## Error Messages
@@ -518,10 +457,10 @@ config.update({
 ### Continuous (Recommended)
 
 ```python
-# Validates on every update() and set()
+# Validates on every update() (set() does not validate)
 config = Config(schema=MySchema)
 config.update("config.yaml")
-config.set("port", "8080")  # Validates immediately!
+config.update("port=8080")  # Validates immediately!
 ```
 
 ### Explicit
@@ -550,6 +489,7 @@ from dataclasses import dataclass
 from typing import Optional
 from sparkwheel import Config, validator
 
+
 @dataclass
 class DatabaseConfigSchema:
     host: str
@@ -559,6 +499,7 @@ class DatabaseConfigSchema:
     password: str
     pool_size: int = 10
     timeout: int = 30
+
 
 @dataclass
 class APIConfigSchema:
@@ -571,13 +512,15 @@ class APIConfigSchema:
         if not (1024 <= self.port <= 65535):
             raise ValueError(f"port must be 1024-65535, got {self.port}")
 
+
 @dataclass
 class AppConfigSchema:
     app_name: str
     environment: str
-    debug: bool = False
     api: APIConfigSchema
     database: DatabaseConfigSchema
+    debug: bool = False
+
 
 # Load and validate continuously
 config = Config(schema=AppConfigSchema)
@@ -605,8 +548,8 @@ database:
   host: db.example.com
   port: 5432
   database: myapp
-  username: "$import os; os.getenv('DB_USER')"
-  password: "$import os; os.getenv('DB_PASSWORD')"
+  username: "$__import__('os').getenv('DB_USER')"
+  password: "$__import__('os').getenv('DB_PASSWORD')"
   pool_size: 20
 ```
 

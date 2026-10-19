@@ -5,10 +5,16 @@ references, and file paths. Handles ID splitting, relative reference resolution,
 and file path extraction from combined strings like "config.yaml::model::lr".
 """
 
+import ast
+import functools
+import io
+import keyword
 import re
+import token
+import tokenize
 from typing import Any
 
-from .utils.constants import ID_SEP_KEY, RAW_REF_KEY, RESOLVED_REF_KEY
+from .utils.constants import EXPR_KEY, ID_SEP_KEY, RAW_REF_KEY, RESOLVED_REF_KEY
 
 __all__ = [
     "split_id",
@@ -202,13 +208,76 @@ class PathPatterns:
             >>> PathPatterns.find_absolute_references("normal text")
             []
         """
-        is_expr = text.startswith("$")
-        is_pure_ref = text.startswith("@")
+        if _is_pure_reference(text):
+            return [text[1:]]
+        if text.startswith(EXPR_KEY):
+            return [match.group(1) for match in _expression_reference_matches(text)]
+        return []
 
-        if not (is_expr or is_pure_ref):
-            return []
 
-        return cls.ABSOLUTE_REFERENCE.findall(text)
+def _is_pure_reference(text: str) -> bool:
+    """Whether the whole value is one `@id` reference (anything after `@` is the id)."""
+    return text.startswith(RESOLVED_REF_KEY) and len(text) > 1 and RESOLVED_REF_KEY not in text[1:]
+
+
+_VALUE_END = (token.NUMBER, token.STRING, getattr(token, "FSTRING_END", -1))  # Python 3.12+ splits f-strings
+_KEYWORDS = set(keyword.kwlist) - {"True", "False", "None"}  # an `@` after any other name follows a value
+
+
+def ref_name(ref_id: str) -> str:
+    """The Python name an `@id` reference becomes in a `$` expression."""
+    return "__ref_" + ref_id.encode().hex()
+
+
+@functools.lru_cache(maxsize=4096)
+def _expression_reference_matches(text: str) -> tuple[re.Match[str], ...]:
+    """The `@id` references in a `$` expression: each `@` token that does not follow a value (`a @ b` is matmul).
+
+    An `@` inside a string or comment is not a token. Before Python 3.12 an f-string is one token, whose
+    replacement fields (`{@lr}`) `_fstring_field_references` looks into.
+    """
+    starts = [len(EXPR_KEY)]
+    for line in io.StringIO(text[len(EXPR_KEY) :]):  # split lines as the tokenizer does
+        starts.append(starts[-1] + len(line))
+    matches: list[re.Match[str]] = []
+    previous: tokenize.TokenInfo | None = None
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text[len(EXPR_KEY) :]).readline):
+            at = starts[tok.start[0] - 1] + tok.start[1]
+            if tok.type == token.OP and tok.string == RESOLVED_REF_KEY:
+                after_value = previous is not None and (
+                    previous.type in _VALUE_END
+                    or previous.string in (")", "]", "}")
+                    or (previous.type == token.NAME and previous.string not in _KEYWORDS)
+                )
+                match = None if after_value else PathPatterns.ABSOLUTE_REFERENCE.match(text, at)
+                matches += [match] if match else []
+            elif tok.type == token.STRING and "f" in tok.string[: len(tok.string) - len(tok.string.lstrip("rRbBuUfF"))]:
+                matches += _fstring_field_references(text, at, at + len(tok.string))
+            if tok.type not in (token.NL, token.NEWLINE, token.INDENT, token.DEDENT, token.COMMENT):
+                previous = tok
+    except (tokenize.TokenError, SyntaxError):
+        pass  # evaluating the expression reports the syntax error
+    return tuple(matches)
+
+
+def _fstring_field_references(text: str, start: int, end: int) -> list[re.Match[str]]:
+    """The `@id`s in the replacement fields of the f-string `text[start:end]` (before Python 3.12, a single token).
+
+    Python's parser tells them apart: with each `@id` turned into a placeholder name, the references are the
+    placeholders that parse as names rather than as text.
+    """
+    candidates = list(PathPatterns.ABSOLUTE_REFERENCE.finditer(text, start, end))
+    code, last = "", start
+    for n, match in enumerate(candidates):
+        code += f"{text[last : match.start()]} _sparkwheel_ref_{n} "
+        last = match.end()
+    try:
+        tree = ast.parse(code + text[last:end], mode="eval")
+    except SyntaxError:
+        return candidates  # evaluating the expression reports any real syntax error
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    return [match for n, match in enumerate(candidates) if f"_sparkwheel_ref_{n}" in names]
 
 
 # ============================================================================
@@ -230,18 +299,6 @@ def split_file_and_id(src: str) -> tuple[str, str]:
         ("config.yaml", "model::lr")
     """
     return PathPatterns.split_file_and_id(src)
-
-
-def find_references(text: str) -> list[str]:
-    """Convenience function wrapping PathPatterns.find_absolute_references().
-
-    Args:
-        text: String to search
-
-    Returns:
-        List of reference IDs found (without @ prefix)
-    """
-    return PathPatterns.find_absolute_references(text)
 
 
 # ============================================================================
@@ -453,14 +510,7 @@ def scan_references(text: str) -> dict[str, int]:
     """
     refs: dict[str, int] = {}
 
-    # Only process expressions or pure references
-    is_expr = text.startswith("$")
-    is_pure_ref = text.startswith("@")
-
-    if not (is_expr or is_pure_ref):
-        return refs
-
-    # Use centralized pattern to find all references
+    # Only expressions and pure references contain references
     ref_ids = PathPatterns.find_absolute_references(text)
 
     # Count occurrences
@@ -470,17 +520,16 @@ def scan_references(text: str) -> dict[str, int]:
     return refs
 
 
-def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name: str = "__local_refs") -> str | Any:
+def replace_references(text: str, resolved_refs: dict[str, Any]) -> str | Any:
     """Replace @ references with resolved values.
 
     For pure references: Returns the resolved value directly
-    For expressions: Replaces @ref with __local_refs['ref'] for eval()
+    For expressions: Replaces each @ref with the name `ref_name(ref)`, which evaluating it binds
     For other text: Returns unchanged
 
     Args:
         text: String containing references
         resolved_refs: Dict mapping reference IDs to resolved values
-        local_var_name: Variable name for expression substitution
 
     Returns:
         - Resolved value if text is a pure reference
@@ -492,34 +541,31 @@ def replace_references(text: str, resolved_refs: dict[str, Any], local_var_name:
         >>> replace_references("@model::lr", refs)
         0.001
         >>> replace_references("$@x * 2", refs)
-        "$__local_refs['x'] * 2"
+        "$__ref_78 * 2"
         >>> replace_references("normal", refs)
         "normal"
 
     Raises:
         KeyError: If a referenced ID is not in resolved_refs
     """
-    is_expr = text.startswith("$")
-    is_pure_ref = text.startswith("@") and "@" not in text[1:]
-
-    if is_pure_ref:
+    if _is_pure_reference(text):
         # Entire value is a single reference - return resolved value
         ref_id = text[1:]  # Strip @
         if ref_id not in resolved_refs:
             raise KeyError(f"Reference '@{ref_id}' not found in resolved references")
         return resolved_refs[ref_id]
 
-    if not is_expr:
+    if not text.startswith(EXPR_KEY):
         # Not an expression or reference - return as-is
         return text
 
-    # Expression - find all references and replace with variable access
-    # Use regex to find and replace
-    def replace_match(match):
+    # Expression - replace each reference with a name, from the end so offsets stay valid
+    result = text
+    for match in reversed(_expression_reference_matches(text)):
         ref_id = match.group(1)
         if ref_id not in resolved_refs:
             raise KeyError(f"Reference '@{ref_id}' not found in resolved references")
-        return f"{local_var_name}['{ref_id}']"
-
-    result = PathPatterns.ABSOLUTE_REFERENCE.sub(replace_match, text)
+        before = text[match.start() - 1]
+        space = " " if before.isalnum() or before == "_" else ""  # `not@a` -> `not __ref_61`
+        result = f"{result[: match.start()]}{space}{ref_name(ref_id)}{result[match.end() :]}"
     return result

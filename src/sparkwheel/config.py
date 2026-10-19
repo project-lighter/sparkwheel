@@ -32,7 +32,7 @@ Sparkwheel uses a two-phase processing model to handle different reference types
 
 - **`get(id)`**: Returns raw config value (unresolved, from `_data`)
 - **`resolve(id)`**: Follows references, evaluates expressions, instantiates components
-- **`update(source)`**: Loads and merges configuration from file, dict, or CLI string
+- **`update(source)`**: Applies a file, dict, or CLI string: keys set, `+key` combines, `~key` deletes
 - **`set(id, value)`**: Sets a config value at the given path
 
 ## Important: get() vs resolve()
@@ -87,33 +87,36 @@ lr_resolved = config.resolve("model::lr")  # Resolved value (e.g., 0.001)
 
 ```python
 # Auto-detects override syntax
-config.update("model::lr=0.001")  # Compose (merge)
-config.update("=model::lr=0.001")  # Replace
+config.update("model::lr=0.001")  # Set
+config.update("+trainer::callbacks=[...]")  # Combine: merge a dict, append to a list
 config.update("~model::old_param")  # Delete
 ```
 
 See Config class docstring for full API details.
 """
 
+import os
 from pathlib import Path
 from typing import Any
 
-from .loader import Loader
+from .errors import get_suggestions
+from .items import Component
+from .loader import Loader, YamlLoader
 from .locations import LocationRegistry
-from .operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
+from .operators import MergeContext, apply_operators, split_operator
 from .parser import Parser
 from .path_utils import get_by_id, split_id
 from .preprocessor import Preprocessor
 from .resolver import Resolver
 from .utils import PathLike, optional_import
-from .utils.constants import ID_SEP_KEY, REMOVE_KEY, REPLACE_KEY
-from .utils.exceptions import ConfigKeyError, build_missing_key_error
+from .utils.constants import COMBINE_KEY, ID_SEP_KEY, REMOVE_KEY
+from .utils.exceptions import BaseError, ConfigKeyError, Location, TargetNotFoundError
 
 __all__ = ["Config", "parse_overrides"]
 
 
 class Config:
-    """Configuration management with continuous validation, coercion, resolved references, and instantiation.
+    """Configuration management with continuous validation, resolved references, and instantiation.
 
     Main entry point for loading, managing, and resolving configurations.
     Supports YAML files with resolved references (@), raw references (%), expressions ($),
@@ -136,7 +139,7 @@ class Config:
         # Access raw values
         lr = config.get("model::lr")
 
-        # Set values (validates automatically if schema provided)
+        # Set values (not validated: call config.validate(MySchema) to check)
         config.set("model::dropout", 0.1)
 
         # Freeze to prevent modifications
@@ -150,7 +153,6 @@ class Config:
     Args:
         imports: Pre-imported packages for expressions (e.g., {"torch": "torch"})
         schema: Dataclass schema for continuous validation
-        coerce: Auto-convert compatible types (default: True)
         strict: Reject fields not in schema (default: True)
         allow_missing: Allow MISSING sentinel values (default: False)
     """
@@ -161,7 +163,6 @@ class Config:
         *,  # Rest are keyword-only
         imports: dict[str, Any] | None = None,
         schema: type | None = None,
-        coerce: bool = True,
         strict: bool = True,
         allow_missing: bool = False,
     ):
@@ -173,7 +174,6 @@ class Config:
             data: Initial data (internal/testing use only, not validated)
             imports: Pre-imported packages for expression evaluation
             schema: Dataclass schema for continuous validation
-            coerce: Auto-convert compatible types
             strict: Reject fields not in schema
             allow_missing: Allow MISSING sentinel values
 
@@ -192,18 +192,18 @@ class Config:
 
         # Schema validation state
         self._schema: type | None = schema
-        self._coerce: bool = coerce
         self._strict: bool = strict
         self._allow_missing: bool = allow_missing
 
         # Process imports (import string module paths)
         self._imports: dict[str, Any] = {}
+        self._import_problems: list[BaseError] = []  # `_imports_` entries that failed, reported by check()
         if isinstance(imports, dict):
             for k, v in imports.items():
                 self._imports[k] = optional_import(v)[0] if isinstance(v, str) else v
 
         self._loader = Loader()
-        self._preprocessor = Preprocessor(self._loader, self._imports)
+        self._preprocessor = Preprocessor(self._loader)
 
     def get(self, id: str = "", default: Any = None) -> Any:
         """Get raw config value (unresolved).
@@ -213,7 +213,8 @@ class Config:
 
         - Returns `@` references as strings (e.g., "@model::lr")
         - Returns `$` expressions as strings (e.g., "$@lr * 2")
-        - Returns `%` raw references already expanded (eager expansion during update())
+        - Returns external `%file.yaml::key` references already expanded (during update());
+          local `%key` references and `_imports_` stay as written, even after resolve()
         - Fast, no resolution overhead
 
         Use this when you need to:
@@ -228,7 +229,7 @@ class Config:
             default: Default value if id not found
 
         Returns:
-            Raw configuration value from _data (@ and $ unresolved, % already expanded)
+            Raw configuration value from _data (@, $ and local % unresolved)
 
         Examples:
             >>> # Basic usage
@@ -271,6 +272,7 @@ class Config:
 
         Raises:
             FrozenConfigError: If config is frozen
+            ConfigKeyError: If the path goes through a value that is not a mapping or list
 
         Example:
             >>> config = Config()
@@ -295,17 +297,22 @@ class Config:
         if not isinstance(self._data, dict):
             self._data = {}  # type: ignore[unreachable]
 
-        # Create missing intermediate paths
-        current = self._data
-        for k in keys[:-1]:
-            if k not in current:
+        # Walk dicts and lists, creating missing (or null) mappings on the way
+        current: Any = self._data
+        for depth, k in enumerate(keys):
+            prefix = ID_SEP_KEY.join(keys[: depth + 1])
+            if isinstance(current, list):
+                if not (k.lstrip("-").isdigit() and -len(current) <= int(k) < len(current)):
+                    raise ConfigKeyError(f"Cannot set '{id}': '{prefix}' is not an index of a list of {len(current)}")
+                k = int(k)  # type: ignore[assignment]
+            elif depth < len(keys) - 1 and current.get(k) is None:
                 current[k] = {}
-            elif not isinstance(current[k], dict):
-                current[k] = {}
-            current = current[k]
-
-        # Set final value
-        current[keys[-1]] = value
+            if depth == len(keys) - 1:
+                current[k] = value
+            elif not isinstance(current[k], (dict, list)):
+                raise ConfigKeyError(f"Cannot set '{id}': '{prefix}' is {current[k]!r}, not a mapping")
+            else:
+                current = current[k]
         self._invalidate_resolution()
 
     def validate(self, schema: type) -> None:
@@ -376,12 +383,19 @@ class Config:
         return self._locations
 
     def update(self, source: PathLike | dict[str, Any] | "Config" | str) -> "Config":
-        """Update configuration with changes from another source.
+        """Apply changes from a file, dict, override string or another Config.
 
-        Auto-detects strings as either file paths or CLI overrides:
-        - Strings with '=' are parsed as overrides (e.g., "key=value", "=key=value", "~key")
-        - Strings without '=' are treated as file paths
-        - Dicts and Config instances work as before
+        Each key of the source is a statement, applied in order:
+
+        - ``key: value`` sets ``key`` to ``value``, whatever it held before
+        - ``+key: value`` combines: a dict merges into a dict (all the way down), a list is appended
+        - ``~key`` deletes ``key`` (``~key: [items]`` deletes indices of a list or keys of a dict)
+
+        Keys may be ``::`` paths, which set one value deep inside (``model::lr: 0.01``).
+
+        Strings naming an existing file are loaded as YAML files. Other strings with ``=`` or starting with ``~``
+        are override strings (``model::lr=0.01``, ``+trainer::callbacks=[...]``, ``~debug``); everything else is
+        loaded as a file path.
 
         Args:
             source: File path, override string, dict, or Config instance to update from
@@ -389,33 +403,9 @@ class Config:
         Returns:
             self (for chaining)
 
-        Operators:
-            - key=value      - Compose (default): merge dict or extend list
-            - =key=value     - Replace operator: completely replace value
-            - ~key           - Remove operator: delete key (errors if missing)
-
         Examples:
-            >>> # Update from file
-            >>> config.update("base.yaml")
-
-            >>> # Update from override string (auto-detected)
-            >>> config.update("model::lr=0.001")
-
-            >>> # Chain multiple updates (mixed files and overrides)
-            >>> config = (Config(schema=MySchema)
-            ...           .update("base.yaml")
-            ...           .update("exp.yaml")
-            ...           .update("optimizer::lr=0.01")
-            ...           .update("=model={'_target_': 'MyModel'}")
-            ...           .update("~debug"))
-
-            >>> # Update from dict
-            >>> config.update({"model": {"dropout": 0.1}})
-
-            >>> # Update from another Config instance
-            >>> config1 = Config()
-            >>> config2 = Config().update({"model::lr": 0.001})
-            >>> config1.update(config2)
+            >>> config = Config().update("base.yaml").update("model::lr=0.001").update("~debug")
+            >>> config.update({"+model": {"dropout": 0.1}})
 
             >>> # CLI integration pattern (just loop!)
             >>> for item in cli_args:
@@ -427,17 +417,18 @@ class Config:
             raise FrozenConfigError("Cannot update frozen config")
 
         if isinstance(source, Config):
-            self._update_from_config(source)
+            self._apply(source._data, source.locations.copy())
         elif isinstance(source, dict):
-            if self._uses_nested_paths(source):
-                self._apply_path_updates(source)
-            else:
-                self._apply_structural_update(source)
-        elif isinstance(source, str) and ("=" in source or source.startswith("~")):
-            # Auto-detect override string (key=value, =key=value, ~key)
+            self._apply(source, LocationRegistry())
+        elif (
+            isinstance(source, str)
+            and not os.path.isfile(os.path.expanduser(source))
+            and ("=" in source or source.startswith("~"))
+        ):
             self._update_from_override_string(source)
         else:
-            self._update_from_file(source)
+            data, locations = self._loader.load_file(source)
+            self._apply(data, locations)
 
         # Phase 1: Eagerly expand ONLY external file raw references (%file.yaml::key)
         # Local refs (%key) are kept as strings - they'll be expanded in _parse() after
@@ -462,117 +453,62 @@ class Config:
 
         return self  # Enable chaining
 
-    def _update_from_config(self, source: "Config") -> None:
-        """Update from another Config instance."""
-        context = MergeContext(locations=source.locations)
-        self._data = apply_operators(self._data, source._data, context=context)
-        self._locations.merge(source.locations)
-        self._invalidate_resolution()
-
-    def _uses_nested_paths(self, source: dict[str, Any]) -> bool:
-        """Check if dict uses :: path syntax."""
-        return any(ID_SEP_KEY in str(k).lstrip(REPLACE_KEY).lstrip(REMOVE_KEY) for k in source.keys())
-
-    def _apply_path_updates(self, source: dict[str, Any]) -> None:
-        """Apply nested path updates (e.g., model::lr=value, =model=replace, ~old::param=null)."""
-        for key, value in source.items():
-            if not isinstance(key, str):
-                self.set(str(key), value)  # type: ignore[unreachable]
-                continue
-
-            if key.startswith(REPLACE_KEY):
-                # Replace operator: =key (explicit override)
-                actual_key = key[1:]
-                self.set(actual_key, value)
-
-            elif key.startswith(REMOVE_KEY):
-                # Delete operator: ~key
-                actual_key = key[1:]
-                _validate_delete_operator(actual_key, value)
-
-                if actual_key not in self:
-                    # Try to find source location for the key being deleted
-                    source_location = self._locations.get(actual_key) if self._locations else None
-
-                    # For nested keys, get available keys from the parent container
-                    available_keys: list[str] = []
-                    parent_key_name: str | None = None
-                    error_key = actual_key  # The key to show in error message
-
-                    if ID_SEP_KEY in actual_key:
-                        # Nested key like "model::lr"
-                        parent_path, child_key = actual_key.rsplit(ID_SEP_KEY, 1)
-                        parent_key_name = parent_path
-                        error_key = child_key  # Show only the child key in nested errors
-                        try:
-                            parent = self._get_by_id(parent_path)
-                            if isinstance(parent, dict):
-                                available_keys = list(parent.keys())
-                        except (KeyError, IndexError, TypeError):
-                            # Parent doesn't exist, fall back to top-level
-                            available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
-                    else:
-                        # Top-level key
-                        available_keys = list(self._data.keys()) if isinstance(self._data, dict) else []
-
-                    raise build_missing_key_error(error_key, available_keys, source_location, parent_key=parent_key_name)
-                self._delete_nested_key(actual_key)
-
-            else:
-                # Default: compose (merge dict or extend list)
-                if key in self and isinstance(self[key], dict) and isinstance(value, dict):
-                    context = MergeContext(locations=self._locations, current_path=key)
-                    merged = apply_operators(self[key], value, context=context)
-                    self.set(key, merged)
-                elif key in self and isinstance(self[key], list) and isinstance(value, list):
-                    self.set(key, self[key] + value)
-                else:
-                    # Normal set (handles nested paths with ::)
-                    self.set(key, value)
-
-    def _delete_nested_key(self, key: str) -> None:
-        """Delete a key, supporting nested paths with ::."""
-        if ID_SEP_KEY in key:
-            keys = split_id(key)
-            parent_id = ID_SEP_KEY.join(keys[:-1])
-            parent = self[parent_id] if parent_id else self._data
-            if isinstance(parent, dict) and keys[-1] in parent:
-                del parent[keys[-1]]
-        else:
-            # Top-level key
-            if isinstance(self._data, dict) and key in self._data:
-                del self._data[key]
-        self._invalidate_resolution()
-
-    def _apply_structural_update(self, source: dict[str, Any]) -> None:
-        """Apply structural update with operators."""
-        validate_operators(source)
-        context = MergeContext(locations=self._locations)
-        self._data = apply_operators(self._data, source, context=context)
-        self._invalidate_resolution()
-
-    def _update_from_file(self, source: PathLike) -> None:
-        """Load and update from a file."""
-        new_data, new_metadata = self._loader.load_file(source)
-        validate_operators(new_data)
-
-        # Check if loaded data uses :: path syntax
-        if self._uses_nested_paths(new_data):
-            # Expand nested paths using path updates
-            self._locations.merge(new_metadata)
-            self._apply_path_updates(new_data)
-        else:
-            # Normal structural update
-            context = MergeContext(locations=new_metadata)
-            self._data = apply_operators(self._data, new_data, context=context)
-            self._locations.merge(new_metadata)
-
+    def _apply(self, statements: dict[str, Any], locations: LocationRegistry) -> None:
+        """Apply statements whose source locations are ``locations``, then record those locations."""
+        context = MergeContext(locations=locations, existing=self._locations)
+        self._data = apply_operators(self._data, statements, context=context)
+        self._locations.merge(locations)
         self._invalidate_resolution()
 
     def _update_from_override_string(self, override: str) -> None:
-        """Parse and apply a single override string (e.g., 'key=value', '=key=value', '~key')."""
-        overrides_dict = parse_overrides([override])
-        self._apply_path_updates(overrides_dict)
+        """Parse and apply a single override string (e.g., 'key=value', '+key=value', '~key')."""
+        for key, value in parse_overrides([override]).items():
+            operator, path = split_operator(key)
+            if operator != REMOVE_KEY:
+                self._check_override_path(path, override, combine=operator == COMBINE_KEY)
+            locations = LocationRegistry()
+            for id_path in _paths(path, value) if operator != REMOVE_KEY else ():
+                locations.register(id_path, Location(filepath="", line=0, id=id_path, override=override))
+            self._apply({key: value}, locations)
+
+    def _check_override_path(self, path: str, override: str, combine: bool) -> None:
+        """Overrides set keys that exist, so that a typo is not silently added as a key that nothing reads.
+
+        ``key=value`` may also add an argument or special key under a component, or a ``_target_`` to a plain
+        dict. ``+key=value`` says it means to add, so only the keys above ``key`` must exist.
+        """
+        keys = split_id(path)
+        node: Any = self._data
+        for depth, key in enumerate(keys):
+            try:
+                node = node[int(key)] if isinstance(node, list) else node[key]
+                continue
+            except (KeyError, IndexError, ValueError, TypeError):
+                pass
+            location = Location(filepath="", line=0, id=path, override=override)
+            if not isinstance(node, (dict, list)):
+                parent = ID_SEP_KEY.join(keys[:depth])
+                raise ConfigKeyError(
+                    f"Cannot override '{path}': '{parent}' is {node!r}, not a mapping",
+                    source_location=location,
+                    suggestion=f"To replace the value, override '{parent}' itself.",
+                )
+            if depth == len(keys) - 1 and isinstance(node, dict):
+                if combine or (depth > 0 and (Component.is_instantiable(node) or key == "_target_")):
+                    return  # a key to add, a new argument (checked against the target when built), or a new component
+            missing = ID_SEP_KEY.join(keys[: depth + 1])
+            close = get_suggestions(key, [str(k) for k in node], max_suggestions=1) if isinstance(node, dict) else []
+            hint = f"Did you mean '{close[0][0]}'? " if close else ""
+            suggestion = f"{hint}To add a new key, write '+{override.lstrip(COMBINE_KEY)}'."
+            if depth < len(keys) - 1:
+                suggestion = f"{hint}'{missing}' must exist before keys can be added under it."
+            if "." in path and path.replace(".", ID_SEP_KEY) in self:
+                suggestion = f"Nested keys are separated by '::'. Did you mean '{path.replace('.', ID_SEP_KEY)}'?"
+            raise ConfigKeyError(
+                f"Cannot override '{path}': '{missing}' does not exist" if missing != path else f"'{path}' does not exist",
+                source_location=location,
+                suggestion=suggestion,
+            )
 
     def resolve(
         self,
@@ -594,7 +530,7 @@ class Config:
         and uses a separate cache for efficiency.
 
         Processing stages:
-        - `%` raw references: Already expanded during update() (eager)
+        - `%` raw references: from other files when loaded by update(), local ones now
         - `@` resolved references: Resolved now (lazy, supports circular deps)
         - `$` expressions: Evaluated now (lazy)
         - `_target_` components: Instantiated now (lazy)
@@ -642,8 +578,8 @@ class Config:
             >>> type(optimizer).__name__
             'Adam'
 
-            >>> # Disable instantiation (useful for inspection)
-            >>> config.resolve("optimizer", instantiate=False)
+            >>> # Disable instantiation (useful for inspection): the Component, not the object
+            >>> config.resolve("optimizer", instantiate=False).get_config()
             {'_target_': 'torch.optim.Adam', 'lr': 0.001}
 
             >>> # With default value
@@ -667,6 +603,42 @@ class Config:
                 return default
             raise
 
+    def check(self) -> None:
+        """Find mistakes in the config without building anything.
+
+        Checks that `@` references exist, `_target_`s and `_imports_` can be imported, `_mode_`s exist,
+        components' arguments match their target's signature (missing arguments are allowed with
+        `_mode_: callable`) and `$` expressions compile. Disabled components are skipped, as are those whose
+        `_disabled_` is decided by an expression. Nothing is instantiated or evaluated, so `check()` is cheap
+        to call before a run.
+
+        Raises:
+            ValidationError: Listing every problem found, each with its file:line or CLI override.
+
+        Example:
+            >>> config = Config().update("config.yaml").update("model::lr=0.1")
+            >>> config.check()  # raises if anything is wrong, before any object is built
+        """
+        from .schema import ValidationError
+
+        try:
+            if not self._is_parsed:
+                self._parse()
+        except BaseError as error:  # a `%` or relative reference that cannot be expanded stops parsing
+            problems = [error]
+        else:
+            problems = self._import_problems + self._resolver.find_problems()
+        if not problems:
+            return
+        lines = [f"Config check found {len(problems)} problem{'s' if len(problems) > 1 else ''}:"]
+        for problem in problems:
+            where = problem.source_location
+            prefix = f"{where} → {where.id}: " if where and where.id else f"{where}: " if where else ""
+            lines.append(f"- {prefix}{problem._original_message}")
+            if problem.suggestion:
+                lines.append("  " + problem.suggestion.replace("\n", "\n  "))
+        raise ValidationError("\n".join(lines))
+
     def _parse(self, reset: bool = True) -> None:
         """Parse config tree and prepare for resolution.
 
@@ -683,30 +655,31 @@ class Config:
         if reset:
             self._resolver.reset()
 
+        # Work on a copy: get() and exports keep `_imports_`, local `%` refs and relative `@::` refs
+        data = _copy_containers(self._data)
+
         # Process _imports_ key if present in config data
         # This allows YAML-based imports that become available to all expressions
-        self._process_imports_key()
+        self._process_imports_key(data)
 
         # Phase 2: Expand local raw references (%key) now that all composition is complete
         # CLI overrides have been applied, so local refs will see final values
-        self._data = self._preprocessor.process_raw_refs(
-            self._data, self._data, id="", locations=self._locations, external_only=False
-        )
+        data = self._preprocessor.process_raw_refs(data, data, id="", locations=self._locations, external_only=False)
 
         # Stage 1: Preprocess (@:: relative resolved IDs)
-        self._data = self._preprocessor.process(self._data, self._data, id="")
+        data = self._preprocessor.process(data, locations=self._locations)
 
         # Stage 2: Parse config tree to create Items
         parser = Parser(globals=self._imports, metadata=self._locations)
-        items = parser.parse(self._data)
+        items = parser.parse(data)
 
         # Stage 3: Add items to resolver
         self._resolver.add_items(items)
 
         self._is_parsed = True
 
-    def _process_imports_key(self) -> None:
-        """Process _imports_ key from config data.
+    def _process_imports_key(self, data: dict[str, Any]) -> None:
+        """Process _imports_ key from the copy of the config data being parsed.
 
         The _imports_ key allows declaring imports directly in YAML:
 
@@ -721,35 +694,35 @@ class Config:
         ```
 
         These imports become available to all expressions in the config.
-        The _imports_ key is removed from the data after processing.
+        The _imports_ key is removed from the parsed copy, so it never becomes a config item.
         """
+        self._import_problems = []
         imports_key = "_imports_"
-        if imports_key not in self._data:
+        if imports_key not in data:
             return
 
-        imports_config = self._data.pop(imports_key)
+        imports_config = data.pop(imports_key)
         if not isinstance(imports_config, dict):
             return
 
-        # Process each import
         for name, module_path in imports_config.items():
-            if isinstance(module_path, str):
-                # Handle dotted paths like "pathlib.Path" or "collections.Counter"
-                # Split into module and attribute if needed
-                if "." in module_path:
-                    parts = module_path.rsplit(".", 1)
-                    # First try as a module (e.g., "os.path")
-                    module_obj, success = optional_import(module_path)
-                    if not success:
-                        # Try as module.attribute (e.g., "pathlib.Path")
-                        module_obj, success = optional_import(parts[0], name=parts[1])
-                    self._imports[name] = module_obj
-                else:
-                    # Simple module name like "json"
-                    self._imports[name] = optional_import(module_path)[0]
-            else:
-                # Already a module or callable
+            if not isinstance(module_path, str):  # already a module or callable
                 self._imports[name] = module_path
+                continue
+            # A module ("os.path"), else an attribute of one ("pathlib.Path")
+            module_obj, success = optional_import(module_path)
+            if not success and "." in module_path:
+                module, attribute = module_path.rsplit(".", 1)
+                module_obj, success = optional_import(module, name=attribute)
+            # A failed import raises when an expression uses it; check() reports it up front
+            self._imports[name] = module_obj
+            if not success:
+                self._import_problems.append(
+                    TargetNotFoundError(
+                        f"Cannot import '{module_path}'",
+                        source_location=self._locations.get(f"{imports_key}{ID_SEP_KEY}{name}"),
+                    )
+                )
 
     def _get_by_id(self, id: str) -> Any:
         """Get config value by ID path.
@@ -835,78 +808,64 @@ class Config:
             yaml.safe_dump(config, f, **kwargs)
 
 
-def parse_overrides(args: list[str]) -> dict[str, Any]:
-    """Parse CLI argument overrides with automatic type inference.
+def _copy_containers(value: Any) -> Any:
+    """Copy dicts and lists recursively; leaves (which may be arbitrary Python objects) are shared."""
+    if isinstance(value, dict):
+        return {k: _copy_containers(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_copy_containers(v) for v in value]
+    return value
 
-    Supports only key=value syntax with operator prefixes.
-    Values are parsed using YAML syntax (via ``yaml.safe_load``), ensuring
-    CLI overrides behave identically to values in YAML config files.
+
+def _paths(path: str, value: Any) -> list[str]:
+    """``path`` and the path of every value under it."""
+    paths = [path]
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not str(key).startswith(REMOVE_KEY):
+                paths += _paths(f"{path}{ID_SEP_KEY}{str(key).removeprefix(COMBINE_KEY)}", child)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths += _paths(f"{path}{ID_SEP_KEY}{index}", child)
+    return paths
+
+
+def parse_overrides(args: list[str]) -> dict[str, Any]:
+    """Parse override strings, with values read by the same YAML rules as config files.
 
     Args:
-        args: List of argument strings to parse (e.g., from argparse)
+        args: Override strings: ``key=value`` sets, ``+key=value`` combines, ``~key`` deletes (``~key=[0, name]`` deletes items or children)
 
     Returns:
-        Dictionary of parsed key-value pairs with inferred types.
-        Keys may have operator prefixes (=key for replace, ~key for delete).
+        The statements, keyed by path with their operator (``{"+model::callbacks": [...], "~debug": None}``)
 
-    Operators:
-        - key=value    - Normal assignment (composes/merges)
-        - =key=value   - Replace operator (completely replaces key)
-        - ~key         - Delete operator (removes key)
+    Raises:
+        ConfigMergeError: For the ``=key=value`` form of Sparkwheel < 0.1
 
     Examples:
-        >>> # Basic overrides (compose/merge)
         >>> parse_overrides(["model::lr=0.001", "debug=true"])
-        {"model::lr": 0.001, "debug": True}
-
-        >>> # With operators
-        >>> parse_overrides(["=model={_target_: ResNet}", "~old_param"])
-        {"=model": {'_target_': 'ResNet'}, "~old_param": None}
-
-        >>> # Nested paths with operators
-        >>> parse_overrides(["=optimizer::lr=0.01", "~model::old_param"])
-        {"=optimizer::lr": 0.01, "~model::old_param": None}
+        {'model::lr': 0.001, 'debug': True}
+        >>> parse_overrides(["+trainer::callbacks=[1]", "~old_param"])
+        {'+trainer::callbacks': [1], '~old_param': None}
 
     Note:
-        - The '=' character serves dual purpose:
-          - In 'key=value' → assignment operator (CLI syntax)
-          - In '=key=value' → replace operator prefix (config operator)
-        - Values use YAML syntax: ``true``/``false``, ``yes``/``no``, ``on``/``off``
-          for booleans, ``null`` or ``~`` for None, ``{key: value}`` for dicts.
-        - Python's ``None`` is parsed as the string ``"None"`` (use ``null`` instead).
+        Values use YAML syntax: ``true``/``false`` for booleans, ``null`` for None, ``{key: value}`` for dicts.
+        Python's ``None`` is parsed as the string ``"None"``.
     """
     import yaml
 
     overrides: dict[str, Any] = {}
-
     for arg in args:
-        # Handle delete operator: ~key
-        if arg.startswith("~"):
-            key = arg  # Keep the ~ prefix
-            overrides[key] = None
+        if arg.startswith(REMOVE_KEY) and "=" not in arg:
+            overrides[arg] = None
             continue
-
-        # Handle replace operator: =key=value
-        if arg.startswith("=") and "=" in arg[1:]:
-            # Remove the = prefix, then split on first =
-            rest = arg[1:]  # Remove leading =
-            key, value = rest.split("=", 1)
-            key = "=" + key  # Add back the = prefix to the key
-            try:
-                value = yaml.safe_load(value)
-            except yaml.YAMLError:
-                pass  # Keep as string
-            overrides[key] = value
+        if "=" not in arg:
             continue
-
-        # Handle normal assignment: key=value
-        if "=" in arg:
-            key, value = arg.split("=", 1)
-            try:
-                value = yaml.safe_load(value)
-            except yaml.YAMLError:
-                pass  # Keep as string
-            overrides[key] = value
-            continue
-
+        key, value = arg.split("=", 1)
+        split_operator(key or arg)  # `=key=value` was the replace operator before 0.1
+        try:
+            value = yaml.load(value, Loader=YamlLoader)
+        except yaml.YAMLError:
+            pass  # Keep as string
+        overrides[key] = value
     return overrides

@@ -7,9 +7,13 @@ Override configuration values from the command line with automatic file and over
 !!! success "Dead Simple CLI Integration"
     **Just loop over CLI arguments** - `config.update()` automatically detects whether each string is a file path or an override!
 
-    - Strings **with** `=` → Parsed as overrides (e.g., `key=value`, `=key=value`, `~key`)
-    - Strings **without** `=` → Loaded as file paths
+    - Strings naming an existing file → Loaded as files (so `runs/lr=0.1/config.yaml` works)
+    - Other strings **with** `=` or starting with `~` → Parsed as overrides (e.g., `key=value`, `+key=value`, `~key`)
+    - Everything else → Loaded as file paths
     - No manual separation needed!
+
+!!! tip "Same statements as YAML"
+    An override is one statement: `key=value` sets, `+key=value` combines, `~key` deletes, exactly like `key:`, `+key:` and `~key` in a file. See [Set, Combine, Delete](operators.md).
 
 ## Quick Start
 
@@ -40,6 +44,7 @@ Override configuration values from the command line with automatic file and over
     import click
     from sparkwheel import Config
 
+
     @click.command()
     @click.argument("inputs", nargs=-1, required=True)
     def train(inputs):
@@ -48,6 +53,7 @@ Override configuration values from the command line with automatic file and over
             config.update(item)
 
         model = config.resolve("model")
+
 
     if __name__ == "__main__":
         train()
@@ -65,6 +71,7 @@ Override configuration values from the command line with automatic file and over
 
     app = typer.Typer()
 
+
     @app.command()
     def train(inputs: list[str] = typer.Argument(None)):
         config = Config()
@@ -72,6 +79,7 @@ Override configuration values from the command line with automatic file and over
             config.update(item)
 
         model = config.resolve("model")
+
 
     if __name__ == "__main__":
         app()
@@ -87,6 +95,7 @@ Override configuration values from the command line with automatic file and over
     import fire
     from sparkwheel import Config
 
+
     class TrainCLI:
         def train(self, *inputs):
             config = Config()
@@ -94,6 +103,7 @@ Override configuration values from the command line with automatic file and over
                 config.update(item)
 
             model = config.resolve("model")
+
 
     if __name__ == "__main__":
         fire.Fire(TrainCLI)
@@ -105,49 +115,56 @@ Override configuration values from the command line with automatic file and over
 
 ## Override Syntax
 
-Three operators for fine-grained control:
+Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`).
 
-| Operator | Syntax | Behavior | Example |
-|----------|--------|----------|---------|
-| **Compose** (default) | `key=value` | Merges dicts, extends lists | `model::lr=0.001` |
-| **Replace** | `=key=value` | Completely replaces value | `=model={'_target_': 'ResNet'}` |
-| **Delete** | `~key` | Removes key (errors if missing) | `~debug` |
+| Statement | Syntax | Behavior | Example |
+|-----------|--------|----------|---------|
+| **Set** | `key=value` | Replaces the value (a dict, list or scalar) | `model::lr=0.001`, `devices=[0,1]` |
+| **Combine** | `+key=value` | Merges a dict into a dict, appends a list to a list, or adds a new key | `'+trainer={max_epochs: 5}'`, `+callbacks=[ema]` |
+| **Delete** | `~key` | Removes the key (errors if missing) | `~debug`, `~callbacks::0`, `'~callbacks=[0, 2]'` |
 
-!!! info "Type Inference"
-    Values are automatically typed using `ast.literal_eval()`:
+Setting a `_target_` component to a dict without `_target_` is an error that suggests `+key` or a `::` path, since it would drop the class: write `model::lr=0.01` or `'+model={lr: 0.01}'`.
 
-    - `lr=0.001` → `float`
+!!! warning "`key=value` changes keys that exist"
+    `key=value` may set any key that already exists, add one argument (or a special key such as `_disabled_`) directly under a `_target_` component, or give a dict a `_target_`. Anything else is most likely a typo, so it raises an error instead of adding a key that nothing reads:
+
+    ```
+    'trainer::max_epoch' does not exist
+
+    [override → trainer::max_epoch]:
+      → trainer::max_epoch=5
+
+      💡 Did you mean 'max_epochs'? To add a new key, write '+trainer::max_epoch=5'.
+    ```
+
+    `+key=value` may add a key, but the keys above it must exist.
+
+!!! info "Values are YAML"
+    Override values are parsed with the same rules as your YAML files:
+
+    - `lr=0.001` → `float` (`lr=1e-3` too)
     - `epochs=100` → `int`
-    - `debug=True` → `bool`
+    - `debug=true` → `bool`
     - `devices=[0,1,2]` → `list`
-    - `config={'lr':0.001}` → `dict`
-    - `name=resnet50` → `str` (fallback)
+    - `'optimizer={lr: 0.001}'` → `dict` (YAML needs the space after `:`; quote it for your shell)
+    - `name=resnet50` → `str`
 
-!!! note "The `=` Dual Purpose"
-    - In `key=value` → Assignment operator (CLI syntax)
-    - In `=key=value` → Replace operator prefix (config operator)
+!!! note "No `=key=value`"
+    Before Sparkwheel 0.1, `=key=value` replaced a value. Setting now always replaces, so write `key=value`; the old form is an error that says so.
 
 !!! tip "Adding Your Own Flags"
     The examples above show minimal integration. You can add your own flags (e.g., `--verbose`, `--device`) alongside the config inputs - Sparkwheel only cares about the arguments you pass to `config.update()`!
 
-## Advanced: Manual Override Parsing
+## Check Before Running
 
-If you need to separate override parsing from application, use `parse_overrides()`:
+`config.check()` finds mistakes without building anything: `@` references that don't exist, `_target_`s and `_imports_` that can't be imported, `_mode_`s that don't exist, arguments the target doesn't accept or is missing, and `$` expressions that don't compile. It raises one `ValidationError` that lists every problem with its file:line or override, so call it right after applying the command line:
 
 ```python
-from sparkwheel import Config, parse_overrides
-
-# Manually parse overrides
-overrides = parse_overrides(["model::lr=0.001", "=optimizer={'type':'sgd'}", "~debug"])
-# Result: {"model::lr": 0.001, "=optimizer": {"type": "sgd"}, "~debug": None}
-
 config = Config()
-config.update("base.yaml")
-config.update(overrides)
+for item in args.inputs:
+    config.update(item)
+config.check()
 ```
-
-!!! warning "parse_overrides() Syntax"
-    `parse_overrides()` **only** supports `key=value` syntax (no `--key value` flag style).
 
 ## Schema Validation
 
@@ -158,11 +175,13 @@ import argparse
 from dataclasses import dataclass
 from sparkwheel import Config
 
+
 @dataclass
 class TrainingConfig:
     model: dict
     optimizer: dict
     trainer: dict
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("inputs", nargs="+")
@@ -188,6 +207,6 @@ python train.py base.yaml optimizer::lr=0.001 trainer::epochs=100
 ## Next Steps
 
 - **[Configuration Basics](basics.md)** - Loading and accessing configs
-- **[Operators](operators.md)** - Composition, replacement, and deletion
+- **[Set, Combine, Delete](operators.md)** - What `key`, `+key` and `~key` do
 - **[Schema Validation](schema-validation.md)** - Type-safe configs with dataclasses
 - **[API Reference](reference/)** - Full API documentation

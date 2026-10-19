@@ -46,19 +46,16 @@ class TestLoaderBasic:
         with pytest.raises(ValueError, match="must be a YAML file"):
             loader.load_file(str(config_file))
 
-    def test_load_file_with_path_traversal(self, tmp_path):
-        """Test loading file with path traversal shows warning."""
+    def test_load_file_with_parent_directory(self, tmp_path, recwarn):
+        """A path with '..' loads like any other path, without warnings."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("key: value")
 
         loader = Loader()
-        # Use a path with ".." to trigger path traversal warning
-        path_with_traversal = str(tmp_path / ".." / tmp_path.name / "config.yaml")
-
-        with pytest.warns(UserWarning, match="path contains '..'"):
-            config, metadata = loader.load_file(path_with_traversal)
+        config, metadata = loader.load_file(str(tmp_path / ".." / tmp_path.name / "config.yaml"))
 
         assert config == {"key": "value"}
+        assert not recwarn.list
 
     def test_load_file_with_yml_extension(self, tmp_path):
         """Test loading .yml file works."""
@@ -109,58 +106,6 @@ class TestLoaderMetadataTracking:
         # Metadata should be tracked for the list
         location = metadata.get("items")
         assert location is not None
-
-
-class TestLoaderMultipleFiles:
-    """Test loading multiple YAML files."""
-
-    def test_load_files_basic(self, tmp_path):
-        """Test loading multiple files."""
-        file1 = tmp_path / "config1.yaml"
-        file1.write_text("key1: value1\nshared: from_file1")
-
-        file2 = tmp_path / "config2.yaml"
-        file2.write_text("key2: value2\nshared: from_file2")
-
-        loader = Loader()
-        config, metadata = loader.load_files([str(file1), str(file2)])
-
-        # Later files should override earlier files
-        assert config["key1"] == "value1"
-        assert config["key2"] == "value2"
-        assert config["shared"] == "from_file2"
-
-    def test_load_files_empty_list(self):
-        """Test loading empty file list."""
-        loader = Loader()
-        config, metadata = loader.load_files([])
-
-        assert config == {}
-        assert isinstance(metadata, LocationRegistry)
-
-    def test_load_files_single_file(self, tmp_path):
-        """Test loading single file via load_files."""
-        config_file = tmp_path / "config.yaml"
-        config_file.write_text("key: value")
-
-        loader = Loader()
-        config, metadata = loader.load_files([str(config_file)])
-
-        assert config == {"key": "value"}
-
-    def test_load_files_metadata_merged(self, tmp_path):
-        """Test that metadata is merged from multiple files."""
-        file1 = tmp_path / "config1.yaml"
-        file1.write_text("key1: value1")
-
-        file2 = tmp_path / "config2.yaml"
-        file2.write_text("key2: value2")
-
-        loader = Loader()
-        config, metadata = loader.load_files([str(file1), str(file2)])
-
-        # Both files should have metadata tracked
-        assert metadata.get("") is not None
 
 
 class TestLoaderEdgeCases:
@@ -234,6 +179,67 @@ model:
         assert config == {"items": [{"key": "value1"}, {"key": "value2"}]}
         # Ensure no __sparkwheel_metadata__ keys
         assert "__sparkwheel_metadata__" not in str(config)
+
+
+class TestLoaderYamlRules:
+    """Duplicate keys, merge keys and YAML 1.2 floats."""
+
+    @pytest.mark.parametrize(
+        "text,key,first,again",
+        [
+            ("a: 1\nb: 2\na: 3\n", "a", 1, 3),
+            ("model:\n  lr: 0.1\n  lr: 0.2\n", "lr", 2, 3),
+            ("items:\n  - x: 1\n    x: 2\n", "x", 2, 3),
+        ],
+    )
+    def test_duplicate_keys_raise_naming_both_lines(self, tmp_path, text, key, first, again):
+        import yaml
+
+        path = tmp_path / "dup.yaml"
+        path.write_text(text)
+        with pytest.raises(yaml.YAMLError) as excinfo:
+            Loader().load_file(str(path))
+        message = str(excinfo.value)
+        assert f"duplicate key '{key}'" in message
+        assert f"first defined on line {first}" in message
+        assert f"line {again}" in message and str(path) in message
+
+    def test_merge_keys(self, tmp_path):
+        path = tmp_path / "merge.yaml"
+        path.write_text("base: &b\n  x: 1\n  y: 2\nderived:\n  <<: *b\n  y: 3\n")
+        config, locations = Loader().load_file(str(path))
+        assert config == {"base": {"x": 1, "y": 2}, "derived": {"x": 1, "y": 3}}
+        assert locations.get("derived::y").line == 6
+
+    def test_values_under_an_alias_have_locations(self, tmp_path):
+        path = tmp_path / "alias.yaml"
+        path.write_text("base: &b\n  nested:\n    value: [1]\nderived:\n  <<: *b\ncopy: *b\n")
+        _, locations = Loader().load_file(str(path))
+        assert locations.get("derived::nested::value").line == 3
+        assert locations.get("copy::nested::value::0").line == 3
+
+    def test_merge_key_list(self, tmp_path):
+        path = tmp_path / "merge.yaml"
+        path.write_text("a: &a {x: 1}\nb: &b {x: 2, y: 2}\nc:\n  <<: [*a, *b]\n")
+        config, _ = Loader().load_file(str(path))
+        assert config["c"] == {"x": 1, "y": 2}
+
+    @pytest.mark.parametrize(
+        "text,value",
+        [("1e-3", 1e-3), ("1E5", 1e5), ("-2.5e-4", -2.5e-4), ("+1e3", 1e3), ("1.0e3", 1e3), (".5e1", 5.0)],
+    )
+    def test_exponent_floats(self, tmp_path, text, value):
+        path = tmp_path / "floats.yaml"
+        path.write_text(f"lr: {text}\n")
+        config, _ = Loader().load_file(str(path))
+        assert config["lr"] == value and isinstance(config["lr"], float)
+
+    @pytest.mark.parametrize("text", ["1e", "e5", "1e3x", "'1e-3'", "0x1e", "._e3"])
+    def test_non_floats_stay_as_before(self, tmp_path, text):
+        path = tmp_path / "floats.yaml"
+        path.write_text(f"v: {text}\n")
+        config, _ = Loader().load_file(str(path))
+        assert not isinstance(config["v"], float)
 
 
 class TestLocationRegistry:

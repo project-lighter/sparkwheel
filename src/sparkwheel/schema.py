@@ -37,7 +37,7 @@ Example:
 
 import dataclasses
 import types
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from .utils.exceptions import BaseError, Location
 
@@ -106,6 +106,50 @@ def validator(func):
     return func
 
 
+def _field_types(schema: Any) -> dict[str, Any]:
+    """The schema's field types, with postponed annotations (`from __future__ import annotations`) evaluated."""
+    try:
+        return get_type_hints(schema)
+    except Exception as e:  # e.g. NameError for a name that is not importable at runtime
+        raise TypeError(f"Cannot evaluate the type annotations of schema {schema.__name__}: {e}") from e
+
+
+def _init_values(schema: Any, config: dict[str, Any]) -> dict[str, Any]:
+    """The schema's own fields from `config`, with nested dataclasses built, as `__post_init__` and validators expect."""
+    hints = _field_types(schema)
+    return {
+        f.name: _build_nested(hints.get(f.name), config[f.name])
+        for f in dataclasses.fields(schema)
+        if f.init and f.name in config
+    }
+
+
+def _build_nested(field_type: Any, value: Any) -> Any:
+    """Turn the dicts of a dataclass-typed value (also inside Optional, list or dict) into instances."""
+    if isinstance(value, dict) and dataclasses.is_dataclass(field_type) and isinstance(field_type, type):
+        return field_type(**_init_values(field_type, value))
+    origin, args = get_origin(field_type), get_args(field_type)
+    if _is_union_type(origin):
+        dataclass_args = [a for a in args if dataclasses.is_dataclass(a)]
+        return _build_nested(dataclass_args[0], value) if len(dataclass_args) == 1 else value
+    if origin is list and args and isinstance(value, list):
+        return [_build_nested(args[0], v) for v in value]
+    if origin is dict and len(args) == 2 and isinstance(value, dict):
+        return {k: _build_nested(args[1], v) for k, v in value.items()}
+    return value
+
+
+def _has_unresolved(value: Any) -> bool:
+    """Whether `value` holds a reference, expression or macro string, also inside dicts and lists."""
+    if isinstance(value, str):
+        return value.startswith(("@", "$", "%"))
+    if isinstance(value, dict):
+        return any(_has_unresolved(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_unresolved(v) for v in value)
+    return False
+
+
 def _get_validators(schema_type: type) -> list[Any]:
     """Get all validator methods from a dataclass."""
     validators = []
@@ -142,21 +186,23 @@ def _run_validators(
     if not validators:
         return
 
-    # Skip validation for configs with references/expressions/macros
-    # They'll be validated after resolution
-    for value in config.values():
-        if isinstance(value, str) and value.startswith(("@", "$", "%")):
-            # Has unresolved references - skip custom validation
-            return
-
-    # Create instance to call validators on
-    try:
-        instance = schema(**config)
-    except Exception:
-        # Can't create instance - skip validation
+    # Skip validation when one of this dataclass's own values is a reference, expression or macro:
+    # validators cannot judge a value that is not known yet
+    if any(isinstance(value, str) and value.startswith(("@", "$", "%")) for value in config.values()):
         return
 
+    # Create the instance from the schema's own fields (not component keys like `_target_` or lenient extras)
     source_loc = _get_source_location(metadata, field_path) if metadata else None
+    try:
+        instance = schema(**_init_values(schema, config))
+    except Exception as e:
+        if _has_unresolved(config):
+            return  # a nested dataclass's __post_init__ saw a reference instead of its value
+        raise ValidationError(
+            f"Cannot create {schema.__name__} to run its validators: {type(e).__name__}: {e}",
+            field_path=field_path,
+            source_location=source_loc,
+        ) from e
 
     for validator_method in validators:
         try:
@@ -168,6 +214,8 @@ def _run_validators(
                 source_location=source_loc,
             ) from e
         except Exception as e:
+            if _has_unresolved(config):
+                continue  # e.g. a TypeError from comparing a nested reference string with a number
             raise ValidationError(
                 f"Validator '{validator_method.__name__}' raised {type(e).__name__}: {e}",
                 field_path=field_path,
@@ -278,6 +326,7 @@ def validate(
 
     # Get all fields from the dataclass
     schema_fields = {f.name: f for f in dataclasses.fields(schema)}
+    field_types = _field_types(schema)
 
     # Check for required fields
     for field_name, field_info in schema_fields.items():
@@ -293,14 +342,14 @@ def validate(
             raise ValidationError(
                 f"Missing required field '{field_name}'",
                 field_path=current_path,
-                expected_type=field_info.type,  # type: ignore[arg-type]
+                expected_type=field_types[field_name],
                 source_location=source_loc,
             )
 
         # Validate the field value
         _validate_field(
             config[field_name],
-            field_info.type,  # type: ignore[arg-type]
+            field_types[field_name],
             current_path,
             metadata,
             allow_missing=allow_missing,
@@ -351,11 +400,13 @@ def _find_discriminator(union_types: tuple[Any, ...]) -> tuple[bool, str | None]
     # Find fields that exist in all types with Literal annotation
     all_fields: dict[str, list[Any]] = {}
     for dc_type in dataclass_types:
+        hints = _field_types(dc_type)
         for f in dataclasses.fields(dc_type):
-            if get_origin(f.type) is Literal:
+            field_type = hints[f.name]
+            if get_origin(field_type) is Literal:
                 if f.name not in all_fields:
                     all_fields[f.name] = []
-                literal_values = get_args(f.type)
+                literal_values = get_args(field_type)
                 all_fields[f.name].append({"type": dc_type, "values": literal_values})
 
     # Find a field present in all types with unique values
@@ -430,7 +481,7 @@ def _validate_discriminated_union(
     for dc_type in dataclass_types:
         for f in dataclasses.fields(dc_type):
             if f.name == discriminator_field:
-                literal_values = get_args(f.type)
+                literal_values = get_args(_field_types(dc_type)[f.name])
                 if discriminator_value in literal_values:
                     matching_type = dc_type
                     break
@@ -443,7 +494,7 @@ def _validate_discriminated_union(
         for dc_type in dataclass_types:
             for f in dataclasses.fields(dc_type):
                 if f.name == discriminator_field:
-                    literal_values = get_args(f.type)
+                    literal_values = get_args(_field_types(dc_type)[f.name])
                     for val in literal_values:
                         type_name = dc_type.__name__ if isinstance(dc_type, type) else type(dc_type).__name__
                         valid_values.append(f"'{val}' ({type_name})")
@@ -667,19 +718,17 @@ def _validate_field(
     if expected_type == Any:
         return
 
-    # Handle basic types (int, str, float, bool, etc.)
-    if not isinstance(value, expected_type):
-        # Special case: allow int for float
-        if expected_type is float and isinstance(value, int):
-            return
-
-        raise ValidationError(
-            "Type mismatch",
-            field_path=field_path,
-            expected_type=expected_type,
-            actual_value=value,
-            source_location=source_loc,
-        )
+    # Handle basic types (int, str, float, bool, etc.): an int is accepted for a float; `True` is not a number
+    bool_as_number = isinstance(value, bool) and expected_type in (int, float)
+    if not bool_as_number and (isinstance(value, expected_type) or (expected_type is float and isinstance(value, int))):
+        return
+    raise ValidationError(
+        "Type mismatch",
+        field_path=field_path,
+        expected_type=expected_type,
+        actual_value=value,
+        source_location=source_loc,
+    )
 
 
 def _get_source_location(metadata: Any, field_path: str) -> Location | None:
