@@ -66,17 +66,16 @@ print(f"Model: {model}")
 
 ## Experiment Without Copying
 
-Create a variant without duplicating the base config (merges automatically!):
+Create a variant that only says what changes:
 
 ```yaml
 # experiment_large.yaml
-model:  # Merges by default - no operator needed!
++model:  # + merges into model
   in_features: 1568  # Override just this
   # out_features is still @dataset::num_classes
 
-training:
-  learning_rate: 0.0001  # Lower learning rate
-  # epochs and steps_per_epoch inherited from base
+training::learning_rate: 0.0001  # A :: path sets one value
+# epochs and steps_per_epoch inherited from base
 ```
 
 Load both configs:
@@ -84,12 +83,12 @@ Load both configs:
 ```python
 config = Config().update("config.yaml").update("experiment_large.yaml")
 
-model = config.resolve("model")  # Linear(1568, 10) - merged automatically!
+model = config.resolve("model")  # Linear(1568, 10)
 lr = config["training::learning_rate"]  # 0.0001
 epochs = config["training::epochs"]  # 10 (inherited)
 ```
 
-**Sparkwheel composes by default!** Dicts merge and lists extend - no operators needed for the common case.
+**Keys set, `+` combines, `~` deletes.** `model:` would set the whole model (for a `_target_` component, an error that suggests `+model`), `+model:` merges into it (and appends to lists), and `~key` deletes a key.
 
 ## CLI Overrides
 
@@ -115,12 +114,12 @@ Run with overrides:
 python train.py training::learning_rate=0.01 dataset::batch_size=64
 ```
 
-Nested keys are separated by `::`, and values follow YAML rules. To replace a list that has items, write `=key=[...]`. See [CLI Overrides](../user-guide/cli.md).
+Nested keys are separated by `::`, and values follow YAML rules. `key=value` sets a key that exists; `+key=value` merges, appends or adds a new key. See [CLI Overrides](../user-guide/cli.md).
 
 ## Next Steps
 
 Now that you've seen the basics:
 
 - **[Core Concepts](../user-guide/basics.md)** - Learn more about references, expressions, and instantiation
-- **[Composition & Operators](../user-guide/operators.md)** - Master config composition with `=` and `~`
+- **[Set, Combine, Delete](../user-guide/operators.md)** - Layer configs with `key`, `+key` and `~key`
 - **[Schema Validation](../user-guide/schema-validation.md)** - Validate configs with dataclasses

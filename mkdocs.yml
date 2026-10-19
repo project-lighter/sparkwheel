@@ -76,7 +76,7 @@ nav:
       - References: user-guide/references.md
       - Expressions: user-guide/expressions.md
       - Instantiation: user-guide/instantiation.md
-      - Merging & Deleting: user-guide/operators.md
+      - Set, Combine, Delete: user-guide/operators.md
       - Schema Validation: user-guide/schema-validation.md
       - CLI Support: user-guide/cli.md
       - Advanced Features: user-guide/advanced.md

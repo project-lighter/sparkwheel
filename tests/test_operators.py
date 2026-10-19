@@ -3,14 +3,14 @@
 This module tests the operators.py module functionality:
 - MergeContext class and location tracking
 - Operator validation (_validate_delete_operator)
-- apply_operators function with all edge cases
+- apply_operators: `key` sets, `+key` combines, `~key` deletes
 """
 
 import pytest
 
 from sparkwheel.locations import LocationRegistry
-from sparkwheel.operators import MergeContext, _validate_delete_operator, apply_operators, validate_operators
-from sparkwheel.utils.exceptions import ConfigMergeError, Location
+from sparkwheel.operators import MergeContext, _validate_delete_operator, apply_operators
+from sparkwheel.utils.exceptions import ConfigKeyError, ConfigMergeError, Location
 
 
 class TestMergeContext:
@@ -63,15 +63,15 @@ class TestMergeContext:
         location = ctx.get_source_location("~lr")
         assert location == test_location
 
-    def test_get_source_location_with_replace_operator(self):
-        """Test get_source_location strips = operator prefix."""
+    def test_get_source_location_with_combine_operator(self):
+        """Test get_source_location strips + operator prefix."""
         registry = LocationRegistry()
         test_location = Location(filepath="config.yaml", line=10)
         registry.register("model::lr", test_location)
 
         ctx = MergeContext(locations=registry, current_path="model")
-        # Should strip = and find "lr"
-        location = ctx.get_source_location("=lr")
+        # Should strip + and find "lr"
+        location = ctx.get_source_location("+lr")
         assert location == test_location
 
     def test_get_source_location_operator_key_takes_precedence(self):
@@ -166,69 +166,13 @@ class TestValidateDeleteOperator:
             _validate_delete_operator("key", [])
 
 
-class TestValidateOperators:
-    """Test validate_operators function."""
-
-    def test_validate_non_dict_config(self):
-        """Test that non-dict config is handled gracefully."""
-        # Should not raise for non-dict
-        validate_operators("not a dict")  # type: ignore[arg-type]
-        validate_operators(123)  # type: ignore[arg-type]
-        validate_operators(None)  # type: ignore[arg-type]
-
-    def test_validate_remove_operator(self):
-        """Test validation of remove operator."""
-        config = {"~key": None}
-        validate_operators(config)  # Should not raise
-
-    def test_validate_remove_operator_invalid_value(self):
-        """Test validation catches invalid remove operator value."""
-        config = {"~key": "invalid"}
-        with pytest.raises(ConfigMergeError, match="must have null, empty, or list value"):
-            validate_operators(config)
-
-    def test_validate_replace_operator(self):
-        """Test validation of replace operator."""
-        config = {"=key": "value"}
-        validate_operators(config)  # Should not raise
-
-    def test_validate_nested_remove_operator(self):
-        """Test validation of nested remove operator."""
-        config = {"model": {"~lr": None}}
-        validate_operators(config)  # Should not raise
-
-    def test_validate_nested_remove_operator_invalid(self):
-        """Test validation catches invalid nested remove operator."""
-        config = {"model": {"~lr": 123}}
-        with pytest.raises(ConfigMergeError, match="must have null, empty, or list value"):
-            validate_operators(config)
-
-    def test_validate_skips_dict_under_remove(self):
-        """Test that validation catches dict value under remove operator."""
-        # A dict value under a remove operator is invalid
-        # Remove operators must have null, empty, or list values
-        config = {"~key": {"nested": "value"}}
-        with pytest.raises(ConfigMergeError, match="must have null, empty, or list value"):
-            validate_operators(config)
-
-
 class TestApplyOperatorsEdgeCases:
     """Test edge cases in apply_operators function."""
 
-    def test_non_dict_base_returns_override(self):
-        """Test that non-dict base returns deepcopy of override."""
+    def test_non_dict_base_is_empty(self):
+        """A base that is not a dict is replaced by the statements."""
         result = apply_operators("not a dict", {"key": "value"})  # type: ignore[arg-type]
         assert result == {"key": "value"}
-
-    def test_non_dict_override_returns_override(self):
-        """Test that non-dict override returns deepcopy of override."""
-        result = apply_operators({"key": "value"}, "not a dict")  # type: ignore[arg-type]
-        assert result == "not a dict"
-
-    def test_both_non_dict_returns_override(self):
-        """Test that both non-dict returns override."""
-        result = apply_operators("base", "override")  # type: ignore[arg-type]
-        assert result == "override"
 
     def test_non_string_key_copied_directly(self):
         """Test that non-string keys are copied directly."""
@@ -243,7 +187,7 @@ class TestApplyOperatorsEdgeCases:
         ctx = MergeContext(locations=registry)
 
         base = {"model": {"lr": 0.001}}
-        override = {"model": {"dropout": 0.1}}
+        override = {"+model": {"dropout": 0.1}}
 
         result = apply_operators(base, override, context=ctx)
         assert result == {"model": {"lr": 0.001, "dropout": 0.1}}
@@ -283,24 +227,19 @@ class TestApplyOperatorsEdgeCases:
         with pytest.raises(ConfigMergeError, match="Cannot remove non-existent key 'missing_key'"):
             apply_operators(base, override, context=ctx)
 
-    def test_replace_operator_with_none_value(self):
-        """Test replace operator can set value to None."""
-        base = {"key": "value"}
-        override = {"=key": None}
-        result = apply_operators(base, override)
-        assert result == {"key": None}
+    def test_set_to_none(self):
+        """null is a value, not a delete."""
+        assert apply_operators({"key": "value"}, {"key": None}) == {"key": None}
 
-    def test_composition_list_extend_preserves_order(self):
-        """Test that list composition preserves order."""
+    def test_combine_list_appends_in_order(self):
         base = {"items": [1, 2, 3]}
-        override = {"items": [4, 5, 6]}
+        override = {"+items": [4, 5, 6]}
         result = apply_operators(base, override)
         assert result == {"items": [1, 2, 3, 4, 5, 6]}
 
-    def test_composition_dict_merge_deep(self):
-        """Test that dict composition merges deeply."""
+    def test_combine_dict_merges_deep(self):
         base = {"model": {"optimizer": {"lr": 0.001, "momentum": 0.9}}}
-        override = {"model": {"optimizer": {"lr": 0.01}}}
+        override = {"+model": {"optimizer": {"lr": 0.01}}}
         result = apply_operators(base, override)
         assert result == {"model": {"optimizer": {"lr": 0.01, "momentum": 0.9}}}
 
@@ -342,34 +281,104 @@ class TestApplyOperatorsEdgeCases:
 
     def test_multiple_operators_in_one_override(self):
         """Test multiple operators in single override dict."""
-        base = {"a": 1, "b": 2, "c": 3, "d": {"x": 1, "y": 2}}
+        base = {"a": 1, "c": 3, "d": {"x": 1, "y": 2}}
         override = {
-            "a": 10,  # Compose (replace scalar)
-            "=b": 20,  # Explicit replace
+            "a": 10,  # Set
+            "+b": 20,  # Combine onto a missing key sets it
             "~c": None,  # Delete
-            "d": {"x": 10},  # Compose dict (merge)
+            "+d": {"x": 10},  # Combine dicts (merge)
         }
         result = apply_operators(base, override)
         assert result == {"a": 10, "b": 20, "d": {"x": 10, "y": 2}}
 
 
-class TestOperatorsInNewSubtrees:
-    """Operators mean the same thing whether or not the key already exists."""
+class TestSemantics:
+    """`key` sets, `+key` combines, `~key` deletes; `::` paths reach inside."""
 
-    @pytest.mark.parametrize("base", [{}, {"group": 0}, {"group": {"n": 0}}])
-    def test_nested_replace_in_new_or_existing_parent(self, base):
-        assert apply_operators(base, {"group": {"=n": 1}})["group"] == {"n": 1}
+    @pytest.mark.parametrize(
+        "base,statements,expected",
+        [
+            # Set replaces whatever is there
+            ({"a": {"x": 1}}, {"a": {"y": 2}}, {"a": {"y": 2}}),
+            ({"a": [1, 2]}, {"a": [3]}, {"a": [3]}),
+            ({"a": 1}, {"a": {"x": 1}}, {"a": {"x": 1}}),
+            ({"a": {"_target_": "A", "x": 1}}, {"a": {"_target_": "B"}}, {"a": {"_target_": "B"}}),
+            ({"a": {"_target_": "A", "x": 1}}, {"a": "@b"}, {"a": "@b"}),
+            ({"a": {"_target_": "A", "x": 1}}, {"a": None}, {"a": None}),
+            ({}, {"a": 1}, {"a": 1}),
+            # Paths set one value deep inside, creating dicts on the way
+            ({"a": {"x": 1, "y": 2}}, {"a::x": 5}, {"a": {"x": 5, "y": 2}}),
+            ({"a": [{"x": 1}]}, {"a::0::x": 5}, {"a": [{"x": 5}]}),
+            ({}, {"a::b::c": 1}, {"a": {"b": {"c": 1}}}),
+            ({"a": None}, {"a::b": 1}, {"a": {"b": 1}}),
+            ({}, {"a": {"b::c": 1}}, {"a": {"b": {"c": 1}}}),
+            # Combine merges dicts all the way down; lists and scalars inside it are set
+            (
+                {"a": {"b": {"x": 1, "y": 2}, "l": [1]}},
+                {"+a": {"b": {"x": 5}, "l": [2]}},
+                {"a": {"b": {"x": 5, "y": 2}, "l": [2]}},
+            ),
+            ({"a": {"_target_": "A", "x": 1}}, {"+a": {"_target_": "B"}}, {"a": {"_target_": "B", "x": 1}}),
+            ({"a": {"l": [1]}}, {"+a": {"+l": [2]}}, {"a": {"l": [1, 2]}}),
+            ({"a": {"x": 1, "y": 2}}, {"+a": {"~y": None}}, {"a": {"x": 1}}),
+            ({"a": {"b": {"x": 1}}}, {"+a": {"b::y": 2}}, {"a": {"b": {"x": 1, "y": 2}}}),
+            ({"a": {"x": 1}}, {"+a": {"b": {"+l": [1]}}}, {"a": {"x": 1, "b": {"l": [1]}}}),
+            # Combine appends lists
+            ({"a": [1]}, {"+a": [2, 3]}, {"a": [1, 2, 3]}),
+            ({"a": {"l": [1]}}, {"+a::l": [2]}, {"a": {"l": [1, 2]}}),
+            # Combine onto a missing or null key sets it
+            ({}, {"+a": [1]}, {"a": [1]}),
+            ({"a": None}, {"+a": {"x": 1}}, {"a": {"x": 1}}),
+            ({}, {"+a": {"+l": [1]}}, {"a": {"l": [1]}}),
+            # Delete
+            ({"a": 1, "b": 2}, {"~b": None}, {"a": 1}),
+            ({"a": {"x": 1, "y": 2}}, {"~a::x": None}, {"a": {"y": 2}}),
+            ({"a": [1, 2, 3]}, {"~a::1": None}, {"a": [1, 3]}),
+            ({"a": [1, 2, 3]}, {"~a": [0, 2]}, {"a": [2]}),
+        ],
+    )
+    def test_statements(self, base, statements, expected):
+        assert apply_operators(base, statements) == expected
 
-    def test_replace_value_is_normalized(self):
-        assert apply_operators({"group": {"old": 1}}, {"=group": {"=n": 1}}) == {"group": {"n": 1}}
+    @pytest.mark.parametrize(
+        "base,statements,match",
+        [
+            ({"a": 1}, {"+a": 2}, "Cannot combine 'a'"),
+            ({"a": "@b"}, {"+a": {"x": 1}}, "Cannot combine 'a'"),
+            ({"a": "%b"}, {"+a": [1]}, "Cannot combine 'a'"),
+            ({"a": {"x": 1}}, {"+a": [1]}, "it is a mapping, and '\\+' adds a list"),
+            ({"a": [1]}, {"+a": {"x": 1}}, "it is a list"),
+            ({"a": [1]}, {"+a": 2}, "it is a list"),
+            ({"a": {"x": 1}}, {"a": {"+x": 2}}, "'a' is set, so '\\+x' inside it has nothing to combine with"),
+            ({}, {"a": {"~x": None}}, "'a' is set, so '~x' inside it has nothing to delete"),
+            ({}, {"a": [{"+x": 1}]}, "has nothing to combine with"),
+            ({"a": {"_target_": "A", "x": 1}}, {"a": {"x": 2}}, "replaces the component 'A' and drops '_target_'"),
+            ({"m": {"a": {"_target_": "A"}}}, {"m::a": {"x": 2}}, "replaces the component 'A'"),
+            ({}, {"=a": 1}, "the '=' operator was removed"),
+            ({"a": {"x": 1}}, {"+a": {"=x": 1}}, "the '=' operator was removed"),
+            ({}, {"~a": None}, "Cannot delete key 'a'"),
+        ],
+    )
+    def test_errors(self, base, statements, match):
+        with pytest.raises(ConfigMergeError, match=match):
+            apply_operators(base, statements)
 
-    def test_new_list_entries_are_normalized(self):
-        result = apply_operators({"values": [{"kept": 2}]}, {"values": [{"=n": 1}], "fresh": [{"=m": 2}]})
-        assert result == {"values": [{"kept": 2}, {"n": 1}], "fresh": [{"m": 2}]}
+    def test_component_error_suggests_combine(self):
+        with pytest.raises(ConfigMergeError) as error:
+            apply_operators({"trainer": {"_target_": "T", "max_epochs": 1}}, {"trainer": {"max_epochs": 5}})
+        assert "write '+trainer' instead of 'trainer'" in str(error.value)
+        assert "'trainer::max_epochs'" in str(error.value)
 
-    def test_remove_missing_key_in_new_subtree_raises(self):
-        with pytest.raises(ConfigMergeError, match="missing"):
-            apply_operators({}, {"fresh": {"~missing": None}})
+    def test_path_through_a_scalar(self):
+        with pytest.raises(ConfigKeyError, match="'a' is 1, not a mapping"):
+            apply_operators({"a": 1}, {"a::b": 2})
+
+    def test_path_index_out_of_range(self):
+        with pytest.raises(ConfigKeyError, match="not an index of a list of 1"):
+            apply_operators({"a": [1]}, {"a::3": 2})
+
+    def test_statements_apply_in_order(self):
+        assert apply_operators({}, {"a": [1], "+a": [2], "a::0": 0}) == {"a": [0, 2]}
 
 
 class TestApplyOperatorsDeepCopy:
@@ -378,7 +387,7 @@ class TestApplyOperatorsDeepCopy:
     def test_base_not_mutated(self):
         """Test that base dict is not mutated."""
         base = {"model": {"lr": 0.001}}
-        override = {"model": {"dropout": 0.1}}
+        override = {"+model": {"dropout": 0.1}}
         result = apply_operators(base, override)
 
         # Modify result
@@ -402,7 +411,7 @@ class TestApplyOperatorsDeepCopy:
     def test_result_is_independent(self):
         """Test that result is independent of base and override."""
         base = {"items": [1, 2, 3]}
-        override = {"items": [4, 5]}
+        override = {"+items": [4, 5]}
         result = apply_operators(base, override)
 
         # Modify result
@@ -410,5 +419,5 @@ class TestApplyOperatorsDeepCopy:
 
         # Base and override should be unchanged
         assert base["items"] == [1, 2, 3]
-        assert override["items"] == [4, 5]
+        assert override["+items"] == [4, 5]
         assert result["items"] == [1, 2, 3, 4, 5, 6]

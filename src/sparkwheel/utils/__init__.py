@@ -1,4 +1,4 @@
-from .constants import EXPR_KEY, ID_SEP_KEY, RAW_REF_KEY, REMOVE_KEY, REPLACE_KEY, RESOLVED_REF_KEY
+from .constants import COMBINE_KEY, EXPR_KEY, ID_SEP_KEY, RAW_REF_KEY, REMOVE_KEY, RESOLVED_REF_KEY
 from .enums import CompInitMode
 from .misc import ensure_tuple, first, issequenceiterable
 from .module import (
@@ -30,5 +30,5 @@ __all__ = [
     "ID_SEP_KEY",
     "EXPR_KEY",
     "REMOVE_KEY",
-    "REPLACE_KEY",
+    "COMBINE_KEY",
 ]

@@ -32,7 +32,7 @@ Sparkwheel processes raw references (`%`) in two phases to support CLI overrides
 
     **Phase 2: Lazy Processing (during `resolve()`)**
 
-    - **Local raw refs (`%key`)** are expanded after all composition is complete
+    - **Local raw refs (`%key`)** are expanded after all updates are applied
     - **Resolved References (`@`)** are processed on-demand
     - **Expressions (`$`)** are evaluated when needed
     - **Components (`_target_`)** are instantiated only when requested

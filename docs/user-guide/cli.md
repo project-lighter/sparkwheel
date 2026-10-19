@@ -8,12 +8,12 @@ Override configuration values from the command line with automatic file and over
     **Just loop over CLI arguments** - `config.update()` automatically detects whether each string is a file path or an override!
 
     - Strings naming an existing file → Loaded as files (so `runs/lr=0.1/config.yaml` works)
-    - Other strings **with** `=` or starting with `~` → Parsed as overrides (e.g., `key=value`, `=key=value`, `~key`)
+    - Other strings **with** `=` or starting with `~` → Parsed as overrides (e.g., `key=value`, `+key=value`, `~key`)
     - Everything else → Loaded as file paths
     - No manual separation needed!
 
-!!! warning "Replace a list with `=`"
-    `model::channels=[64,128]` on a list that has items is an error, because composing would append to it. Write `=model::channels=[64,128]` to replace the list, or put the items in a YAML file to add them.
+!!! tip "Same statements as YAML"
+    An override is one statement: `key=value` sets, `+key=value` combines, `~key` deletes, exactly like `key:`, `+key:` and `~key` in a file. See [Set, Combine, Delete](operators.md).
 
 ## Quick Start
 
@@ -115,16 +115,18 @@ Override configuration values from the command line with automatic file and over
 
 ## Override Syntax
 
-Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`). Three operators for fine-grained control:
+Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`).
 
-| Operator | Syntax | Behavior | Example |
-|----------|--------|----------|---------|
-| **Compose** (default) | `key=value` | Merges dicts; a list that has items needs `=` | `model::lr=0.001` |
-| **Replace** | `=key=value` | Completely replaces value | `=model={'_target_': 'ResNet'}` |
-| **Delete** | `~key` | Removes key (errors if missing) | `~debug` |
+| Statement | Syntax | Behavior | Example |
+|-----------|--------|----------|---------|
+| **Set** | `key=value` | Replaces the value (a dict, list or scalar) | `model::lr=0.001`, `devices=[0,1]` |
+| **Combine** | `+key=value` | Merges a dict into a dict, appends a list to a list, or adds a new key | `'+trainer={max_epochs: 5}'`, `+callbacks=[ema]` |
+| **Delete** | `~key` | Removes the key (errors if missing) | `~debug`, `~callbacks::0`, `'~callbacks=[0, 2]'` |
 
-!!! warning "Overrides change keys that exist"
-    An override may set any key that already exists, or add one argument (or a special key such as `_disabled_`) directly under a `_target_` component. Anything else is most likely a typo, so it raises an error instead of adding a key that nothing reads:
+Setting a `_target_` component to a dict without `_target_` is an error that suggests `+key` or a `::` path, since it would drop the class: write `model::lr=0.01` or `'+model={lr: 0.01}'`.
+
+!!! warning "`key=value` changes keys that exist"
+    `key=value` may set any key that already exists, add one argument (or a special key such as `_disabled_`) directly under a `_target_` component, or give a dict a `_target_`. Anything else is most likely a typo, so it raises an error instead of adding a key that nothing reads:
 
     ```
     'trainer::max_epoch' does not exist
@@ -132,8 +134,10 @@ Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`). Three ope
     [override → trainer::max_epoch]:
       → trainer::max_epoch=5
 
-      💡 Did you mean 'max_epochs'? To add a new key, put it in a YAML file.
+      💡 Did you mean 'max_epochs'? To add a new key, write '+trainer::max_epoch=5'.
     ```
+
+    `+key=value` may add a key, but the keys above it must exist.
 
 !!! info "Values are YAML"
     Override values are parsed with the same rules as your YAML files:
@@ -145,9 +149,8 @@ Nested keys are separated by `::` (`model::lr=0.001`, not `model.lr`). Three ope
     - `'optimizer={lr: 0.001}'` → `dict` (YAML needs the space after `:`; quote it for your shell)
     - `name=resnet50` → `str`
 
-!!! note "The `=` Dual Purpose"
-    - In `key=value` → Assignment operator (CLI syntax)
-    - In `=key=value` → Replace operator prefix (config operator)
+!!! note "No `=key=value`"
+    Before Sparkwheel 0.1, `=key=value` replaced a value. Setting now always replaces, so write `key=value`; the old form is an error that says so.
 
 !!! tip "Adding Your Own Flags"
     The examples above show minimal integration. You can add your own flags (e.g., `--verbose`, `--device`) alongside the config inputs - Sparkwheel only cares about the arguments you pass to `config.update()`!
@@ -204,6 +207,6 @@ python train.py base.yaml optimizer::lr=0.001 trainer::epochs=100
 ## Next Steps
 
 - **[Configuration Basics](basics.md)** - Loading and accessing configs
-- **[Operators](operators.md)** - Composition, replacement, and deletion
+- **[Set, Combine, Delete](operators.md)** - What `key`, `+key` and `~key` do
 - **[Schema Validation](schema-validation.md)** - Type-safe configs with dataclasses
 - **[API Reference](reference/)** - Full API documentation

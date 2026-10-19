@@ -6,22 +6,24 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 
 ### Breaking changes
 
+- Writing a key sets it: `key: value` in a file, `key=value` on the command line and `{"key": value}` in `update()` replace what `key` held, so a list is no longer extended and a dict no longer merged by default. `+key` combines instead (a dict merges into a dict all the way down, a list is appended), `::` paths set one value deep inside, and `~key` deletes as before. The `=key` operator is removed and raises an error that says what to write. A file, dict or override is a list of statements applied in order; `update(other_config)` sets each top-level key of `other_config`.
+  Migration: `=key:` becomes `key:`. In a file that changes a few keys of a section, write `+section:` or `section::key: value`; to add list items, write `+key: [...]` (`+trainer::callbacks: [...]`).
+- Setting a component (a dict with `_target_`) to a dict without `_target_` raises `ConfigMergeError`: it would drop the class, which is almost always a missing `+`. `+key: {...}` or a path changes some of its keys; a dict with its own `_target_` replaces it.
+  Migration: write `+key:` or `key::arg: value`.
+- `+key` or `~key` inside a set value (`model: {+x: 1}`) raises `ConfigMergeError`: the value replaces everything, so there is nothing to combine with or delete. It was stored as a literal key in 0.0.11.
+  Migration: write `+model: {x: 1}`; to store a key that literally starts with `+` or `~`, use `config.set(...)`.
 - `resolve()` no longer rewrites the config: `get()` and exports after `resolve()` keep `_imports_`, local `%` references and relative `@::` references as written.
   Migration: read expanded values with `config.resolve("key")` instead of `config.get("key")` after resolving.
-- `=key` and `~key` inside a newly added subtree (dict update, override string or YAML file) are applied instead of being stored as literal keys, and `~key` there raises because the key does not exist.
-  Migration: to store a key that literally starts with `=` or `~`, use `config.set(...)`.
 - A YAML file that repeats a key now raises `yaml.YAMLError` naming both lines (before, the last value silently won; `SPARKWHEEL_STRICT_KEYS` never took effect and is gone).
   Migration: delete the duplicate key.
 - Floats written with an exponent and no dot (`1e-3`, `1E5`, `+1e3`) load as floats in YAML files and override values (YAML 1.2), not strings.
   Migration: quote the value (`"1e-3"`) if you need the string.
 - Removed `sparkwheel.utils.check_key_duplicates` and `sparkwheel.utils.CheckKeyDuplicatesYamlLoader` (unused).
   Migration: use `sparkwheel.loader.YamlLoader` to read YAML the way Sparkwheel does.
-- Override strings (`key=value` passed to `update()`) can no longer add keys, so a typo no longer silently adds a key that nothing reads. They may set any existing key, add one argument or special key (`_disabled_`, `_mode_`, ...) directly under a `_target_` component, or add a `_target_` to a plain dict. Anything else raises `ConfigKeyError` with a did-you-mean. Dict updates and YAML files add keys as before.
-  Migration: put new keys in a YAML file (for a command line, an extra YAML file listed on it).
-- An override string that would extend a list that has items (`milestones=[10,20]` on `[30, 60]`) raises `ConfigKeyError` instead of silently giving `[30, 60, 10, 20]`. YAML files and dict updates still extend.
-  Migration: write `=milestones=[10,20]` to replace the list; to add items, put them in a YAML file.
+- An override string `key=value` can no longer add a key, so a typo no longer silently adds a key that nothing reads. It may set any existing key, add one argument or special key (`_disabled_`, `_mode_`, ...) directly under a `_target_` component, or add a `_target_` to a plain dict. Anything else raises `ConfigKeyError` with a did-you-mean. `+key=value` may add keys under keys that exist. Dict updates and YAML files add keys as before.
+  Migration: write `+key=value` to add a key from the command line.
 - Setting a path through a value that is not a mapping (`model::dim::x=1` or `config.set("model::dim::x", 1)` when `dim` is `4`) raises `ConfigKeyError` instead of silently replacing the value with a dict.
-  Migration: set the parent key itself (`=model::dim={x: 1}`).
+  Migration: set the parent key itself (`model::dim={x: 1}`).
 - A schema field typed `int` or `float` rejects `True`/`False`.
   Migration: write a number (`1`), or type the field `bool`.
 - `@validator` methods run even when the config has component keys (`_target_`) or, with `strict=False`, extra fields; an error raised while creating the dataclass for them (e.g. in `__post_init__`) is reported as a `ValidationError` instead of skipping the validators. Nested dataclass fields are passed to `__post_init__` and validators as instances, not dicts.
@@ -41,11 +43,13 @@ All notable changes to Sparkwheel are documented here. Breaking changes come wit
 
 - `Config.check()` finds mistakes without building anything: missing references, `_target_`s that cannot be found or whose module fails to import, `_imports_` that fail, unknown `_mode_`s, arguments the target does not accept (every one of them) or is missing (unless `_mode_: callable`), `%` and relative references that cannot be expanded, and `$` expressions that do not compile. It raises one `ValidationError` listing every problem with its file:line or override. Disabled components are skipped, also when `_disabled_` references a plain value.
 - A wrong argument name raises `'pkg.Model' got an unexpected argument 'learnin_rate'` with a did-you-mean, the accepted arguments, and the line (or override) of that argument; a missing argument is reported the same way. A `TypeError` raised inside the target itself is passed through unchanged. With `_mode_: callable`, argument names are checked when the partial is created instead of when it is called.
+- An override can delete list items or dict children: `'~callbacks=[0, 2]'`, like `~callbacks: [0, 2]` in a file.
 - An override with a dotted key (`model.lr=0.1`) suggests the `::` path (`model::lr`).
 - `Location.override`: the CLI override text (`model::lr=0.1`) that set a value. Errors about a value set by an override show ``[override → model::lr]`` and the override itself instead of a YAML line that is no longer in effect.
 
 ### Fixed
 
+- Errors about list items added by a later file or override point at the line that added them (the indices were off), and a replaced or deleted value no longer keeps the source lines of what it replaced.
 - Errors about a value under a YAML alias or merge key (`<<: *base`) name its line; only the key holding the alias had one.
 - `resolve(..., instantiate=False)` no longer makes a later `resolve()` return `Component` wrappers (and vice versa): each mode has its own cache.
 - A component with a literal `_disabled_: true` no longer builds its arguments, whether it is resolved directly or as part of its parent (e.g. a disabled callback inside `trainer`): its nested components are not built, its expressions are not evaluated and its references need not exist.

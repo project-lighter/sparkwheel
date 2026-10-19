@@ -42,7 +42,7 @@ config.update(config_dict)
 ### Loading Multiple Files
 
 ```python
-# Load and merge multiple config files (method chaining!)
+# Apply multiple config files in order (method chaining!)
 config = Config().update("base.yaml").update("override.yaml")
 ```
 
@@ -365,7 +365,7 @@ database:
 
 ## Configuration Inheritance
 
-Load and merge multiple config files:
+Apply multiple config files in order. Each later file is a list of changes: `key` sets, `+key` merges or appends, `~key` deletes:
 
 ```python
 from sparkwheel import Config
@@ -388,7 +388,7 @@ for arg in ["model::lr=0.001"]:  # e.g. sys.argv[1:]
 resolved = config.resolve()
 ```
 
-See [Composition & Operators](operators.md) for details on composition-by-default, replace (`=`), and delete (`~`) operators.
+See [Set, Combine, Delete](operators.md) for details on setting, combining (`+`), and deleting (`~`).
 
 ## Special Keys
 

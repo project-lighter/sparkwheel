@@ -11,7 +11,7 @@ from yaml.constructor import ConstructorError  # type: ignore[import-untyped]
 from .locations import LocationRegistry
 from .path_utils import is_yaml_file
 from .utils import PathLike
-from .utils.constants import ID_SEP_KEY
+from .utils.constants import COMBINE_KEY, ID_SEP_KEY
 from .utils.exceptions import Location
 
 __all__ = ["Loader", "YamlLoader"]
@@ -70,7 +70,7 @@ class MetadataTrackingYamlLoader(YamlLoader):
                 first_marks[key] = key_node.start_mark
 
             # Push key onto path stack before constructing value
-            self.id_path_stack.append(str(key))
+            self.id_path_stack.append(str(key).removeprefix(COMBINE_KEY))  # `+key` is stored as `key`
 
             # Register source location for this specific key
             # This allows us to track where each key was defined

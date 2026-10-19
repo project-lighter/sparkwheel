@@ -55,6 +55,27 @@ class LocationRegistry:
         """
         self._locations.update(other._locations)
 
+    def pop(self, id_path: str) -> Location | None:
+        """Remove and return the location of ``id_path`` alone (not of the keys under it)."""
+        return self._locations.pop(id_path, None)
+
+    def remove_tree(self, id_path: str) -> None:
+        """Remove the locations of ``id_path`` and every key under it."""
+        prefix = f"{id_path}::"
+        for key in [k for k in self._locations if k == id_path or k.startswith(prefix)]:
+            del self._locations[key]
+
+    def shift(self, id_path: str, offset: int) -> None:
+        """Move the locations of the items of the list ``id_path`` by ``offset`` (for items appended to it)."""
+        prefix = f"{id_path}::"
+        moved = {}
+        for key in [k for k in self._locations if k.startswith(prefix)]:
+            index, _, rest = key[len(prefix) :].partition("::")
+            if index.isdigit():
+                new_key = f"{prefix}{int(index) + offset}" + (f"::{rest}" if rest else "")
+                moved[new_key] = self._locations.pop(key)
+        self._locations.update(moved)
+
     def copy(self) -> "LocationRegistry":
         """Create a copy of this registry.
 

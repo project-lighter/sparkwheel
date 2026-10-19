@@ -31,20 +31,24 @@ A one-page cheat sheet for Sparkwheel syntax and features.
 
 === "Operators"
 
-    Files and dicts merge by default; `=` replaces and `~` deletes.
+    Keys set, `+` combines, `~` deletes. A `::` path sets one value deep inside.
 
     ```yaml title="base.yaml"
     debug: true
     layers: [64, 128, 256, 512]
     model: {size: 256, dropout: 0.1}
+    optimizer: {lr: 0.1, momentum: 0.9}
     scheduler: {name: cosine, warmup: 5}
+    callbacks: [checkpoint]
     ```
 
     ```yaml title="experiment.yaml"
-    model: {size: 512}          # merge (default) → {size: 512, dropout: 0.1}
-    =scheduler: {name: step}    # replace → {name: step}
-    ~debug: null                # delete the key
-    ~layers: [1, 3]             # delete list items 1 and 3 → [64, 256]
+    scheduler: {name: step}        # set → {name: step}
+    model::size: 512               # set one value → {size: 512, dropout: 0.1}
+    +optimizer: {lr: 0.01}         # merge → {lr: 0.01, momentum: 0.9}
+    +callbacks: [early_stopping]   # append → [checkpoint, early_stopping]
+    ~debug: null                   # delete the key
+    ~layers: [1, 3]                # delete list items 1 and 3 → [64, 256]
     ```
 
 === "Instantiation"
@@ -118,9 +122,9 @@ optimizer:
   lr: 0.001
 ```
 
-### Config Composition
+### Layering Files
 
-Later files merge into earlier ones (`python train.py base.yaml override.yaml replace.yaml`):
+Each later file changes the ones before it (`python train.py base.yaml override.yaml replace.yaml`):
 
 ```yaml title="base.yaml"
 model:
@@ -129,12 +133,12 @@ model:
 ```
 
 ```yaml title="override.yaml"
-model:  # merged → {hidden_size: 1024, dropout: 0.1}
++model:  # merged → {hidden_size: 1024, dropout: 0.1}
   hidden_size: 1024
 ```
 
 ```yaml title="replace.yaml"
-=model:  # replaced → {hidden_size: 256}
+model:  # set → {hidden_size: 256}
   hidden_size: 256
 ```
 
@@ -151,8 +155,8 @@ model:
   channels: [16, 32]
 ```
 
-!!! warning "Replace a list with `=`"
-    `model::channels=[64,128]` is an error on a list that has items. Write `=model::channels=[64,128]` to replace it.
+!!! tip "Add with `+`"
+    `key=value` sets a key that exists, so a typo is an error. `+key=value` merges into a dict, appends to a list, or adds a new key.
 
 === "Set values"
 
@@ -171,17 +175,20 @@ model:
 === "Lists"
 
     ```bash
-    python train.py config.yaml =model::channels=[64,128]  # → [64, 128]
+    python train.py config.yaml model::channels=[64,128]  # → [64, 128]
+    python train.py config.yaml +model::channels=[64]  # → [16, 32, 64]
     ```
 
-=== "Replace and delete"
+=== "Set, merge, add, delete"
 
     ```bash
-    python train.py config.yaml '=model={hidden_size: 1024}'  # → {hidden_size: 1024}
+    python train.py config.yaml 'model={hidden_size: 1024}'  # → {hidden_size: 1024}
+    python train.py config.yaml '+model={dropout: 0.2}'  # → {hidden_size: 512, dropout: 0.2, channels: [16, 32]}
+    python train.py config.yaml +seed=42  # → 42
     python train.py config.yaml '~model::dropout'
     ```
 
-Overrides change keys that exist, or add an argument to a `_target_` component. Anything else is most likely a typo and raises an error with a did-you-mean; put new keys in a YAML file. Values follow YAML rules (`8` is an int, `[1,2]` a list, `{a: 1}` a dict — note the space after `:`); quote overrides that contain spaces or `$`, `@`, `~` for your shell.
+`key=value` changes a key that exists, or adds an argument to a `_target_` component. Anything else is most likely a typo and raises an error with a did-you-mean; write `+key=value` to add a new key. Values follow YAML rules (`8` is an int, `[1,2]` a list, `{a: 1}` a dict — note the space after `:`); quote overrides that contain spaces or `$`, `@`, `~` for your shell.
 
 ## Schema Validation
 
@@ -230,14 +237,14 @@ d: "$@c * 2"         # resolved last → 40
 !!! success "Do This"
     - ✅ Use `@` references for DRY config
     - ✅ Enable schema validation for type safety
-    - ✅ Leverage composition-by-default (no operators needed)
+    - ✅ Change part of a section with a `::` path or `+key`
     - ✅ Use expressions for computed values
     - ✅ Keep configs simple and readable
 
 !!! warning "Avoid This"
     - ❌ Don't create circular references
     - ❌ Don't overuse expressions (hurts readability)
-    - ❌ Don't use operators when default composition works
+    - ❌ Don't repeat a whole section to change one value
     - ❌ Don't put complex logic in configs
 
 ## Common Gotchas
@@ -248,10 +255,11 @@ d: "$@c * 2"         # resolved last → 40
 | **Circular reference** | `a: "@b"`, `b: "@a"` | Restructure to break cycle |
 | **Type mismatch** | Schema expects `int`, got `str` | Fix the value's type (quote it for `str`, leave quotes off for numbers) |
 | **Expression error** | Invalid Python after `$` | Check syntax and references |
-| **Unexpected merge** | Dict merged when you wanted replace | Use `=key` to replace |
-| **List grew** | A YAML file's `layers: [1, 2]` extended the list | Use `=layers: [1, 2]` to replace |
-| **Override is a list** | `layers=[1,2]` on a list that has items | Use `=layers=[1,2]` to replace |
-| **Key does not exist** | An override names a missing key | Fix the typo (or use `::`, not `.`); put new keys in a YAML file |
+| **Section lost its keys** | A later file's `model: {lr: 0.01}` set the whole `model` | Write `model::lr: 0.01` or `+model: {lr: 0.01}` |
+| **Component replaced** | `trainer: {max_epochs: 5}` on a `_target_` component | Write `+trainer` or `trainer::max_epochs` |
+| **List not appended** | `+trainer: {callbacks: [x]}` set `callbacks` | Write `+trainer::callbacks: [x]` |
+| **Key does not exist** | An override names a missing key | Fix the typo (or use `::`, not `.`); write `+key=value` to add a key |
+| **`=` operator removed** | `=key` from Sparkwheel < 0.1 | Write `key`: setting replaces |
 
 ## File Organization
 
@@ -298,6 +306,6 @@ project/
 - **[Configuration Basics](basics.md)** - Learn config fundamentals
 - **[References](references.md)** - Deep dive into `@` and `%`
 - **[Expressions](expressions.md)** - Master `$` expressions
-- **[Operators](operators.md)** - Composition with `=` and `~`
+- **[Set, Combine, Delete](operators.md)** - `key`, `+key` and `~key`
 - **[Schema Validation](schema-validation.md)** - Type-safe configs
 - **[Troubleshooting](troubleshooting.md)** - Common errors and their fixes

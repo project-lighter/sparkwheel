@@ -145,13 +145,13 @@ buggy_component:
   param: value
 ```
 
-## Composition & Operators
+## Set, Combine, Delete
 
-Sparkwheel uses **composition-by-default**: configs naturally merge (dicts) or extend (lists). Use operators for explicit control:
+Each file or dict you apply is a list of statements: `key` sets, `+key` combines, `~key` deletes.
 
-### Default Behavior: Composition
+### Set and Combine
 
-By default, configs compose naturally - no operators needed:
+A key sets its whole value; `+key` merges a dict into it (and appends a list to a list):
 
 ```yaml
 # base.yaml
@@ -163,7 +163,7 @@ model:
 
 ```yaml
 # override.yaml
-model:  # Merges by default!
++model:  # Merge into model
   hidden_size: 1024  # Update this
   # activation and dropout are preserved!
 ```
@@ -178,22 +178,20 @@ config.update("override.yaml")
 # Result:
 # model:
 #   hidden_size: 1024  (updated)
-#   activation: "relu"  (preserved - composition!)
-#   dropout: 0.1        (preserved - composition!)
+#   activation: "relu"  (preserved)
+#   dropout: 0.1        (preserved)
 ```
 
-### Replace Operator (`=`)
-
-Use `=key` when you need to completely replace instead of merge:
+Without the `+`, `model:` sets the whole dict, and `model::hidden_size: 1024` sets just one value:
 
 ```yaml
 # override.yaml
-=model:  # Replace entire model dict
+model:  # Set model
   hidden_size: 1024
   # activation and dropout are GONE!
 ```
 
-See [Composition & Operators](operators.md) for full details on composition-by-default and the `=` operator.
+See [Set, Combine, Delete](operators.md) for every rule, including what happens to `_target_` components.
 
 ### Delete Directive (`~`)
 
@@ -235,8 +233,8 @@ config.set("model::hidden_size", 1024)
 # Use operators
 config.update(
     {
-        "optimizer": {"lr": 0.01},  # Compose (merge by default)
-        "=database": {"host": "prod.db"},  # Replace
+        "+optimizer": {"lr": 0.01},  # Merge into optimizer
+        "database": {"host": "prod.db"},  # Set (replace)
         "~training::old_param": None,  # Delete
     }
 )
@@ -312,6 +310,8 @@ save_path: "$Path('/data/models')"
 ```
 
 The `_imports_` key won't appear in your resolved config. `config.get()` still shows it, so a saved config can be loaded and run again.
+
+`_imports_` is a key like any other: a later file's `_imports_:` replaces the earlier one's. Write `+_imports_:` to add to it.
 
 ### Method 2: `imports` Parameter in Python
 

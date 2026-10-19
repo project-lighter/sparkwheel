@@ -614,30 +614,39 @@ class TestOverrideProvenance:
         assert f"[{path}:3 → model::_target_]" in str(excinfo.value)
 
     def test_new_subtree_from_override(self, tmp_path):
-        config = self._config(tmp_path).update("=model={_target_: overridemod.Model, learning_rate: '@nope'}")
+        config = self._config(tmp_path).update("model={_target_: overridemod.Model, learning_rate: '@nope'}")
         with pytest.raises(ConfigKeyError) as excinfo:
             config.resolve("model")
-        assert "→ =model={_target_: overridemod.Model, learning_rate: '@nope'}" in str(excinfo.value)
-        assert config.locations.get("model::learning_rate").override.startswith("=model=")
+        assert "→ model={_target_: overridemod.Model, learning_rate: '@nope'}" in str(excinfo.value)
+        assert config.locations.get("model::learning_rate").override.startswith("model=")
+        assert config.locations.get("model::dim") is None  # the file's `dim` was replaced
 
     def test_merging_override_keeps_file_locations_of_untouched_keys(self, tmp_path):
-        config = self._config(tmp_path).update("model={dim: 8}")
+        config = self._config(tmp_path).update("+model={dim: 8}")
         assert config.locations.get("model").override == ""
         assert config.locations.get("model::learning_rate").line == 3
-        assert config.locations.get("model::dim").override == "model={dim: 8}"
+        assert config.locations.get("model::dim").override == "+model={dim: 8}"
 
-    def test_list_extension_registers_only_new_items(self):
-        config = Config().update({"xs": [], "n": None}).update("xs=[3]").update("n=[1]")
-        assert config.get("xs") == [3] and config.get("n") == [1]
+    def test_appended_items_point_at_the_override(self, tmp_path):
+        path = tmp_path / "base.yaml"
+        path.write_text("xs:\n  - {a: 1}\n  - {a: 2}\n")
+        config = Config().update(str(path)).update("+xs=[{a: 3}]")
+        assert config.get("xs::2") == {"a": 3}
+        assert config.locations.get("xs::1::a").line == 3
+        assert config.locations.get("xs::2::a").override == "+xs=[{a: 3}]"
+
+    def test_appended_items_point_at_the_file(self, tmp_path):
+        (tmp_path / "base.yaml").write_text("xs:\n  - {a: 0}\n")
+        (tmp_path / "more.yaml").write_text("# more\n+xs:\n  - {a: 1}\n")
+        config = Config().update(str(tmp_path / "base.yaml")).update(str(tmp_path / "more.yaml"))
+        assert config.locations.get("xs::0::a").filepath.endswith("base.yaml")
+        assert config.locations.get("xs::1::a").filepath.endswith("more.yaml")
+        assert config.locations.get("xs::1::a").line == 3
+
+    def test_a_set_list_replaces_the_list(self):
+        config = Config().update({"xs": [1, 2], "m": {"xs": [1]}}).update("xs=[3]").update("m={xs: [4]}")
+        assert config.get("xs") == [3] and config.get("m::xs") == [4]
         assert config.locations.get("xs::0").override == "xs=[3]"
-
-    @pytest.mark.parametrize(("override", "replace"), [("xs=[3]", "'=xs=[3]'"), ("m={xs: [3, 'a']}", "'=m::xs=[3,\"a\"]'")])
-    def test_an_override_does_not_extend_a_list(self, override, replace):
-        config = Config().update({"xs": [1, 2], "m": {"xs": [1]}})
-        with pytest.raises(ConfigKeyError, match="is a list") as error:
-            config.update(override)
-        assert replace in str(error.value) and "YAML file" in str(error.value)
-        assert config.get("xs") == [1, 2] and config.get("m::xs") == [1]
 
     def test_location_str(self):
         from sparkwheel import Location

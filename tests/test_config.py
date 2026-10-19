@@ -680,32 +680,28 @@ class TestResolveIsSideEffectFree:
         assert reloaded.resolve("e") == config.resolve("e")
 
 
-class TestOperatorsInNewSubtrees:
-    """=/~ inside a newly added subtree are applied, never stored as literal keys."""
+class TestOperatorsInsideSetValues:
+    """A set value replaces everything, so `+`/`~` inside it is a mistake, never a literal key."""
 
-    @pytest.mark.parametrize(
-        "source",
-        [
-            {"group": {"=n": 1}},
-            {"=group": {"=n": 1}},
-            {"group": {"=n": 1}, "items::kept": 2},
-            {"=group": {"=n": 1}, "items::kept": 2},
-            {"group::sub": {"=n": 1}},
-        ],
-    )
+    @pytest.mark.parametrize("source", [{"group": {"+n": 1}}, {"group::sub": {"+n": [1]}}, {"+group": {"x": {"+n": 1}}}])
     def test_dict_updates(self, source):
-        config = Config().update({"items": {"kept": 1}}).update(source)
-        group = config.get("group")
-        assert group in ({"n": 1}, {"sub": {"n": 1}})
-        assert "=n" not in str(config.get())
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        with pytest.raises(ConfigMergeError, match="has nothing to combine with"):
+            Config().update({"items": {"kept": 1}, "group": {"x": 1}}).update(source)
 
     def test_override_string(self):
-        config = Config().update({"a": 1, "b": None}).update("b={=y: 2, z: {=w: 3}}")
-        assert config.get("b") == {"y": 2, "z": {"w": 3}}
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        with pytest.raises(ConfigMergeError, match="'b' is set"):
+            Config().update({"a": 1, "b": None}).update("b={+y: 2}")
 
     def test_yaml_file(self, tmp_path):
-        (tmp_path / "c.yaml").write_text("a: 1\nb:\n  =y: 2\n")
-        assert Config().update(str(tmp_path / "c.yaml")).get("b") == {"y": 2}
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        (tmp_path / "c.yaml").write_text("a: 1\nb:\n  ~y: null\n")
+        with pytest.raises(ConfigMergeError, match="'b' is set, so '~y' inside it has nothing to delete"):
+            Config().update(str(tmp_path / "c.yaml"))
 
     def test_missing_removal_in_new_subtree_raises(self):
         from sparkwheel.utils.exceptions import ConfigMergeError
@@ -715,8 +711,8 @@ class TestOperatorsInNewSubtrees:
 
     def test_set_remains_exact_assignment(self):
         config = Config()
-        config.set("payload", {"=literal": 1})
-        assert config.get("payload") == {"=literal": 1}
+        config.set("payload", {"+literal": 1})
+        assert config.get("payload") == {"+literal": 1}
 
 
 class TestConfigFileOperations:
@@ -739,12 +735,12 @@ class TestConfigFileOperations:
         assert parser["num"] == 42
 
     def test_load_from_multiple_files(self, tmp_path):
-        """Test loading from multiple YAML files with merging (composition-by-default)."""
+        """Test loading from multiple YAML files, the second combining into the first."""
         base_file = tmp_path / "base.yaml"
         base_file.write_text("a: 1\nb:\n  x: 1\n  y: 2")
 
         override_file = tmp_path / "override.yaml"
-        override_file.write_text("b:\n  z: 3")  # Merges by default now!
+        override_file.write_text("+b:\n  z: 3")
 
         # Chain multiple update() calls
         parser = Config().update(str(base_file)).update(str(override_file))
@@ -826,22 +822,18 @@ class TestConfigFileOperations:
 
 
 class TestConfigMerging:
-    """Test merging configurations with composition-by-default and =/~ operators."""
+    """Test changing configurations: `key` sets, `+key` combines, `~key` deletes."""
 
-    def test_basic_merge_default(self):
-        """Test default composition (merge) behavior."""
+    def test_combine_merges(self):
+        base = {"a": 1, "b": {"x": 1, "y": 2}}
+        override = {"+b": {"z": 3}}
+        result = apply_operators(base, override)
+        assert result == {"a": 1, "b": {"x": 1, "y": 2, "z": 3}}
+
+    def test_set_replaces(self):
         base = {"a": 1, "b": {"x": 1, "y": 2}}
         override = {"b": {"z": 3}}
         result = apply_operators(base, override)
-        # NEW: Default is merge, not replace!
-        assert result == {"a": 1, "b": {"x": 1, "y": 2, "z": 3}}
-
-    def test_replace_operator(self):
-        """Test = replace operator."""
-        base = {"a": 1, "b": {"x": 1, "y": 2}}
-        override = {"=b": {"z": 3}}
-        result = apply_operators(base, override)
-        # = operator replaces entirely
         assert result == {"a": 1, "b": {"z": 3}}
 
     def test_delete_directive(self):
@@ -851,11 +843,10 @@ class TestConfigMerging:
         result = apply_operators(base, override)
         assert result == {"a": 1, "c": 3}
 
-    def test_nested_merge_default(self):
-        """Test nested merge with composition-by-default."""
+    def test_nested_combine(self):
+        """`+` merges all the way down, and `~` inside it deletes."""
         base = {"model": {"lr": 0.001, "hidden_size": 512, "optimizer": {"type": "adam", "nested": {"a": 1}}}}
-        # NEW: No operators needed for merge!
-        override = {"model": {"dropout": 0.1, "optimizer": {"nested": {"b": 2}, "~type": None}}}
+        override = {"+model": {"dropout": 0.1, "optimizer": {"nested": {"b": 2}, "~type": None}}}
         result = apply_operators(base, override)
 
         assert result["model"]["lr"] == 0.001  # Preserved
@@ -864,18 +855,17 @@ class TestConfigMerging:
         assert result["model"]["optimizer"]["nested"] == {"a": 1, "b": 2}  # Merged
         assert "type" not in result["model"]["optimizer"]  # Deleted
 
-    def test_explicit_replace_operator(self):
-        """Test that = operator explicitly replaces sections."""
-        base = {"training": {"epochs": 50, "batch_size": 16, "lr": 0.001}}
-        override = {"=training": {"epochs": 100}}
-        result = apply_operators(base, override)
-        # With = operator, replaces entirely
-        assert result == {"training": {"epochs": 100}}
+    def test_removed_replace_operator(self):
+        """`=key` was the replace operator before 0.1; it is an error, not a literal key."""
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        with pytest.raises(ConfigMergeError, match="write 'training' instead"):
+            apply_operators({"training": {"epochs": 50}}, {"=training": {"epochs": 100}})
 
     def test_merge_dict(self):
-        """Test merging a dict (merges by default)."""
+        """Test combining a dict."""
         parser = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
-        parser.update({"b": {"z": 3}})
+        parser.update({"+b": {"z": 3}})
 
         assert parser["a"] == 1
         assert parser["b"]["x"] == 1  # Preserved
@@ -887,36 +877,21 @@ class TestConfigMerging:
         parser = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
 
         override_file = tmp_path / "override.yaml"
-        override_file.write_text("b:\n  z: 3")  # Merges by default!
+        override_file.write_text("+b:\n  z: 3")
 
         parser.update(str(override_file))
         assert parser["b"]["x"] == 1
         assert parser["b"]["y"] == 2
         assert parser["b"]["z"] == 3
 
-    def test_merge_config_instance(self):
-        """Test merging another Config instance (merges by default now!)."""
+    def test_update_from_config_instance_sets_each_key(self):
+        """Each top-level key of another Config is set, like the keys of a dict."""
         config1 = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
         config2 = Config().update({"b": {"z": 3}, "c": 4})
 
         config1.update(config2)
 
         assert config1["a"] == 1
-        # NEW: b is merged by default!
-        assert config1["b"]["x"] == 1  # Preserved
-        assert config1["b"]["y"] == 2  # Preserved
-        assert config1["b"]["z"] == 3  # Added
-        assert config1["c"] == 4
-
-    def test_merge_config_instance_with_replace(self):
-        """Test merging Config instance with = replace operator."""
-        config1 = Config().update({"a": 1, "b": {"x": 1, "y": 2}})
-
-        # Apply replace operator at merge time, not creation time
-        config1.update({"=b": {"z": 3}, "c": 4})
-
-        assert config1["a"] == 1
-        # = operator replaces b entirely
         assert config1["b"] == {"z": 3}
         assert config1["c"] == 4
 
@@ -1012,10 +987,10 @@ class TestConfigMerging:
         parser = Config().update({"a": 1, "b": {"x": 1, "y": 2}, "c": 3, "d": {"old": "value"}})
         parser.update(
             {
-                "a": 10,  # Replace scalar
-                "b": {"z": 3},  # Merge dict (default!)
+                "a": 10,  # Set a scalar
+                "+b": {"z": 3},  # Combine a dict
                 "~c": None,  # Delete
-                "=d": {"new": 4},  # Replace dict explicitly
+                "d": {"new": 4},  # Set a dict
             }
         )
         assert parser["a"] == 10
@@ -1073,7 +1048,7 @@ class TestConfigMerging:
     def test_merge_into_empty_dict(self):
         """Test that merging into an empty dict works."""
         base = {"model": {}}
-        override = {"model": {"hidden_size": 512}}
+        override = {"+model": {"hidden_size": 512}}
         result = apply_operators(base, override)
 
         assert result == {"model": {"hidden_size": 512}}
@@ -1227,62 +1202,32 @@ class TestConfigMerging:
         # This demonstrates that separate batch operations evaluate indices
         # against the current state, not the original state
 
-    def test_merge_lists_extends(self):
-        """Test that lists extend by default (composition)."""
-        base = {"plugins": ["logger", "metrics"]}
-        override = {"plugins": ["cache", "auth"]}
-        result = apply_operators(base, override)
+    def test_set_list_replaces(self):
+        result = apply_operators({"plugins": ["logger", "metrics"]}, {"plugins": ["cache"]})
+        assert result == {"plugins": ["cache"]}
 
-        # NEW: Lists extend by default!
+    def test_combine_lists_appends(self):
+        result = apply_operators({"plugins": ["logger", "metrics"]}, {"+plugins": ["cache", "auth"]})
         assert result == {"plugins": ["logger", "metrics", "cache", "auth"]}
 
-    def test_merge_lists_keeps_duplicates(self):
-        """Test that list extension keeps duplicates."""
-        base = {"items": ["a", "b", "c"]}
-        override = {"items": ["b", "d"]}
-        result = apply_operators(base, override)
-
+    def test_combine_lists_keeps_duplicates(self):
+        result = apply_operators({"items": ["a", "b", "c"]}, {"+items": ["b", "d"]})
         assert result == {"items": ["a", "b", "c", "b", "d"]}
 
-    def test_merge_lists_with_nested_dicts(self):
-        """Test that list extension with dicts just appends."""
+    def test_combine_lists_with_nested_dicts_appends(self):
         base = {"items": [{"id": 1, "name": "foo"}]}
-        override = {"items": [{"id": 2, "name": "bar"}]}
-        result = apply_operators(base, override)
-
+        result = apply_operators(base, {"+items": [{"id": 2, "name": "bar"}]})
         assert result == {"items": [{"id": 1, "name": "foo"}, {"id": 2, "name": "bar"}]}
 
-    def test_replace_list_with_equals(self):
-        """Test that =key replaces list entirely."""
-        base = {"items": ["a", "b", "c"]}
-        override = {"=items": ["x", "y"]}
-        result = apply_operators(base, override)
-
-        assert result == {"items": ["x", "y"]}
-
-    def test_merge_lists_of_lists(self):
-        """Test that list extension works with nested lists."""
-        base = {"matrix": [[1, 2], [3, 4]]}
-        override = {"matrix": [[5, 6]]}
-        result = apply_operators(base, override)
-
+    def test_combine_lists_of_lists(self):
+        result = apply_operators({"matrix": [[1, 2], [3, 4]]}, {"+matrix": [[5, 6]]})
         assert result == {"matrix": [[1, 2], [3, 4], [5, 6]]}
 
-    def test_merge_empty_list(self):
-        """Test that merging into an empty list works."""
-        base = {"items": []}
-        override = {"items": ["a", "b"]}
-        result = apply_operators(base, override)
+    def test_combine_into_empty_list(self):
+        assert apply_operators({"items": []}, {"+items": ["a", "b"]}) == {"items": ["a", "b"]}
 
-        assert result == {"items": ["a", "b"]}
-
-    def test_merge_with_empty_list(self):
-        """Test that extending with empty list works."""
-        base = {"items": ["a", "b"]}
-        override = {"items": []}
-        result = apply_operators(base, override)
-
-        assert result == {"items": ["a", "b"]}
+    def test_combine_with_empty_list(self):
+        assert apply_operators({"items": ["a", "b"]}, {"+items": []}) == {"items": ["a", "b"]}
 
     def test_delete_nonexistent_top_level_key_shows_available_keys(self):
         """Test that deleting a nonexistent top-level key shows available top-level keys in error."""
@@ -1328,7 +1273,7 @@ class TestConfigMerging:
 
         # Should fail because 'trainer' doesn't exist
         error_msg = str(exc_info.value)
-        assert "Cannot remove non-existent key 'epochs' from 'trainer'" in error_msg
+        assert "Cannot delete key 'trainer'" in error_msg and "'model'" in error_msg
 
 
 class TestConfigAdvanced:
@@ -1419,44 +1364,6 @@ class TestConfigEdgeCases:
         # Non-string keys are converted to strings during update
         assert 123 in parser._data or "123" in parser._data
 
-    def test_compose_operator_path_based_both_dicts(self):
-        """Test composition in path-based update when both values are dicts."""
-        parser = Config({"value": {"old": "data"}})
-        # Use _apply_path_updates directly - merges by default!
-        parser._apply_path_updates({"value": {"new": "dict"}})
-        # Should merge the dicts
-        assert parser["value"]["old"] == "data"
-        assert parser["value"]["new"] == "dict"
-
-    def test_compose_operator_path_based_both_lists(self):
-        """Test composition in path-based update when both values are lists."""
-        parser = Config({"items": ["a", "b"]})
-        # Use _apply_path_updates directly - extends by default!
-        parser._apply_path_updates({"items": ["c", "d"]})
-        # Should extend the lists
-        assert parser["items"] == ["a", "b", "c", "d"]
-
-    def test_replace_operator_path_based(self):
-        """Test = replace operator in path-based update."""
-        parser = Config({"value": {"old": "data"}})
-        # Use _apply_path_updates directly with = operator
-        parser._apply_path_updates({"=value": {"new": "dict"}})
-        # Should replace
-        assert parser["value"] == {"new": "dict"}
-
-    def test_delete_nested_key_parent_not_dict(self):
-        """Test delete with nested key when parent is not a dict."""
-        parser = Config({"parent": "not a dict"})
-        # Attempting to delete nested key when parent is not dict
-        # Should not raise error, just no-op
-        parser._delete_nested_key("parent::child")
-
-    def test_delete_top_level_key_non_dict_root(self):
-        """Test delete when root is not a dict."""
-        parser = Config("not a dict")
-        # Should not raise error
-        parser._delete_nested_key("key")
-
     def test_resolve_with_item_default(self):
         """Test resolve with Item instance as default."""
         from sparkwheel import Item
@@ -1490,13 +1397,14 @@ class TestConfigUpdateAutoDetection:
 
         assert config["model"]["lr"] == 0.001
 
-    def test_update_auto_detect_replace_operator(self):
-        """Test auto-detection of =key=value (replace operator)."""
+    def test_update_auto_detect_set_and_combine(self):
+        """`key=value` replaces the value, `+key=value` combines with it."""
         config = Config().update({"model": {"lr": 0.01, "hidden_size": 256}})
-        config.update("=model={'_target_': 'ResNet'}")
-
+        config.update("model={'_target_': 'ResNet'}")
         assert config["model"] == {"_target_": "ResNet"}
-        assert "hidden_size" not in config["model"]
+
+        config.update("+model={depth: 50}")
+        assert config["model"] == {"_target_": "ResNet", "depth": 50}
 
     def test_update_auto_detect_delete_operator(self):
         """Test auto-detection of ~key (delete operator)."""
@@ -1533,7 +1441,7 @@ class TestConfigUpdateAutoDetection:
         cli_args = [
             "model::lr=0.001",
             "optimizer::type=adam",
-            "=scheduler={'_target_': 'CosineScheduler'}",
+            "scheduler={'_target_': 'CosineScheduler'}",
             "~debug",
         ]
 
@@ -1549,7 +1457,7 @@ class TestConfigUpdateAutoDetection:
 
 
 class TestOverrideKeys:
-    """Override strings can set existing keys and add arguments to components, nothing else."""
+    """`key=value` sets existing keys (and adds arguments to components); `+key=value` may add keys."""
 
     @staticmethod
     def _config():
@@ -1566,7 +1474,12 @@ class TestOverrideKeys:
         [
             ("lr=0.2", "lr", 0.2),
             ("model::dim=8", "model::dim", 8),
-            ("=model::opts={b: 2}", "model::opts", {"b": 2}),
+            ("model::opts={b: 2}", "model::opts", {"b": 2}),
+            ("+model::opts={b: 2}", "model::opts", {"a": 1, "b": 2}),
+            ("+model::layers=[3]", "model::layers", [1, 2, 3]),
+            ("model::layers=[3]", "model::layers", [3]),
+            ("+lrr=0.2", "lrr", 0.2),
+            ("+trainer::callbacks=[1]", "trainer::callbacks", [1]),
             ("model::layers::1=5", "model::layers::1", 5),
             ("model::new_arg=1", "model::new_arg", 1),
             ("model::_disabled_=true", "model::_disabled_", True),
@@ -1583,7 +1496,6 @@ class TestOverrideKeys:
             ("modle::dim=8", "modle", "model"),
             ("trainer::max_epoch=5", "trainer::max_epoch", "max_epochs"),
             ("model::opts::b=2", "model::opts::b", None),
-            ("=trainer::max_epoch=5", "trainer::max_epoch", "max_epochs"),
             ("model::layers::5=1", "model::layers::5", None),
             ("trainer::_disabled_=true", "trainer::_disabled_", None),  # does nothing without a _target_
         ],
@@ -1598,10 +1510,19 @@ class TestOverrideKeys:
         msg = str(excinfo.value)
         assert f"'{missing}' does not exist" in msg
         assert f"→ {override}" in msg
-        assert "To add a new key, put it in a YAML file." in msg
+        if missing == override.split("=")[0]:
+            assert f"To add a new key, write '+{override}'." in msg
+        else:
+            assert f"'{missing}' must exist before keys can be added under it." in msg
         if did_you_mean:
             assert f"Did you mean '{did_you_mean}'?" in msg
         assert config.get() == before
+
+    def test_combine_needs_the_parent(self):
+        from sparkwheel.utils.exceptions import ConfigKeyError
+
+        with pytest.raises(ConfigKeyError, match="'modle' does not exist"):
+            self._config().update("+modle::x=1")
 
     def test_dotted_key_suggests_double_colon(self):
         from sparkwheel.utils.exceptions import ConfigKeyError
@@ -1686,6 +1607,15 @@ class TestParseOverrides:
         result = parse_overrides(["a=1e-3", "b=1E5", "c=-2.5e-4", "d=+1e3", "e=[1e-3]", "f='1e-3'"])
         assert result == {"a": 1e-3, "b": 1e5, "c": -2.5e-4, "d": 1e3, "e": [1e-3], "f": "1e-3"}
 
+    def test_delete_items_from_the_command_line(self):
+        from sparkwheel.config import parse_overrides
+
+        assert parse_overrides(["~p=[0, 2]", "~q"]) == {"~p": [0, 2], "~q": None}
+        config = Config().update({"p": [1, 2, 3], "q": {"r": 1, "s": 2}})
+        config.update("~p=[0, 2]")
+        config.update("~q=[r]")
+        assert config._data == {"p": [2], "q": {"s": 2}}
+
     def test_parse_keyvalue_style(self):
         """Test parsing key=value style."""
         from sparkwheel.config import parse_overrides
@@ -1694,13 +1624,21 @@ class TestParseOverrides:
         result = parse_overrides(args)
         assert result == {"model::lr": 0.001, "trainer::epochs": 100}
 
-    def test_parse_replace_operator(self):
-        """Test parsing =key=value (replace operator)."""
+    def test_parse_combine_operator(self):
+        """Test parsing +key=value (combine operator)."""
         from sparkwheel.config import parse_overrides
 
-        args = ["=model={'_target_': 'ResNet'}", "=optimizer::lr=0.01"]
+        args = ["+model={'_target_': 'ResNet'}", "+trainer::callbacks=[1]"]
         result = parse_overrides(args)
-        assert result == {"=model": {"_target_": "ResNet"}, "=optimizer::lr": 0.01}
+        assert result == {"+model": {"_target_": "ResNet"}, "+trainer::callbacks": [1]}
+
+    def test_parse_removed_replace_operator(self):
+        """`=key=value` was the replace operator before 0.1."""
+        from sparkwheel.config import parse_overrides
+        from sparkwheel.utils.exceptions import ConfigMergeError
+
+        with pytest.raises(ConfigMergeError, match="write 'model=1' instead"):
+            parse_overrides(["=model=1"])
 
     def test_parse_delete_operator(self):
         """Test parsing ~key (delete operator)."""
@@ -1794,23 +1732,23 @@ class TestParseOverrides:
         # ~ is also YAML null
         assert result["tilde"] is None
 
-    def test_parse_yaml_style_in_replace_operator(self):
-        """Test YAML-style values work with replace operator."""
+    def test_parse_yaml_style_in_combine_operator(self):
+        """Test YAML-style values work with the combine operator."""
         from sparkwheel.config import parse_overrides
 
-        args = ["=debug=true", "=value=null"]
+        args = ["+debug=true", "+value=null"]
         result = parse_overrides(args)
-        assert result == {"=debug": True, "=value": None}
+        assert result == {"+debug": True, "+value": None}
 
     def test_parse_invalid_yaml_keeps_string(self):
         """Test that invalid YAML values are kept as strings."""
         from sparkwheel.config import parse_overrides
 
         # Unclosed quotes cause YAMLError, should fall back to string
-        args = ['msg="unclosed', "=other='unclosed"]
+        args = ['msg="unclosed', "+other='unclosed"]
         result = parse_overrides(args)
         assert result["msg"] == '"unclosed'
-        assert result["=other"] == "'unclosed"
+        assert result["+other"] == "'unclosed"
 
     def test_parse_nested_paths(self):
         """Test parsing deeply nested paths."""
@@ -1827,9 +1765,9 @@ class TestParseOverrides:
         """Test operators with nested paths."""
         from sparkwheel.config import parse_overrides
 
-        args = ["=model::optimizer={'type':'sgd'}", "~model::old_param"]
+        args = ["+model::optimizer={'type':'sgd'}", "~model::old_param"]
         result = parse_overrides(args)
-        assert result == {"=model::optimizer": {"type": "sgd"}, "~model::old_param": None}
+        assert result == {"+model::optimizer": {"type": "sgd"}, "~model::old_param": None}
 
     def test_parse_value_with_equals(self):
         """Test parsing values that contain equals sign."""

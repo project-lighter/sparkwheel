@@ -14,7 +14,7 @@ from sparkwheel import Config
 
 GUIDE = Path(__file__).resolve().parents[1] / "docs" / "user-guide"
 FENCE = re.compile(r"^( *)```(\w+)([^\n]*)\n(.*?)^\1```", re.MULTILINE | re.DOTALL)
-ARROW = re.compile(r"^[=~]?([A-Za-z_]\w*):.*#[^→\n]*→ (.+)$", re.MULTILINE)
+ARROW = re.compile(r"^[+~]?([A-Za-z_]\w*):.*#[^→\n]*→ (.+)$", re.MULTILINE)
 
 # Stands in for torch when it is not installed, so the instantiation examples still run
 FAKE_TORCH = {
@@ -91,7 +91,7 @@ def test_quick_reference(heading, workdir):
                 inputs = shlex.split(command)[2:]  # after `python train.py`
                 config = _build(inputs)
                 if expected:
-                    key = inputs[-1].lstrip("=~").split("=")[0]
+                    key = inputs[-1].lstrip("+~").split("=")[0]
                     assert config.resolve(key) == yaml.safe_load(expected), line
 
 

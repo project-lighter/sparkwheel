@@ -53,12 +53,36 @@ python train.py config.yaml trainer::max_epoch=5
 [override → trainer::max_epoch]:
   → trainer::max_epoch=5
 
-  💡 Did you mean 'max_epochs'? To add a new key, put it in a YAML file.
+  💡 Did you mean 'max_epochs'? To add a new key, write '+trainer::max_epoch=5'.
 ```
 
-Overrides change keys that exist (or add an argument to a `_target_` component), so a typo can't silently add a key that nothing reads. To add a new key, put it in a YAML file.
+`key=value` changes a key that exists (or adds an argument to a `_target_` component), so a typo can't silently add a key that nothing reads. To add a new key, write `+key=value`; the keys above it must exist.
 
 Here `trainer` has no `_target_`. When it does, the override is taken as a new argument and the typo is reported when `trainer` is built (or by `config.check()`): `'pkg.Trainer' got an unexpected argument 'max_epoch'`, with the same did-you-mean.
+
+## Setting a component drops its `_target_`
+
+```yaml title="config.yaml"
+model:
+  _target_: model.Model
+  learning_rate: 0.001
+  num_classes: 5
+```
+
+```bash
+python train.py config.yaml 'model={learning_rate: 0.01}'
+```
+
+```text
+'model' replaces the component 'model.Model' and drops '_target_', 'num_classes'
+
+[override → model]:
+  → model={learning_rate: 0.01}
+
+  💡 To change only these keys, write '+model' instead of 'model', or set them one by one ('model::learning_rate').
+```
+
+A key sets its whole value, so `model: {learning_rate: 0.01}` in a later YAML file, or the override above, would turn the component into a plain dict. Write `+model={learning_rate: 0.01}` to merge into it, or `model::learning_rate=0.01` to set one argument. Setting the component to a dict with its own `_target_` (a different class), a reference or `null` is fine. See [Set, Combine, Delete](operators.md#components).
 
 ## An override uses `.` instead of `::`
 
