@@ -1615,6 +1615,7 @@ class TestParseOverrides:
         config.update("~p=[0, 2]")
         config.update("~q=[r]")
         assert config._data == {"p": [2], "q": {"s": 2}}
+        assert "p::0" not in config.locations and "q" not in config.locations  # deleted, not set by the override
 
     def test_parse_keyvalue_style(self):
         """Test parsing key=value style."""

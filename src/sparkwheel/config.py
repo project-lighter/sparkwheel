@@ -467,7 +467,7 @@ class Config:
             if operator != REMOVE_KEY:
                 self._check_override_path(path, override, combine=operator == COMBINE_KEY)
             locations = LocationRegistry()
-            for id_path in _paths(path, value):
+            for id_path in _paths(path, value) if operator != REMOVE_KEY else ():
                 locations.register(id_path, Location(filepath="", line=0, id=id_path, override=override))
             self._apply({key: value}, locations)
 

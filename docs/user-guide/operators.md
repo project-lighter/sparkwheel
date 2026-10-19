@@ -140,16 +140,14 @@ trainer:
   💡 To change only these keys, write '+trainer' instead of 'trainer', or set them one by one ('trainer::max_epochs').
 ```
 
-What you can write instead:
+What you can write instead, one of:
 
-```yaml
-+trainer: {max_epochs: 50}    # change some arguments, keep the rest
-trainer::max_epochs: 50       # the same, one value
-trainer:                      # swap the class: the old arguments go
-  _target_: my_project.FastTrainer
-  max_epochs: 50
-trainer: "@other_trainer"     # set to a reference, a string or null: fine
-```
+| You write | Result |
+|---|---|
+| `+trainer: {max_epochs: 50}` | changes some arguments, keeps the rest |
+| `trainer::max_epochs: 50` | the same, one value |
+| `trainer: {_target_: my_project.FastTrainer, max_epochs: 50}` | swaps the class: the old arguments go |
+| `trainer: "@other_trainer"` | sets a reference, a string or null: fine |
 
 `+trainer: {_target_: my_project.FastTrainer}` swaps the class and keeps the old arguments.
 
