@@ -186,11 +186,11 @@ config = Config().update("base.yaml").update("experiment.yaml")
 `update()` takes the same statements as a dict:
 
 ```python
-config.update({"model::hidden_size": 1024})                  # set one value
-config.update({"+trainer": {"max_epochs": 50}})              # merge
-config.update({"+callbacks": ["early_stopping"]})            # append
-config.update({"~debug": None, "~plugins": [0, 2]})          # delete
-config.update(other_config)                                  # another Config's top-level keys, as statements
+config.update({"model::hidden_size": 1024})  # set one value
+config.update({"+trainer": {"max_epochs": 50}})  # merge
+config.update({"+callbacks": ["early_stopping"]})  # append
+config.update({"~debug": None, "~plugins": [0, 2]})  # delete
+config.update(other_config)  # another Config's top-level keys, as statements
 ```
 
 `config.set("model::hidden_size", 1024)` is a plain assignment: no operators, no checks, missing dicts on the path are created.
